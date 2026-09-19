@@ -130,6 +130,17 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
             continue;
         };
         try std.testing.expect(expected.valid);
+        var list: z.movegen.MoveList = .{};
+        z.movegen.generate(.legal, &pos, &list);
+        try expectMoves(expected.legal, list.slice());
+        if (pos.st.checkers != 0) z.movegen.generate(.evasions, &pos, &list) else z.movegen.generate(.non_evasions, &pos, &list);
+        try expectMoves(expected.pseudo, list.slice());
+        if (pos.st.checkers == 0) {
+            z.movegen.generate(.captures, &pos, &list);
+            try expectMoves(expected.captures, list.slice());
+            z.movegen.generate(.quiets, &pos, &list);
+            try expectMoves(expected.quiets, list.slice());
+        }
         var fen_buffer: [256]u8 = undefined;
         var writer = std.Io.Writer.fixed(&fen_buffer);
         try pos.writeFen(&writer);
@@ -191,4 +202,9 @@ fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const 
         n += 1;
     }
     return buffer[0..n];
+}
+
+fn expectMoves(expected: []const u16, actual: []const z.types.Move) !void {
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |e, m| try std.testing.expectEqual(e, m.data);
 }

@@ -2,6 +2,7 @@
 // GPL-3.0-or-later. Test-only; never linked into the Zig engine.
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
+#include "../vendor/stockfish/src/movegen.cpp"
 #include <cstdio>
 #include <fstream>
 int main(int argc, char** argv) {
@@ -19,7 +20,7 @@ int main(int argc, char** argv) {
     std::puts("};\npub const cuckoo_moves = [_]u16{");
     for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
     std::puts("};");
-    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64 };\npub const positions = [_]Snapshot{");
+    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{} };\npub const positions = [_]Snapshot{");
     if (argc != 2) return 1;
     std::ifstream input(argv[1]);
     if (!input) return 1;
@@ -51,6 +52,18 @@ int main(int argc, char** argv) {
             emit(pos.can_castle(cr) && pos.castling_impeded(cr));
         }
         for (int i = 0; i < 64; ++i) emit(pos.attackers_to(Square(i)));
+        std::puts("}, .legal = &.{");
+        for (auto m : MoveList<LEGAL>(pos)) std::printf("%u,", unsigned(m.raw()));
+        std::puts("}, .pseudo = &.{");
+        if (pos.checkers()) {
+            for (auto m : MoveList<EVASIONS>(pos)) std::printf("%u,", unsigned(m.raw()));
+        } else {
+            for (auto m : MoveList<NON_EVASIONS>(pos)) std::printf("%u,", unsigned(m.raw()));
+        }
+        std::puts("}, .captures = &.{");
+        if (!pos.checkers()) for (auto m : MoveList<CAPTURES>(pos)) std::printf("%u,", unsigned(m.raw()));
+        std::puts("}, .quiets = &.{");
+        if (!pos.checkers()) for (auto m : MoveList<QUIETS>(pos)) std::printf("%u,", unsigned(m.raw()));
         std::puts("} },");
     }
     std::puts("};");

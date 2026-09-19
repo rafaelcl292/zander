@@ -257,6 +257,23 @@ pub const Position = struct {
         self.setState();
         if (self.attackedBy(self.king(self.side.opposite()), self.pieces(), self.side)) return error.UnsupportedPosition;
     }
+    /// Requires a pseudo-legal move generated for this position.
+    pub fn legal(self: *const Position, m: t.Move) bool {
+        const from = m.from();
+        var to = m.to();
+        const us = self.side;
+        if (m.kind() == .castling) {
+            to = Square.make(if (@intFromEnum(to) > @intFromEnum(from)) 6 else 2, 0).relative(us);
+            const step: i16 = if (@intFromEnum(to) > @intFromEnum(from)) -1 else 1;
+            var sq: i16 = @intFromEnum(to);
+            while (sq != @intFromEnum(from)) : (sq += step) {
+                if (self.attackedBy(@enumFromInt(sq), self.pieces(), us.opposite())) return false;
+            }
+            return !self.chess960 or self.st.blockers_for_king[@intFromEnum(us)] & bb.square(m.to()) == 0;
+        }
+        if (self.pieceOn(from).pieceType() == .king) return !self.attackedBy(to, self.pieces() ^ bb.square(from), us.opposite());
+        return self.st.blockers_for_king[@intFromEnum(us)] & bb.square(from) == 0 or self.tables.line[@intFromEnum(from)][@intFromEnum(to)] & self.piecesOf(us, .king) != 0;
+    }
     pub fn writeFen(self: *const Position, writer: *std.Io.Writer) !void {
         for (0..8) |r| {
             var empty: u8 = 0;
