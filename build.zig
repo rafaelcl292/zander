@@ -12,8 +12,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&b.addRunArtifact(unit).step);
     // The C++ oracle is host-only; keep it outside the portable library.
-    const cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-c" });
+    const cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-c" });
     cpp.addFileArg(b.path("tests/oracle.cpp"));
+    for ([_][]const u8{ "types.h", "misc.h", "tune.h", "bitboard.h", "attacks.h", "attacks.cpp" }) |name| {
+        cpp.addFileInput(b.path(b.fmt("vendor/stockfish/src/{s}", .{name})));
+    }
     cpp.addArg("-o");
     const obj = cpp.addOutputFileArg("oracle.o");
     const diff_mod = b.createModule(.{ .root_source_file = b.path("tests/differential.zig"), .target = b.graph.host, .optimize = optimize });

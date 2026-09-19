@@ -41,3 +41,43 @@ test "bitboard shifts, pawn attacks and wrapping keys match Stockfish" {
     }
     try std.testing.expectEqual(sf_key(std.math.maxInt(u64)), z.types.makeKey(std.math.maxInt(u64)));
 }
+
+extern fn sf_attacks_init() void;
+extern fn sf_attacks(u8, u8, u64) u64;
+extern fn sf_geometry(u8, u8, u8) u64;
+extern fn sf_magic(u8, u8) u64;
+test "attack tables match upstream for every relevant occupancy and square pair" {
+    const tables = try std.testing.allocator.create(z.attacks.Tables);
+    defer std.testing.allocator.destroy(tables);
+    tables.init();
+    sf_attacks_init();
+    for (0..64) |i| {
+        const s: z.types.Square = @enumFromInt(i);
+        for ([_]z.types.PieceType{ .bishop, .rook }) |pt| {
+            const m = tables.magics[i][@intFromEnum(pt) - 3];
+            try std.testing.expectEqual(sf_magic(@intFromEnum(pt), @intCast(i)), m.magic);
+            var b: u64 = 0;
+            while (true) {
+                // Irrelevant bits include edges and the origin; they must not
+                // affect lookup results, even when all of them are occupied.
+                for ([_]u64{ b, b | ~m.mask }) |occupied| {
+                    try std.testing.expectEqual(sf_attacks(@intFromEnum(pt), @intCast(i), occupied), tables.attacks(pt, s, occupied));
+                }
+                b = (b -% m.mask) & m.mask;
+                if (b == 0) break;
+            }
+        }
+        for (0..64) |j| {
+            try std.testing.expectEqual(sf_geometry(0, @intCast(i), @intCast(j)), tables.line[i][j]);
+            try std.testing.expectEqual(sf_geometry(1, @intCast(i), @intCast(j)), tables.between[i][j]);
+            try std.testing.expectEqual(sf_geometry(2, @intCast(i), @intCast(j)), tables.ray_pass[i][j]);
+        }
+        var occupied = z.types.makeKey(i);
+        for (0..128) |_| {
+            for ([_]z.types.PieceType{ .knight, .king, .queen }) |pt| {
+                try std.testing.expectEqual(sf_attacks(@intFromEnum(pt), @intCast(i), occupied), tables.attacks(pt, s, occupied));
+            }
+            occupied = z.types.makeKey(occupied);
+        }
+    }
+}

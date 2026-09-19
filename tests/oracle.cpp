@@ -13,3 +13,15 @@ extern "C" uint32_t sf_decode(uint16_t raw) {
 extern "C" uint16_t sf_move(uint8_t from, uint8_t to, uint8_t pt) {
     return Move::make<PROMOTION>(Square(from), Square(to), PieceType(pt)).raw();
 }
+
+#include "../vendor/stockfish/src/attacks.cpp"
+extern "C" void sf_attacks_init() { Attacks::init(); }
+extern "C" uint64_t sf_attacks(uint8_t pt, uint8_t s, uint64_t occupied) {
+    return Attacks::attacks_bb(PieceType(pt), Square(s), occupied);
+}
+extern "C" uint64_t sf_geometry(uint8_t kind, uint8_t a, uint8_t b) {
+    return kind == 0 ? Attacks::line_bb(Square(a), Square(b))
+         : kind == 1 ? Attacks::between_bb(Square(a), Square(b))
+                     : Attacks::ray_pass_bb(Square(a), Square(b));
+}
+extern "C" uint64_t sf_magic(uint8_t pt, uint8_t s) { return Attacks::magic(Square(s), PieceType(pt)).magic; }
