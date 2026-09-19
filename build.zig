@@ -23,6 +23,8 @@ pub fn build(b: *std.Build) void {
     reference_cpp.addFileArg(b.path("tests/position_reference.cpp"));
     reference_cpp.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
     reference_cpp.addFileArg(b.path("vendor/stockfish/src/tt.cpp"));
+    const tt_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
+    tt_cpp.addFileArg(b.path("tests/tt_reference.cpp"));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
@@ -32,6 +34,7 @@ pub fn build(b: *std.Build) void {
         if (entry.kind == .file) {
             const input = b.path(b.fmt("vendor/stockfish/src/{s}", .{entry.path}));
             reference_cpp.addFileInput(input);
+            tt_cpp.addFileInput(input);
             cpp.addFileInput(input);
         }
     }
@@ -43,6 +46,12 @@ pub fn build(b: *std.Build) void {
     reference_run.addFileArg(b.path("tests/positions.txt"));
     const fixture = reference_run.captureStdOut(.{ .basename = "position_reference.zig" });
     diff_mod.addAnonymousImport("position_reference", .{ .root_source_file = fixture });
+    tt_cpp.addArg("-Wl,--gc-sections");
+    tt_cpp.addArg("-o");
+    const tt_exe = tt_cpp.addOutputFileArg("tt-reference");
+    const tt_run = std.Build.Step.Run.create(b, "generate TT reference");
+    tt_run.addFileArg(tt_exe);
+    diff_mod.addAnonymousImport("tt_reference", .{ .root_source_file = tt_run.captureStdOut(.{ .basename = "tt_reference.zig" }) });
     const diff = b.addTest(.{ .root_module = diff_mod });
     const diff_step = b.step("differential", "Compare with pinned Stockfish C++ (requires host c++)");
     diff_step.dependOn(&b.addRunArtifact(diff).step);

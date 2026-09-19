@@ -296,3 +296,51 @@ fn expectQueries(pos: *const z.position.Position, expected: @import("position_re
         try std.testing.expectEqual(flags, actual);
     }
 }
+
+test "TT layout, probe, replacement, aging and hashfull match C++ trace" {
+    const reference = @import("tt_reference");
+    var storage: [1024]z.tt.Cluster align(64) = undefined;
+    var table = z.tt.Table.init(&storage);
+    for (reference.events, 0..) |event, i| {
+        if (i % 37 == 0) table.newSearch();
+        const probe = table.probe(event.key);
+        try std.testing.expectEqual(event.found, probe.found);
+        const base = &table.clusters[table.clusterIndex(event.key)].entries[0];
+        const slot = (@intFromPtr(probe.writer) - @intFromPtr(base)) / @sizeOf(z.tt.Entry);
+        try std.testing.expectEqual(event.slot, slot);
+        try std.testing.expectEqualSlices(i32, &event.before, &ttData(probe.data));
+        const signed_i: i32 = @intCast(i);
+        probe.writer.save(event.key, .{
+            .value = if (i % 11 == 0) 31900 else @mod(signed_i, 4000) - 2000,
+            .is_pv = i % 3 == 0,
+            .bound = @enumFromInt(i % 4),
+            .depth = @mod(signed_i, 32) - 2,
+            .move = .{ .data = @intCast(if (i % 5 == 0) 0 else 1 + i % 4094) },
+            .eval = @mod(signed_i, 2000) - 1000,
+        }, table.generation);
+        if (i % 7 == 0) probe.writer.penalize(@intCast(i % 17));
+        try std.testing.expectEqualSlices(i32, &event.after, &ttData(probe.writer.read()));
+        try std.testing.expectEqual(event.generation, table.generation);
+        for ([_]i32{ 0, 3, 31 }, event.hashfull) |age, expected| try std.testing.expectEqual(expected, table.hashfull(age));
+    }
+    var entry: z.tt.Entry = std.mem.zeroes(z.tt.Entry);
+    const commands = [_]struct { key: u64, value: i32, bound: z.tt.Bound, depth: i32, move: u16, eval: i32, generation: u8 }{
+        .{ .key = 1, .value = 31900, .bound = .lower, .depth = 12, .move = 123, .eval = 7, .generation = 0 },
+        .{ .key = 1, .value = 20, .bound = .lower, .depth = 1, .move = 0, .eval = 8, .generation = 0 },
+        .{ .key = 1, .value = 20, .bound = .exact, .depth = -2, .move = 0, .eval = 8, .generation = 0 },
+        .{ .key = 2, .value = -31900, .bound = .upper, .depth = 5, .move = 0, .eval = 9, .generation = 31 },
+        .{ .key = 2, .value = 100, .bound = .upper, .depth = 0, .move = 42, .eval = 10, .generation = 0 },
+    };
+    for (commands, 0..) |cmd, i| {
+        entry.save(cmd.key, .{ .move = .{ .data = cmd.move }, .value = cmd.value, .eval = cmd.eval, .depth = cmd.depth, .bound = cmd.bound, .is_pv = false }, cmd.generation);
+        try std.testing.expectEqualSlices(i32, &reference.edge_cases[i], &ttData(entry.read()));
+    }
+    entry.penalize(300);
+    try std.testing.expectEqualSlices(i32, &reference.edge_cases[5], &ttData(entry.read()));
+    table.clear();
+    try std.testing.expectEqual(@as(u8, 0), table.generation);
+    try std.testing.expectEqual(@as(u32, 0), table.hashfull(31));
+}
+fn ttData(data: z.tt.Data) [6]i32 {
+    return .{ data.move.data, data.value, data.eval, data.depth, @intFromEnum(data.bound), @intFromBool(data.is_pv) };
+}
