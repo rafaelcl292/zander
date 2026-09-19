@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
     const reference_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
     reference_cpp.addFileArg(b.path("tests/position_reference.cpp"));
     reference_cpp.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
+    reference_cpp.addFileArg(b.path("vendor/stockfish/src/tt.cpp"));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);

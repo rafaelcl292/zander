@@ -5,7 +5,9 @@ pub const position_keys = @import("position_keys.zig");
 pub const prng = @import("prng.zig");
 pub const position = @import("position.zig");
 pub const movegen = @import("movegen.zig");
+pub const perft = @import("perft.zig");
 test {
+    _ = perft;
     _ = movegen;
     _ = position;
     _ = position_keys;

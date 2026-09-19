@@ -149,8 +149,59 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         const actual = snapshotPosition(&pos, &snapshot);
         if (!std.mem.eql(u64, expected.data, actual)) std.debug.print("FEN mismatch: {s}\n", .{line});
         try std.testing.expectEqualSlices(u64, expected.data, actual);
+        const board_before = pos.board;
+        const counts_before = pos.piece_count;
+        for (expected.children) |child| {
+            var next: z.position.StateInfo = undefined;
+            const move: z.types.Move = .{ .data = child.move };
+            const gives_check = pos.givesCheck(move);
+            pos.doMove(move, &next);
+            try std.testing.expectEqual(gives_check, pos.st.checkers != 0);
+            try std.testing.expectEqualSlices(u64, child.data, snapshotPosition(&pos, &snapshot));
+            z.movegen.generate(.legal, &pos, &list);
+            try expectMoves(child.legal, list.slice());
+            pos.undoMove(move);
+            try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
+            try std.testing.expectEqualSlices(z.types.Piece, &board_before, &pos.board);
+            try std.testing.expectEqualSlices(i32, &counts_before, &pos.piece_count);
+            try std.testing.expect(pos.st == &state);
+        }
+        var walk_states: [48]z.position.StateInfo = undefined;
+        for (expected.walk, 0..) |step, i| {
+            pos.doMove(.{ .data = step.move }, &walk_states[i]);
+            try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
+            z.movegen.generate(.legal, &pos, &list);
+            try expectMoves(step.legal, list.slice());
+        }
+        var undone = expected.walk.len;
+        while (undone > 0) {
+            undone -= 1;
+            pos.undoMove(.{ .data = expected.walk[undone].move });
+            const prior = if (undone == 0) expected.data else expected.walk[undone - 1].data;
+            try std.testing.expectEqualSlices(u64, prior, snapshotPosition(&pos, &snapshot));
+        }
+        for (expected.null_state) |null_state| {
+            var next: z.position.StateInfo = undefined;
+            pos.doNullMove(&next);
+            try std.testing.expectEqualSlices(u64, null_state.data, snapshotPosition(&pos, &snapshot));
+            pos.undoNullMove();
+            try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
+        }
+        try std.testing.expectEqual(expected.nodes, z.perft.count(&pos, 3));
+        try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
     }
     try std.testing.expectEqual(reference.positions.len, n);
+    var pos: z.position.Position = undefined;
+    var history: [13]z.position.StateInfo = undefined;
+    try pos.set(z.position.start_fen, false, &history[0], tables, keys);
+    for (reference.repetition, 0..) |step, i| {
+        pos.doMove(.{ .data = step.move }, &history[i + 1]);
+        var snapshot: [256]u64 = undefined;
+        try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
+    }
+    try std.testing.expect(pos.st.repetition < 0);
+    try pos.set(z.position.start_fen, false, &history[0], tables, keys);
+    try std.testing.expectEqual(@as(u64, 197281), z.perft.count(&pos, 4));
 }
 fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const u64 {
     var n: usize = 0;
@@ -180,7 +231,7 @@ fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const 
         buffer[n] = v;
         n += 1;
     }
-    for (st.check_squares) |v| {
+    for (st.check_squares[1..7]) |v| {
         buffer[n] = v;
         n += 1;
     }

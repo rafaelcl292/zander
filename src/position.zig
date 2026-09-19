@@ -257,6 +257,211 @@ pub const Position = struct {
         self.setState();
         if (self.attackedBy(self.king(self.side.opposite()), self.pieces(), self.side)) return error.UnsupportedPosition;
     }
+    pub fn givesCheck(self: *const Position, m: t.Move) bool {
+        const from = m.from();
+        const to = m.to();
+        const them = self.side.opposite();
+        if (self.st.check_squares[@intFromEnum(self.pieceOn(from).pieceType())] & bb.square(to) != 0) return true;
+        if (self.st.blockers_for_king[@intFromEnum(them)] & bb.square(from) != 0) return self.tables.line[@intFromEnum(from)][@intFromEnum(to)] & self.piecesOf(them, .king) == 0 or m.kind() == .castling;
+        return switch (m.kind()) {
+            .normal => false,
+            .promotion => self.tables.attacks(m.promotionType(), to, self.pieces() ^ bb.square(from)) & self.piecesOf(them, .king) != 0,
+            .en_passant => blk: {
+                const captured = Square.make(to.file(), from.rank());
+                const occupied = (self.pieces() ^ bb.square(from) ^ bb.square(captured)) | bb.square(to);
+                const k = self.king(them);
+                break :blk ((self.tables.attacks(.rook, k, occupied) & (self.by_type[4] | self.by_type[5])) | (self.tables.attacks(.bishop, k, occupied) & (self.by_type[3] | self.by_type[5]))) & self.by_color[@intFromEnum(self.side)] != 0;
+            },
+            .castling => self.st.check_squares[4] & bb.square(Square.make(if (@intFromEnum(to) > @intFromEnum(from)) 5 else 3, 0).relative(self.side)) != 0,
+        };
+    }
+    fn movePiece(self: *Position, from: Square, to: Square) void {
+        const pc = self.pieceOn(from);
+        const bits = bb.square(from) | bb.square(to);
+        std.debug.assert(pc != .none and self.pieceOn(to) == .none);
+        self.by_type[0] ^= bits;
+        self.by_type[@intFromEnum(pc.pieceType())] ^= bits;
+        self.by_color[@intFromEnum(pc.color())] ^= bits;
+        self.board[@intFromEnum(from)] = .none;
+        self.board[@intFromEnum(to)] = pc;
+    }
+    /// Requires a legal move and a fresh state at a stable address. TT/history
+    /// prefetch and NNUE dirty feature output are added with their own subsystems.
+    pub fn doMove(self: *Position, m: t.Move, next: *StateInfo) void {
+        std.debug.assert(next != self.st);
+        const gives_check = self.givesCheck(m);
+        const old = self.st;
+        next.* = .{
+            .material_key = old.material_key,
+            .pawn_key = old.pawn_key,
+            .minor_piece_key = old.minor_piece_key,
+            .non_pawn_key = old.non_pawn_key,
+            .non_pawn_material = old.non_pawn_material,
+            .castling_rights = old.castling_rights,
+            .rule50 = old.rule50 + 1,
+            .plies_from_null = old.plies_from_null + 1,
+            .ep_square = old.ep_square,
+            .previous = old,
+        };
+        self.st = next;
+        self.game_ply += 1;
+        var k = old.key ^ self.keys.side;
+        const us = self.side;
+        const them = us.opposite();
+        const ui = @intFromEnum(us);
+        const ti = @intFromEnum(them);
+        const from = m.from();
+        var to = m.to();
+        const pc = self.pieceOn(from);
+        const pi = @intFromEnum(pc);
+        var captured = if (m.kind() == .en_passant) Piece.make(them, .pawn) else self.pieceOn(to);
+        const push: i16 = if (us == .white) 8 else -8;
+        if (m.kind() == .castling) {
+            const rfrom = to;
+            const kingside = @intFromEnum(to) > @intFromEnum(from);
+            const rto = Square.make(if (kingside) 5 else 3, 0).relative(us);
+            to = Square.make(if (kingside) 6 else 2, 0).relative(us);
+            self.remove(from);
+            self.remove(rfrom);
+            self.put(Piece.make(us, .king), to);
+            self.put(Piece.make(us, .rook), rto);
+            const delta = self.keys.psq[@intFromEnum(captured)][@intFromEnum(rfrom)] ^ self.keys.psq[@intFromEnum(captured)][@intFromEnum(rto)];
+            k ^= delta;
+            next.non_pawn_key[ui] ^= delta;
+            captured = .none;
+        } else if (captured != .none) {
+            var capsq = to;
+            const ci = @intFromEnum(captured);
+            if (captured.pieceType() == .pawn) {
+                if (m.kind() == .en_passant) {
+                    capsq = @enumFromInt(@as(i16, @intFromEnum(to)) - push);
+                    self.remove(capsq);
+                }
+                next.pawn_key ^= self.keys.psq[ci][@intFromEnum(capsq)];
+            } else {
+                next.non_pawn_material[ti] -= piece_value[@intFromEnum(captured.pieceType())];
+                next.non_pawn_key[ti] ^= self.keys.psq[ci][@intFromEnum(capsq)];
+                if (@intFromEnum(captured.pieceType()) <= 3) next.minor_piece_key ^= self.keys.psq[ci][@intFromEnum(capsq)];
+            }
+            k ^= self.keys.psq[ci][@intFromEnum(capsq)];
+            next.material_key ^= self.keys.psq[ci][@intCast(8 + self.piece_count[ci] - @as(i32, @intFromBool(m.kind() != .en_passant)))];
+            next.rule50 = 0;
+        }
+        k ^= self.keys.psq[pi][@intFromEnum(from)] ^ self.keys.psq[pi][@intFromEnum(to)];
+        if (next.ep_square != .none) {
+            k ^= self.keys.enpassant[next.ep_square.file()];
+            next.ep_square = .none;
+        }
+        k ^= self.keys.castling[next.castling_rights];
+        next.castling_rights &= ~(self.castling_mask[@intFromEnum(from)] | self.castling_mask[@intFromEnum(to)]);
+        k ^= self.keys.castling[next.castling_rights];
+        if (pc.pieceType() == .pawn) {
+            if ((@intFromEnum(to) ^ @intFromEnum(from)) == 16) {
+                const ep: Square = @enumFromInt(@as(i16, @intFromEnum(to)) - push);
+                const pawns = a.pseudo[ui][@intFromEnum(ep)] & self.piecesOf(them, .pawn);
+                if (pawns != 0) {
+                    const king_sq = self.king(them);
+                    const not_blockers = ~old.blockers_for_king[ti];
+                    const no_discovery = bb.square(from) & not_blockers != 0 or from.file() == king_sq.file();
+                    if (no_discovery and pawns & (not_blockers | self.tables.line[@intFromEnum(ep)][@intFromEnum(king_sq)]) != 0) {
+                        next.ep_square = ep;
+                        k ^= self.keys.enpassant[ep.file()];
+                    }
+                }
+            } else if (m.kind() == .promotion) {
+                const pt = m.promotionType();
+                const promotion = @intFromEnum(Piece.make(us, pt));
+                k ^= self.keys.psq[promotion][@intFromEnum(to)];
+                next.material_key ^= self.keys.psq[promotion][@intCast(8 + self.piece_count[promotion])] ^ self.keys.psq[pi][@intCast(8 + self.piece_count[pi] - 1)];
+                next.non_pawn_key[ui] ^= self.keys.psq[promotion][@intFromEnum(to)];
+                if (@intFromEnum(pt) <= 3) next.minor_piece_key ^= self.keys.psq[promotion][@intFromEnum(to)];
+                next.non_pawn_material[ui] += piece_value[@intFromEnum(pt)];
+            }
+            next.pawn_key ^= self.keys.psq[pi][@intFromEnum(from)] ^ self.keys.psq[pi][@intFromEnum(to)];
+            next.rule50 = 0;
+        } else {
+            const delta = self.keys.psq[pi][@intFromEnum(from)] ^ self.keys.psq[pi][@intFromEnum(to)];
+            next.non_pawn_key[ui] ^= delta;
+            if (@intFromEnum(pc.pieceType()) <= 3) next.minor_piece_key ^= delta;
+        }
+        next.key = k;
+        if (m.kind() != .castling) {
+            const to_pc = if (m.kind() == .promotion) Piece.make(us, m.promotionType()) else pc;
+            if (captured != .none and m.kind() != .en_passant) {
+                self.remove(from);
+                self.remove(to);
+                self.put(to_pc, to);
+            } else if (pc == to_pc) self.movePiece(from, to) else {
+                self.remove(from);
+                self.put(to_pc, to);
+            }
+        }
+        next.captured_piece = captured;
+        next.checkers = if (gives_check) self.attackersTo(self.king(them), self.pieces()) & self.by_color[ui] else 0;
+        self.side = them;
+        self.setCheckInfo();
+        const end = @min(next.rule50, next.plies_from_null);
+        if (end >= 4) {
+            var prev = old.previous.?;
+            var distance: i32 = 4;
+            while (distance <= end) : (distance += 2) {
+                prev = prev.previous.?.previous.?;
+                if (prev.key == next.key) {
+                    next.repetition = if (prev.repetition != 0) -distance else distance;
+                    break;
+                }
+            }
+        }
+    }
+    pub fn undoMove(self: *Position, m: t.Move) void {
+        self.side = self.side.opposite();
+        const us = self.side;
+        const from = m.from();
+        const to = m.to();
+        if (m.kind() == .promotion) {
+            self.remove(to);
+            self.put(Piece.make(us, .pawn), to);
+        }
+        if (m.kind() == .castling) {
+            const kingside = @intFromEnum(to) > @intFromEnum(from);
+            const kto = Square.make(if (kingside) 6 else 2, 0).relative(us);
+            const rto = Square.make(if (kingside) 5 else 3, 0).relative(us);
+            self.remove(kto);
+            self.remove(rto);
+            self.put(Piece.make(us, .king), from);
+            self.put(Piece.make(us, .rook), to);
+        } else {
+            self.movePiece(to, from);
+            if (self.st.captured_piece != .none) {
+                const capsq: Square = if (m.kind() == .en_passant) Square.make(to.file(), from.rank()) else to;
+                self.put(self.st.captured_piece, capsq);
+            }
+        }
+        self.st = self.st.previous.?;
+        self.game_ply -= 1;
+    }
+    pub fn doNullMove(self: *Position, next: *StateInfo) void {
+        std.debug.assert(self.st.checkers == 0 and next != self.st);
+        next.* = self.st.*;
+        next.previous = self.st;
+        self.st = next;
+        if (next.ep_square != .none) {
+            next.key ^= self.keys.enpassant[next.ep_square.file()];
+            next.ep_square = .none;
+        }
+        next.key ^= self.keys.side;
+        next.plies_from_null = 0;
+        next.captured_piece = .none;
+        self.side = self.side.opposite();
+        self.setCheckInfo();
+        next.repetition = 0;
+    }
+    pub fn undoNullMove(self: *Position) void {
+        std.debug.assert(self.st.checkers == 0);
+        self.st = self.st.previous.?;
+        self.side = self.side.opposite();
+    }
+
     /// Requires a pseudo-legal move generated for this position.
     pub fn legal(self: *const Position, m: t.Move) bool {
         const from = m.from();
