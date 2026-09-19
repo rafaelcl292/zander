@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
     diff_mod.addObjectFile(obj);
     const reference_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
     reference_cpp.addFileArg(b.path("tests/position_reference.cpp"));
+    reference_cpp.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
@@ -38,6 +39,7 @@ pub fn build(b: *std.Build) void {
     const reference_exe = reference_cpp.addOutputFileArg("position-reference");
     const reference_run = std.Build.Step.Run.create(b, "generate position reference");
     reference_run.addFileArg(reference_exe);
+    reference_run.addFileArg(b.path("tests/positions.txt"));
     const fixture = reference_run.captureStdOut(.{ .basename = "position_reference.zig" });
     diff_mod.addAnonymousImport("position_reference", .{ .root_source_file = fixture });
     const diff = b.addTest(.{ .root_module = diff_mod });

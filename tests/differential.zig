@@ -109,3 +109,86 @@ test "Zobrist keys and every cuckoo slot match upstream Position init" {
     }
     try std.testing.expectEqual(@as(usize, 3668), occupied);
 }
+
+test "FEN positions match upstream board, keys, checks, pins and castling" {
+    const reference = @import("position_reference");
+    const tables = try std.testing.allocator.create(z.attacks.Tables);
+    defer std.testing.allocator.destroy(tables);
+    const keys = try std.testing.allocator.create(z.position_keys.PositionKeys);
+    defer std.testing.allocator.destroy(keys);
+    tables.init();
+    keys.init();
+    var lines = std.mem.tokenizeScalar(u8, @embedFile("positions.txt"), '\n');
+    var n: usize = 0;
+    while (lines.next()) |line| : (n += 1) {
+        const expected = reference.positions[n];
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        pos.set(line[2..], line[0] == '1', &state, tables, keys) catch |err| {
+            if (expected.valid) std.debug.print("Unexpected FEN rejection: {s}: {}\n", .{ line, err });
+            try std.testing.expect(!expected.valid);
+            continue;
+        };
+        try std.testing.expect(expected.valid);
+        var fen_buffer: [256]u8 = undefined;
+        var writer = std.Io.Writer.fixed(&fen_buffer);
+        try pos.writeFen(&writer);
+        try std.testing.expectEqualStrings(expected.fen, writer.buffered());
+        var snapshot: [256]u64 = undefined;
+        const actual = snapshotPosition(&pos, &snapshot);
+        if (!std.mem.eql(u64, expected.data, actual)) std.debug.print("FEN mismatch: {s}\n", .{line});
+        try std.testing.expectEqualSlices(u64, expected.data, actual);
+    }
+    try std.testing.expectEqual(reference.positions.len, n);
+}
+fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const u64 {
+    var n: usize = 0;
+    for (pos.board) |pc| {
+        buffer[n] = @intFromEnum(pc);
+        n += 1;
+    }
+    for (pos.by_type) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    for (pos.by_color) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    const st = pos.st;
+    const values = [_]u64{ pos.key(), st.key, st.material_key, st.pawn_key, st.minor_piece_key, st.non_pawn_key[0], st.non_pawn_key[1], @intCast(st.non_pawn_material[0]), @intCast(st.non_pawn_material[1]), st.castling_rights, @intCast(st.rule50), @intCast(st.plies_from_null), @intFromEnum(st.ep_square), st.checkers };
+    for (values) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    for (st.blockers_for_king) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    for (st.pinners) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    for (st.check_squares) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    for ([_]u64{ @intFromEnum(st.captured_piece), @bitCast(@as(i64, st.repetition)), @intCast(pos.game_ply), @intFromEnum(pos.side) }) |v| {
+        buffer[n] = v;
+        n += 1;
+    }
+    for ([_]u8{ 1, 2, 4, 8 }) |cr| {
+        const can = st.castling_rights & cr != 0;
+        buffer[n] = @intFromBool(can);
+        n += 1;
+        buffer[n] = if (can) @intFromEnum(pos.castling_rook[cr]) else 64;
+        n += 1;
+        buffer[n] = @intFromBool(can and pos.pieces() & pos.castling_path[cr] != 0);
+        n += 1;
+    }
+    for (0..64) |i| {
+        buffer[n] = pos.attackersTo(@enumFromInt(i), pos.pieces());
+        n += 1;
+    }
+    return buffer[0..n];
+}
