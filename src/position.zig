@@ -257,6 +257,136 @@ pub const Position = struct {
         self.setState();
         if (self.attackedBy(self.king(self.side.opposite()), self.pieces(), self.side)) return error.UnsupportedPosition;
     }
+    pub fn capture(self: *const Position, m: t.Move) bool {
+        return switch (m.kind()) {
+            .normal, .promotion => self.pieceOn(m.to()) != .none,
+            .en_passant => true,
+            .castling => false,
+        };
+    }
+    pub fn captureStage(self: *const Position, m: t.Move) bool {
+        return self.capture(m) or (m.kind() == .promotion and m.promotionType() == .queen);
+    }
+    /// TT moves may be corrupt; reject sentinel and unused promotion bits before
+    /// applying upstream pseudo-legality tests (which assert these preconditions).
+    pub fn pseudoLegal(self: *const Position, m: t.Move) bool {
+        if (!m.valid()) return false;
+        const from = m.from();
+        const to = m.to();
+        const pc = self.pieceOn(from);
+        const us = self.side;
+        if (m.kind() != .normal) {
+            const mg = @import("movegen.zig");
+            var moves: mg.MoveList = .{};
+            if (self.st.checkers != 0) mg.generate(.evasions, self, &moves) else mg.generate(.non_evasions, self, &moves);
+            for (moves.slice()) |candidate| if (candidate.data == m.data) return true;
+            return false;
+        }
+        if (m.promotionType() != .knight) return false;
+        if (pc == .none or pc.color() != us or self.by_color[@intFromEnum(us)] & bb.square(to) != 0) return false;
+        if (pc.pieceType() == .pawn) {
+            if (bb.square(to) & 0xff000000000000ff != 0) return false;
+            const push: i16 = if (us == .white) 8 else -8;
+            const delta = @as(i16, @intFromEnum(to)) - @as(i16, @intFromEnum(from));
+            const captures = a.pseudo[@intFromEnum(us)][@intFromEnum(from)] & self.by_color[@intFromEnum(us.opposite())] & bb.square(to) != 0;
+            const single = delta == push and self.pieceOn(to) == .none;
+            const double = delta == 2 * push and from.relative(us).rank() == 1 and self.pieceOn(to) == .none and self.pieceOn(@enumFromInt(@as(i16, @intFromEnum(to)) - push)) == .none;
+            if (!captures and !single and !double) return false;
+        } else if (self.tables.attacks(pc.pieceType(), from, self.pieces()) & bb.square(to) == 0) return false;
+        if (self.st.checkers != 0 and pc.pieceType() != .king) {
+            if (bb.moreThanOne(self.st.checkers)) return false;
+            if (self.tables.between[@intFromEnum(self.king(us))][@intFromEnum(bb.lsb(self.st.checkers))] & bb.square(to) == 0) return false;
+        }
+        return true;
+    }
+    /// Static exchange threshold test. Requires a pseudo-legal move.
+    pub fn seeGe(self: *const Position, m: t.Move, threshold: i32) bool {
+        if (m.kind() != .normal) return threshold <= 0;
+        const from = m.from();
+        const to = m.to();
+        var swap = piece_value[@intFromEnum(self.pieceOn(to).pieceType())] - threshold;
+        if (swap < 0) return false;
+        swap = piece_value[@intFromEnum(self.pieceOn(from).pieceType())] - swap;
+        if (swap <= 0) return true;
+        var occupied = self.pieces() ^ bb.square(from) ^ bb.square(to);
+        var stm = self.side;
+        var attackers = self.attackersTo(to, occupied);
+        var result: i32 = 1;
+        while (true) {
+            stm = stm.opposite();
+            attackers &= occupied;
+            var stm_attackers = attackers & self.by_color[@intFromEnum(stm)];
+            if (stm_attackers == 0) break;
+            if (self.st.pinners[@intFromEnum(stm.opposite())] & occupied != 0) {
+                stm_attackers &= ~self.st.blockers_for_king[@intFromEnum(stm)];
+                if (stm_attackers == 0) break;
+            }
+            result ^= 1;
+            var selected: PieceType = .king;
+            var candidates: u64 = 0;
+            for ([_]PieceType{ .pawn, .knight, .bishop, .rook, .queen }) |pt| {
+                candidates = stm_attackers & self.by_type[@intFromEnum(pt)];
+                if (candidates != 0) {
+                    selected = pt;
+                    break;
+                }
+            }
+            if (selected == .king) return (if (attackers & ~self.by_color[@intFromEnum(stm)] != 0) result ^ 1 else result) != 0;
+            swap = piece_value[@intFromEnum(selected)] - swap;
+            if (selected != .queen and swap < result) break;
+            occupied ^= bb.square(bb.lsb(candidates));
+            if (selected == .pawn or selected == .bishop or selected == .queen) attackers |= self.tables.attacks(.bishop, to, occupied) & (self.by_type[3] | self.by_type[5]);
+            if (selected == .rook or selected == .queen) attackers |= self.tables.attacks(.rook, to, occupied) & (self.by_type[4] | self.by_type[5]);
+        }
+        return result != 0;
+    }
+    pub fn isRepetition(self: *const Position, ply: i32) bool {
+        return self.st.repetition != 0 and self.st.repetition < ply;
+    }
+    /// Upstream search draw predicate; stalemate is handled by the search.
+    pub fn isDraw(self: *const Position, ply: i32) bool {
+        if (self.st.rule50 > 99) {
+            if (self.st.checkers == 0) return true;
+            const mg = @import("movegen.zig");
+            var moves: mg.MoveList = .{};
+            mg.generate(.legal, self, &moves);
+            if (moves.len != 0) return true;
+        }
+        return self.isRepetition(ply);
+    }
+    pub fn hasRepeated(self: *const Position) bool {
+        var state = self.st;
+        var end = @min(state.rule50, state.plies_from_null);
+        while (end >= 4) : (end -= 1) {
+            if (state.repetition != 0) return true;
+            state = state.previous.?;
+        }
+        return false;
+    }
+    pub fn upcomingRepetition(self: *const Position, ply: i32) bool {
+        const end = @min(self.st.rule50, self.st.plies_from_null);
+        if (end < 3) return false;
+        const original = self.st.key;
+        var state = self.st.previous.?;
+        var other = original ^ state.key ^ self.keys.side;
+        var distance: i32 = 3;
+        while (distance <= end) : (distance += 2) {
+            state = state.previous.?;
+            other ^= state.key ^ state.previous.?.key ^ self.keys.side;
+            state = state.previous.?;
+            if (other != 0) continue;
+            const move_key = original ^ state.key;
+            var index = pk.PositionKeys.h1(move_key);
+            if (self.keys.cuckoo[index] != move_key) index = pk.PositionKeys.h2(move_key);
+            if (self.keys.cuckoo[index] != move_key) continue;
+            const move = self.keys.cuckoo_move[index];
+            if ((self.tables.between[@intFromEnum(move.from())][@intFromEnum(move.to())] ^ bb.square(move.to())) & self.pieces() == 0) {
+                if (ply > distance or state.repetition != 0) return true;
+            }
+        }
+        return false;
+    }
+
     pub fn givesCheck(self: *const Position, m: t.Move) bool {
         const from = m.from();
         const to = m.to();

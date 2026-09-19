@@ -130,6 +130,16 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
             continue;
         };
         try std.testing.expect(expected.valid);
+        try expectQueries(&pos, expected);
+        var normal_pseudo: [4096]u16 = undefined;
+        var normal_count: usize = 0;
+        for (1..4096) |raw| {
+            if (pos.pseudoLegal(.{ .data = @intCast(raw) })) {
+                normal_pseudo[normal_count] = @intCast(raw);
+                normal_count += 1;
+            }
+        }
+        try std.testing.expectEqualSlices(u16, expected.normal_pseudo, normal_pseudo[0..normal_count]);
         var list: z.movegen.MoveList = .{};
         z.movegen.generate(.legal, &pos, &list);
         try expectMoves(expected.legal, list.slice());
@@ -157,6 +167,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
             const gives_check = pos.givesCheck(move);
             pos.doMove(move, &next);
             try std.testing.expectEqual(gives_check, pos.st.checkers != 0);
+            try expectQueries(&pos, child);
             try std.testing.expectEqualSlices(u64, child.data, snapshotPosition(&pos, &snapshot));
             z.movegen.generate(.legal, &pos, &list);
             try expectMoves(child.legal, list.slice());
@@ -169,6 +180,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         var walk_states: [48]z.position.StateInfo = undefined;
         for (expected.walk, 0..) |step, i| {
             pos.doMove(.{ .data = step.move }, &walk_states[i]);
+            try expectQueries(&pos, step);
             try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
             z.movegen.generate(.legal, &pos, &list);
             try expectMoves(step.legal, list.slice());
@@ -183,6 +195,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         for (expected.null_state) |null_state| {
             var next: z.position.StateInfo = undefined;
             pos.doNullMove(&next);
+            try expectQueries(&pos, null_state);
             try std.testing.expectEqualSlices(u64, null_state.data, snapshotPosition(&pos, &snapshot));
             pos.undoNullMove();
             try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
@@ -196,6 +209,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
     try pos.set(z.position.start_fen, false, &history[0], tables, keys);
     for (reference.repetition, 0..) |step, i| {
         pos.doMove(.{ .data = step.move }, &history[i + 1]);
+        try expectQueries(&pos, step);
         var snapshot: [256]u64 = undefined;
         try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
     }
@@ -258,4 +272,27 @@ fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const 
 fn expectMoves(expected: []const u16, actual: []const z.types.Move) !void {
     try std.testing.expectEqual(expected.len, actual.len);
     for (expected, actual) |e, m| try std.testing.expectEqual(e, m.data);
+}
+
+fn expectQueries(pos: *const z.position.Position, expected: @import("position_reference").Snapshot) !void {
+    var list: z.movegen.MoveList = .{};
+    z.movegen.generate(.legal, pos, &list);
+    try std.testing.expectEqual(expected.queries.len, list.len);
+    for (list.slice(), expected.queries) |move, flags| {
+        var actual: u32 = @intFromBool(pos.capture(move));
+        actual |= @as(u32, @intFromBool(pos.captureStage(move))) << 1;
+        actual |= @as(u32, @intFromBool(pos.givesCheck(move))) << 2;
+        actual |= @as(u32, @intFromBool(pos.pseudoLegal(move))) << 3;
+        for ([_]i32{ -3000, -1276, -825, -208, -1, 0, 1, 208, 781, 825, 1276, 2538, 3000 }, 4..) |threshold, bit| {
+            actual |= @as(u32, @intFromBool(pos.seeGe(move, threshold))) << @as(u5, @intCast(bit));
+        }
+        try std.testing.expectEqual(flags, actual);
+    }
+    for ([_]i32{ 0, 1, 2, 3, 4, 5, 8, 32 }, expected.draw_flags) |ply, flags| {
+        var actual: u8 = @intFromBool(pos.isDraw(ply));
+        actual |= @as(u8, @intFromBool(pos.isRepetition(ply))) << 1;
+        actual |= @as(u8, @intFromBool(pos.hasRepeated())) << 2;
+        actual |= @as(u8, @intFromBool(pos.upcomingRepetition(ply))) << 3;
+        try std.testing.expectEqual(flags, actual);
+    }
 }

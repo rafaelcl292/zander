@@ -51,6 +51,28 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0) {
         if (!pos.checkers()) for (auto m : MoveList<CAPTURES>(pos)) std::printf("%u,", unsigned(m.raw()));
         std::puts("}, .quiets = &.{");
         if (!pos.checkers()) for (auto m : MoveList<QUIETS>(pos)) std::printf("%u,", unsigned(m.raw()));
+        std::puts("}, .queries = &.{");
+        for (auto move : MoveList<LEGAL>(pos)) {
+            unsigned flags = unsigned(pos.capture(move)) | (unsigned(pos.capture_stage(move)) << 1)
+                           | (unsigned(pos.gives_check(move)) << 2) | (unsigned(pos.pseudo_legal(move)) << 3);
+            unsigned bit = 4;
+            for (int threshold : {-3000, -1276, -825, -208, -1, 0, 1, 208, 781, 825, 1276, 2538, 3000})
+                flags |= unsigned(pos.see_ge(move, threshold)) << bit++;
+            std::printf("%u,", flags);
+        }
+        std::puts("}, .draw_flags = &.{");
+        for (int ply : {0, 1, 2, 3, 4, 5, 8, 32}) {
+            unsigned flags = unsigned(pos.is_draw(ply)) | (unsigned(pos.is_repetition(ply)) << 1)
+                           | (unsigned(pos.has_repeated()) << 2) | (unsigned(pos.upcoming_repetition(ply)) << 3);
+            std::printf("%u,", flags);
+        }
+        std::puts("}, .normal_pseudo = &.{");
+        if (children) {
+            for (unsigned raw = 1; raw < 4096; ++raw) {
+                Move move{uint16_t(raw)};
+                if (move.is_ok() && pos.pseudo_legal(move)) std::printf("%u,", raw);
+            }
+        }
         std::puts("}, .children = &.{");
         if (children) {
             for (auto move : MoveList<LEGAL>(pos)) {
@@ -101,7 +123,7 @@ int main(int argc, char** argv) {
     std::puts("};\npub const cuckoo_moves = [_]u16{");
     for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
     std::puts("};");
-    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
+    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
     if (argc != 2) return 1;
     std::ifstream input(argv[1]);
     if (!input) return 1;
