@@ -46,20 +46,7 @@ pub const pseudo = blk: {
     break :blk table;
 };
 
-const Prng = struct {
-    state: u64,
-    fn next(self: *Prng) u64 {
-        self.state ^= self.state >> 12;
-        self.state ^= self.state << 25;
-        self.state ^= self.state >> 27;
-        return self.state *% 2685821657736338717;
-    }
-    fn sparse(self: *Prng) u64 {
-        const a = self.next();
-        const b = self.next();
-        return a & b & self.next();
-    }
-};
+const Prng = @import("prng.zig").Prng;
 pub const Magic = struct {
     mask: u64,
     attacks: [*]u64,
@@ -139,7 +126,7 @@ pub const Tables = struct {
                 if (b == 0) break;
             }
             std.debug.assert(offset + size <= backing.len);
-            var rng: Prng = .{ .state = seeds[s.rank()] };
+            var rng = Prng.init(seeds[s.rank()]);
             while (true) {
                 m.magic = 0;
                 while (@popCount((m.magic *% m.mask) >> 56) < 6) m.magic = rng.sparse();

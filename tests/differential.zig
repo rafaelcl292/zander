@@ -81,3 +81,31 @@ test "attack tables match upstream for every relevant occupancy and square pair"
         }
     }
 }
+
+test "Zobrist keys and every cuckoo slot match upstream Position init" {
+    const reference = @import("position_reference");
+    const keys = try std.testing.allocator.create(z.position_keys.PositionKeys);
+    defer std.testing.allocator.destroy(keys);
+    keys.init();
+    var index: usize = 0;
+    for (keys.psq) |row| {
+        try std.testing.expectEqualSlices(u64, reference.keys[index..][0..64], &row);
+        index += 64;
+    }
+    try std.testing.expectEqualSlices(u64, reference.keys[index..][0..8], &keys.enpassant);
+    index += 8;
+    try std.testing.expectEqualSlices(u64, reference.keys[index..][0..16], &keys.castling);
+    index += 16;
+    try std.testing.expectEqual(reference.keys[index], keys.side);
+    try std.testing.expectEqual(reference.keys[index + 1], keys.no_pawns);
+    try std.testing.expectEqualSlices(u64, &reference.cuckoo_keys, &keys.cuckoo);
+    var occupied: usize = 0;
+    for (keys.cuckoo_move, reference.cuckoo_moves, 0..) |move, expected, i| {
+        try std.testing.expectEqual(expected, move.data);
+        if (move.data != 0) {
+            occupied += 1;
+            try std.testing.expect(i == z.position_keys.PositionKeys.h1(keys.cuckoo[i]) or i == z.position_keys.PositionKeys.h2(keys.cuckoo[i]));
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 3668), occupied);
+}
