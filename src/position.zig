@@ -297,7 +297,7 @@ pub const Position = struct {
         const us = self.side;
         if (m.kind() != .normal) {
             const mg = @import("movegen.zig");
-            var moves: mg.MoveList = .{};
+            var moves: mg.MoveList = undefined;
             if (self.st.checkers != 0) mg.generate(.evasions, self, &moves) else mg.generate(.non_evasions, self, &moves);
             for (moves.slice()) |candidate| if (candidate.data == m.data) return true;
             return false;
@@ -368,7 +368,7 @@ pub const Position = struct {
         if (self.st.rule50 > 99) {
             if (self.st.checkers == 0) return true;
             const mg = @import("movegen.zig");
-            var moves: mg.MoveList = .{};
+            var moves: mg.MoveList = undefined;
             mg.generate(.legal, self, &moves);
             if (moves.len != 0) return true;
         }

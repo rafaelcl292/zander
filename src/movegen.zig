@@ -80,6 +80,7 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
     }
 }
 /// Preserves upstream scalar move order, including swap-removal of illegal moves.
+/// Initializes the list length and generated prefix; prior storage may be undefined.
 pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) void {
     if (kind == .legal) {
         if (pos.st.checkers != 0) generate(.evasions, pos, list) else generate(.non_evasions, pos, list);

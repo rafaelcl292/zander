@@ -197,7 +197,7 @@ pub const Worker = struct {
             if (ss.in_check) return -t.value_mate + ss.ply;
             const pushes = bb.shift(pos.piecesOf(pos.side, .pawn), if (pos.side == .white) 8 else -8) & ~pos.pieces();
             if (pushes == 0 and pos.st.non_pawn_material[@intFromEnum(pos.side)] == 0 and @intFromEnum(pos.st.captured_piece.pieceType()) >= @intFromEnum(t.PieceType.knight)) {
-                var legal: mg.MoveList = .{};
+                var legal: mg.MoveList = undefined;
                 mg.generate(.legal, pos, &legal);
                 if (legal.len == 0) best_value = 0;
             }

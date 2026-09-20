@@ -88,7 +88,7 @@ pub const MovePicker = struct {
         return result;
     }
     fn score(self: *MovePicker, comptime kind: mg.GenType) usize {
-        var list: mg.MoveList = .{};
+        var list: mg.MoveList = undefined;
         mg.generate(kind, self.pos, &list);
         const us = self.pos.side;
         var lesser: [7]u64 = @splat(0);
