@@ -27,18 +27,24 @@ fn records(pos: *p.Position, storage: *[t.max_moves]RootMove) []RootMove {
 fn less(_: void, a: RootMove, b: RootMove) bool {
     return a.tb_rank > b.tb_rank;
 }
-/// Validates and extends within fixed PV capacity. Return true when a deadline
-/// or the capacity bound prevented completing the extension.
-pub fn extend(db: *const Database, options: root.Options, control: *const Control, pos: *p.Position, root_move: *RootMove, value: *i32, multi_pv: usize, overhead: i64) bool {
+/// Output-only extension may allocate; the recursive search keeps fixed storage.
+/// Return true when the time budget prevented completing the extension.
+pub fn extend(allocator: std.mem.Allocator, pv: *std.ArrayList(t.Move), db: *const Database, options: root.Options, control: *const Control, pos: *p.Position, value: *i32, multi_pv: usize, overhead: i64) !bool {
     var deadline: Deadline = .{ .control = control, .start = control.elapsed(), .overhead = overhead, .multi_pv = multi_pv };
     const abort: root.Abort = .{ .context = &deadline, .check = Deadline.expired };
-    if (abort.expired() or root_move.pv.len == 0) return abort.expired();
-    var states: [t.max_ply + 1]p.StateInfo = undefined;
+    if (abort.expired() or pv.items.len == 0) return abort.expired();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const states = arena.allocator();
     var storage: [t.max_moves]RootMove = undefined;
-    pos.doMove(root_move.pv.moves[0], &states[0]);
+    pos.doMove(pv.items[0], try states.create(p.StateInfo));
     var ply: usize = 1;
-    while (ply < root_move.pv.len) {
-        const move = root_move.pv.moves[ply];
+    defer while (ply > 0) {
+        ply -= 1;
+        pos.undoMove(pv.items[ply]);
+    };
+    while (ply < pv.items.len) {
+        const move = pv.items[ply];
         const legal = records(pos, &storage);
         if (legal.len == 0) break;
         const config = root.rank(db, pos, legal, options, abort, false);
@@ -48,7 +54,7 @@ pub fn extend(db: *const Database, options: root.Options, control: *const Contro
             break;
         };
         if (matching == null or matching.?.tb_rank != legal[0].tb_rank) break;
-        pos.doMove(move, &states[ply]);
+        pos.doMove(move, try states.create(p.StateInfo));
         ply += 1;
         if (config.root_in_tb and ((options.rule50 and pos.isDraw(@intCast(ply))) or pos.isRepetition(@intCast(ply)))) {
             pos.undoMove(move);
@@ -57,14 +63,9 @@ pub fn extend(db: *const Database, options: root.Options, control: *const Contro
         }
         if (config.root_in_tb and abort.expired()) break;
     }
-    root_move.pv.resize(ply);
-    var capped = false;
+    pv.shrinkRetainingCapacity(ply);
     while (!(options.rule50 and pos.isDraw(0))) {
         if (abort.expired()) break;
-        if (ply == states.len) {
-            capped = true;
-            break;
-        }
         const legal = records(pos, &storage);
         if (legal.len == 0) break;
         for (legal) |*record| {
@@ -80,14 +81,53 @@ pub fn extend(db: *const Database, options: root.Options, control: *const Contro
         const config = root.rank(db, pos, legal, options, abort, true);
         if (!config.root_in_tb or config.cardinality > 0) break;
         const move = legal[0].pv.moves[0];
-        root_move.pv.append(move);
-        pos.doMove(move, &states[ply]);
+        const state = try states.create(p.StateInfo);
+        try pv.append(allocator, move);
+        pos.doMove(move, state);
         ply += 1;
     }
     if (pos.isDraw(0)) value.* = 0;
-    while (ply > 0) {
-        ply -= 1;
-        pos.undoMove(root_move.pv.moves[ply]);
+    return abort.expired();
+}
+
+fn exerciseLongLine(allocator: std.mem.Allocator, pos: *p.Position, db: *const Database) !void {
+    var line: std.ArrayList(t.Move) = .empty;
+    defer line.deinit(allocator);
+    const cycle = [_]t.Move{
+        t.Move.make(.normal, t.Square.make(6, 0), t.Square.make(5, 2), .knight),
+        t.Move.make(.normal, t.Square.make(6, 7), t.Square.make(5, 5), .knight),
+        t.Move.make(.normal, t.Square.make(5, 2), t.Square.make(6, 0), .knight),
+        t.Move.make(.normal, t.Square.make(5, 5), t.Square.make(6, 7), .knight),
+    };
+    for (0..80) |_| try line.appendSlice(allocator, &cycle);
+    const initial_state = pos.st;
+    const initial_key = pos.key();
+    defer {
+        std.testing.expectEqual(initial_state, pos.st) catch @panic("PV failure leaked position state");
+        std.testing.expectEqual(initial_key, pos.key()) catch @panic("PV failure changed position key");
     }
-    return capped or abort.expired();
+    const Clock = struct {
+        fn now(_: ?*anyopaque) i64 {
+            return 0;
+        }
+    };
+    const control: Control = .{ .clock = Clock.now };
+    var value: i32 = 1;
+    try std.testing.expect(!try extend(allocator, &line, db, .{ .limit = 0 }, &control, pos, &value, 1, 10));
+    try std.testing.expectEqual(@as(usize, 320), line.items.len);
+    try std.testing.expectEqual(@as(i32, 0), value);
+}
+
+test "output PV exceeds search capacity and restores position on allocation failures" {
+    const tables = try std.testing.allocator.create(@import("../attacks.zig").Tables);
+    defer std.testing.allocator.destroy(tables);
+    tables.init();
+    var keys: @import("../position_keys.zig").PositionKeys = undefined;
+    keys.init();
+    const db = try Database.create(std.testing.allocator, std.testing.io, "", &keys);
+    defer db.destroy();
+    var pos: p.Position = undefined;
+    var state: p.StateInfo = undefined;
+    try pos.set(p.start_fen, false, &state, tables, &keys);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, exerciseLongLine, .{ &pos, db });
 }

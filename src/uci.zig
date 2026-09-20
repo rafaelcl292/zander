@@ -313,10 +313,16 @@ const Session = struct {
             if (value == -t.value_infinite) value = 0;
             const tb_score = worker.tb_config.root_in_tb and @abs(value) < @import("search_support.zig").mate_in_max_ply;
             if (tb_score) value = root.tb_score;
+            var extended: std.ArrayList(t.Move) = .empty;
+            defer extended.deinit(self.engine.allocator);
             const support = @import("search_support.zig");
             if (@abs(value) >= support.tb_win_in_max_ply and @abs(value) < support.mate_in_max_ply and !previous and (!root.isInexact() or tb_score)) {
                 if (worker.tablebases) |database| {
-                    if (@import("syzygy/pv.zig").extend(database, worker.tb_options, &self.engine.control, &self.engine.position, root, &value, @min(self.multi_pv, worker.root_moves.len), self.move_overhead)) try self.writer.writeAll("info string Syzygy PV extension reached its time or storage limit\n");
+                    try extended.appendSlice(self.engine.allocator, root.pv.slice());
+                    if (try @import("syzygy/pv.zig").extend(self.engine.allocator, &extended, database, worker.tb_options, &self.engine.control, &self.engine.position, &value, @min(self.multi_pv, worker.root_moves.len), self.move_overhead)) try self.writer.writeAll("info string Syzygy PV extension reached its time limit\n");
+                    // Retain the corrected search prefix, including the ponder move.
+                    root.pv.resize(@min(extended.items.len, root.pv.moves.len));
+                    @memcpy(root.pv.moves[0..root.pv.len], extended.items[0..root.pv.len]);
                 }
             }
             const depth = if (previous) @max(1, worker.root_depth - 1) else worker.root_depth;
@@ -331,7 +337,7 @@ const Session = struct {
             }
             try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits {d} time {d} pv", .{ self.engine.totalNodes(), self.engine.totalNodes() * 1000 / elapsed, self.engine.table.hashfull(0), self.engine.tablebaseHits(), elapsed });
             const pv = if (previous) &root.previous_pv else &root.pv;
-            for (pv.slice()) |move| {
+            for (if (extended.items.len != 0) extended.items else pv.slice()) |move| {
                 var buffer: [6]u8 = undefined;
                 try self.writer.print(" {s}", .{notation.moveText(move, self.engine.position.chess960, &buffer)});
             }

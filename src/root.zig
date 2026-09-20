@@ -29,6 +29,7 @@ pub const nnue_features = @import("nnue/features.zig");
 pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
+    _ = @import("syzygy/pv.zig");
     _ = @import("syzygy/pairs.zig");
     _ = memory;
     _ = numa;
