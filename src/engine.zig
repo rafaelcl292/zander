@@ -13,6 +13,10 @@ const memory = @import("memory.zig");
 const Helper = @import("search_thread.zig").Helper;
 const notation = @import("notation.zig");
 pub const default_network = "networks/nn-134a887f4c8f.nnue";
+pub const max_hash_mb: usize = if (@sizeOf(usize) == 8) 33554432 else 2048;
+pub fn maxThreads() usize {
+    return @max(1024, 4 * (std.Thread.getCpuCount() catch 1));
+}
 /// Stable owner of the main worker and persistent helper threads. Reconfiguration requires the search thread to
 /// be joined. Only Control's atomic methods may run concurrently with search.
 pub const Engine = struct {
@@ -25,7 +29,7 @@ pub const Engine = struct {
     startup_topology: numa.Topology,
     numa_policy: numa.Policy,
     groups: []*Group,
-    worker_nodes: [256]usize,
+    worker_nodes: []usize,
     io: std.Io,
     tables: *@import("attacks.zig").Tables,
     keys: *@import("position_keys.zig").PositionKeys,
@@ -55,7 +59,7 @@ pub const Engine = struct {
     on_wait: ?*const fn (?*anyopaque) void = null,
 
     pub fn create(allocator: std.mem.Allocator, io: std.Io, hash_mb: usize) !*Engine {
-        if (hash_mb < 1 or hash_mb > 4096) return error.InvalidHashSize;
+        if (hash_mb < 1 or hash_mb > max_hash_mb) return error.InvalidHashSize;
         const self = try allocator.create(Engine);
         errdefer allocator.destroy(self);
         self.allocator = allocator;
@@ -67,7 +71,9 @@ pub const Engine = struct {
         self.topology = numa.Topology.discover(io);
         self.startup_topology = self.topology;
         self.numa_policy = .auto;
-        self.worker_nodes = @splat(0);
+        self.worker_nodes = try allocator.alloc(usize, 1);
+        errdefer allocator.free(self.worker_nodes);
+        self.worker_nodes[0] = 0;
         self.groups = try allocator.alloc(*Group, 0);
         errdefer allocator.free(self.groups);
         self.helpers = try allocator.alloc(*Helper, 0);
@@ -115,6 +121,7 @@ pub const Engine = struct {
         const allocator = self.allocator;
         for (self.helpers) |helper| helper.destroy(allocator);
         allocator.free(self.helpers);
+        allocator.free(self.worker_nodes);
         self.main_storage.destroy(allocator);
         for (self.groups) |group| group.destroy(allocator);
         allocator.free(self.groups);
@@ -162,9 +169,11 @@ pub const Engine = struct {
         if (self.network) |network| self.caches.clear(&network.transformer);
     }
     pub fn resizeThreads(self: *Engine, count: usize) !void {
-        if (count < 1 or count > 256) return error.InvalidThreadCount;
+        if (count < 1 or count > maxThreads()) return error.InvalidThreadCount;
         const bind = self.topology.binding(self.numa_policy, count);
-        var assignment: [256]usize = @splat(0);
+        const assignment = try self.allocator.alloc(usize, count);
+        errdefer self.allocator.free(assignment);
+        @memset(assignment, 0);
         if (bind) self.topology.distribute(assignment[0..count]);
         var node_count: usize = 1;
         var counts: [64]usize = @splat(0);
@@ -206,6 +215,7 @@ pub const Engine = struct {
         self.shared_arena.deinit();
         self.shared_arena = .init(self.allocator);
         self.groups = groups;
+        self.allocator.free(self.worker_nodes);
         self.worker_nodes = assignment;
         const previous_worker = self.worker;
         self.main_storage.destroy(self.allocator);
@@ -271,23 +281,27 @@ pub const Engine = struct {
         for (self.helpers) |helper| changes += helper.worker.published_changes.swap(0, .monotonic);
         return changes;
     }
+    fn workerAt(self: *Engine, index: usize) *search.Worker {
+        return if (index == 0) &self.worker else &self.helpers[index - 1].worker;
+    }
     fn selectBest(self: *Engine) *search.Worker {
         const support = @import("search_support.zig");
-        var candidates: [256]*search.Worker = undefined;
-        candidates[0] = &self.worker;
-        for (self.helpers, 1..) |helper, i| candidates[i] = &helper.worker;
-        const workers = candidates[0 .. self.helpers.len + 1];
+        const count = self.helpers.len + 1;
         var minimum: i32 = t.value_infinite;
-        for (workers) |worker| minimum = @min(minimum, worker.root_moves[0].score);
+        for (0..count) |index| minimum = @min(minimum, self.workerAt(index).root_moves[0].score);
         var votes: [t.max_moves]i64 = @splat(0);
-        for (workers) |worker| for (self.worker.root_moves, 0..) |root, i| {
-            if (root.pv.moves[0].data == worker.root_moves[0].pv.moves[0].data) {
-                votes[i] += worker.root_moves[0].score - minimum + 14;
-                break;
+        for (0..count) |index| {
+            const worker = self.workerAt(index);
+            for (self.worker.root_moves, 0..) |root, i| {
+                if (root.pv.moves[0].data == worker.root_moves[0].pv.moves[0].data) {
+                    votes[i] += worker.root_moves[0].score - minimum + 14;
+                    break;
+                }
             }
-        };
+        }
         var best = &self.worker;
-        for (workers) |worker| {
+        for (0..count) |index| {
+            const worker = self.workerAt(index);
             const current = worker.root_moves[0];
             const chosen = best.root_moves[0];
             const current_decisive = current.score != -t.value_infinite and @abs(current.score) >= support.tb_win_in_max_ply and !current.isInexact();
@@ -306,7 +320,7 @@ pub const Engine = struct {
         return best;
     }
     pub fn resizeHash(self: *Engine, mb: usize) !void {
-        if (mb < 1 or mb > 4096) return error.InvalidHashSize;
+        if (mb < 1 or mb > max_hash_mb) return error.InvalidHashSize;
         var replacement = try memory.Region.allocate(self.allocator, mb * 1024 * 1024, self.page_policy);
         errdefer replacement.deinit();
         const clusters = std.mem.bytesAsSlice(tt.Cluster, replacement.bytes);

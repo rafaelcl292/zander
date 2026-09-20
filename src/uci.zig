@@ -84,6 +84,12 @@ const Session = struct {
         try self.writer.writeAll(message);
         try self.writer.flush();
     }
+    fn formatted(self: *Session, comptime format: []const u8, args: anytype) !void {
+        self.output_mutex.lockUncancelable(self.engine.io);
+        defer self.output_mutex.unlock(self.engine.io);
+        try self.writer.print(format, args);
+        try self.writer.flush();
+    }
     fn wake(self: *Session) void {
         self.wake_mutex.lockUncancelable(self.engine.io);
         defer self.wake_mutex.unlock(self.engine.io);
@@ -100,8 +106,8 @@ const Session = struct {
     fn command(self: *Session, args: []const []const u8) !void {
         const cmd = args[0];
         if (std.mem.eql(u8, cmd, "uci")) {
-            try self.text("id name Zander\nid author Zander contributors\n" ++
-                "option name Hash type spin default 16 min 1 max 4096\n" ++
+            try self.formatted("id name Zander\nid author Zander contributors\n" ++
+                "option name Hash type spin default 16 min 1 max {d}\n" ++
                 "option name Debug Log File type string default \n" ++
                 "option name SyzygyPath type string default <empty>\n" ++
                 "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n" ++
@@ -109,7 +115,7 @@ const Session = struct {
                 "option name SyzygyProbeLimit type spin default 7 min 0 max 7\n" ++
                 "option name NumaPolicy type string default auto\n" ++
                 "option name PagePolicy type combo default auto var auto var small var transparent var huge2m var huge1g\n" ++
-                "option name Threads type spin default 1 min 1 max 256\n" ++
+                "option name Threads type spin default 1 min 1 max {d}\n" ++
                 "option name Skill Level type spin default 20 min 0 max 20\n" ++
                 "option name UCI_LimitStrength type check default false\n" ++
                 "option name UCI_Elo type spin default 1320 min 1320 max 3190\n" ++
@@ -120,7 +126,7 @@ const Session = struct {
                 "option name UCI_ShowWDL type check default false\n" ++
                 "option name Move Overhead type spin default 10 min 0 max 5000\n" ++
                 "option name EvalFile type string default " ++ e.default_network ++ "\n" ++
-                "option name Clear Hash type button\nuciok\n");
+                "option name Clear Hash type button\nuciok\n", .{ e.max_hash_mb, e.maxThreads() });
         } else if (std.mem.eql(u8, cmd, "isready")) {
             if (self.thread == null) self.engine.ensureNetwork() catch |err| self.report(err);
             try self.text("readyok\n");
@@ -174,8 +180,8 @@ const Session = struct {
     }
     fn speedtest(self: *Session, args: []const []const u8) !void {
         if (args.len > 3) return error.UnexpectedArgument;
-        const threads: usize = if (args.len > 0) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[0], 10), 1, 256)) else @min(256, std.Thread.getCpuCount() catch 1);
-        const hash: usize = if (args.len > 1) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[1], 10), 1, 4096)) else @min(4096, 128 * threads);
+        const threads: usize = if (args.len > 0) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[0], 10), 1, @as(i64, @intCast(e.maxThreads())))) else @min(e.maxThreads(), std.Thread.getCpuCount() catch 1);
+        const hash: usize = if (args.len > 1) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[1], 10), 1, @as(i64, @intCast(e.max_hash_mb)))) else @min(e.max_hash_mb, 128 * threads);
         const seconds: i64 = if (args.len > 2) std.math.clamp(try std.fmt.parseInt(i64, args[2], 10), 1, std.math.maxInt(i32) / 1000) else 150;
         try self.engine.resizeThreads(threads);
         try self.engine.resizeHash(hash);
@@ -439,8 +445,8 @@ const Session = struct {
                 self.engine.page_policy = previous;
                 return err;
             };
-        } else if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, 4096)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
-            try self.engine.resizeThreads(try integer(usize, value, 1, 256));
+        } else if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, e.max_hash_mb)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
+            try self.engine.resizeThreads(try integer(usize, value, 1, e.maxThreads()));
         } else if (std.ascii.eqlIgnoreCase(name, "Skill Level")) self.skill_level = try integer(i32, value, 0, 20) else if (std.ascii.eqlIgnoreCase(name, "UCI_LimitStrength")) self.limit_strength = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Elo")) self.elo = try integer(i32, value, 1320, 3190) else if (std.ascii.eqlIgnoreCase(name, "nodestime")) {
             self.engine.node_rate = try integer(i64, value, 0, 10000);
             self.engine.node_time = .{};

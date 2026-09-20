@@ -25,6 +25,8 @@ test "persistent engine retains state and replaces resources transactionally" {
     try std.testing.expectEqual(key, engine.position.key());
     try std.testing.expectEqual(state, engine.position.st);
     try std.testing.expectError(error.InvalidHashSize, engine.resizeHash(0));
+    try std.testing.expectError(error.InvalidHashSize, engine.resizeHash(z.engine.max_hash_mb + 1));
+    try std.testing.expectError(error.InvalidThreadCount, engine.resizeThreads(z.engine.maxThreads() + 1));
     try std.testing.expectEqual(original_clusters, engine.clusters.ptr);
     engine.loadNetwork("tests/positions.txt") catch {};
     try std.testing.expectEqual(network, engine.network.?);

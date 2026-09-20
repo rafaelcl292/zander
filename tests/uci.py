@@ -91,6 +91,8 @@ def main():
         handshake = client.until("uciok")
         for option in ("Hash", "MultiPV", "Ponder", "UCI_Chess960", "UCI_ShowWDL", "EvalFile", "Skill Level", "UCI_LimitStrength", "UCI_Elo", "nodestime"):
             assert any(line.startswith(f"option name {option} ") for line in handshake), handshake
+        assert any(line.startswith("option name Threads ") and int(line.split("max ")[1]) >= 1024 for line in handshake), handshake
+        assert any(line.startswith("option name Hash ") and int(line.split("max ")[1]) >= 2048 for line in handshake), handshake
         client.send("position fen 7k/7P/6K1/8/3B4/8/8/8 b - -")
         client.send("go perft 1")
         assert client.until("Nodes searched:")[-1] == "Nodes searched: 0"
