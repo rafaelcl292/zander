@@ -88,6 +88,24 @@ def main():
         handshake = client.until("uciok")
         for option in ("Hash", "MultiPV", "Ponder", "UCI_Chess960", "UCI_ShowWDL", "EvalFile", "Skill Level", "UCI_LimitStrength", "UCI_Elo", "nodestime"):
             assert any(line.startswith(f"option name {option} ") for line in handshake), handshake
+        client.send("position startpos")
+        client.send("go perft 3")
+        divided = client.until("Nodes searched:")
+        assert divided[-1] == "Nodes searched: 8902", divided
+        counts = {line.split(": ")[0]: int(line.split(": ")[1]) for line in divided if re.match(r"^[a-h][1-8][a-h][1-8]: ", line)}
+        assert len(counts) == 20 and sum(counts.values()) == 8902, counts
+        assert counts["e2e4"] == 600 and counts["g1f3"] == 440, counts
+        client.send("go perft 1")
+        assert client.until("Nodes searched:")[-1] == "Nodes searched: 20"
+        client.send("setoption name UCI_Chess960 value true")
+        client.send("position fen r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+        client.send("go perft 1")
+        castle_moves = client.until("Nodes searched:")
+        assert "e1h1: 1" in castle_moves and "e1a1: 1" in castle_moves, castle_moves
+        client.send("setoption name UCI_Chess960 value false")
+        client.send("position startpos")
+        client.send("isready")
+        assert all(line in ("", "readyok") for line in client.until("readyok"))
         client.send(f"setoption name EvalFile value {args.network}")
         client.send("setoption name Hash value 1")
         if hasattr(os, "sched_getaffinity"):

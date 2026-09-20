@@ -220,7 +220,33 @@ const Session = struct {
         }
         try self.engine.setPosition(fen, self.chess960, args[next..]);
     }
+    fn writePerft(self: *Session, depth: u8) !void {
+        self.output_mutex.lockUncancelable(self.engine.io);
+        defer self.output_mutex.unlock(self.engine.io);
+        var moves: @import("movegen.zig").MoveList = .{};
+        const pos = &self.engine.position;
+        @import("movegen.zig").generate(.legal, pos, &moves);
+        var total: u64 = 0;
+        for (moves.slice()) |move| {
+            const nodes = block: {
+                if (depth == 1) break :block 1;
+                var state: @import("position.zig").StateInfo = undefined;
+                pos.doMove(move, &state);
+                defer pos.undoMove(move);
+                break :block @import("perft.zig").count(pos, depth - 1);
+            };
+            total += nodes;
+            var buffer: [6]u8 = undefined;
+            try self.writer.print("{s}: {d}\n", .{ notation.moveText(move, pos.chess960, &buffer), nodes });
+        }
+        try self.writer.print("\nNodes searched: {d}\n\n", .{total});
+        try self.writer.flush();
+    }
     fn go(self: *Session, args: []const []const u8) !void {
+        if (args.len != 0 and std.mem.eql(u8, args[0], "perft")) {
+            if (args.len != 2) return error.InvalidPerftCommand;
+            return self.writePerft(try integer(u8, args[1], 1, t.max_ply - 1));
+        }
         var limits: search.Worker.Limits = .{ .depth = t.max_ply - 1, .multi_pv = self.multi_pv };
         var time_limits: tm.Limits = .{};
         var requested: [t.max_moves]t.Move = undefined;
