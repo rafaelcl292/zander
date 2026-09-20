@@ -142,7 +142,7 @@ pub const Topology = struct {
 };
 pub const Guard = struct {
     previous: ?Mask = null,
-    windows: ?@import("numa_windows.zig").Guard = null,
+    windows: if (builtin.os.tag == .windows and @sizeOf(usize) == 8) ?@import("numa_windows.zig").Guard else ?void = null,
     pub fn bind(mask: ?*const Mask) !Guard {
         if (builtin.os.tag == .windows and @sizeOf(usize) == 8) {
             return if (mask) |cpus| .{ .windows = try @import("numa_windows.zig").Guard.bind(cpus.*) } else .{};
