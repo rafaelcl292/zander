@@ -24,7 +24,47 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
             };
         }
         pub fn propagate(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
-            if (@import("backend").simd) self.propagateVector(input, output) else self.propagateScalar(input, output);
+            switch (@import("backend").nnue_backend) {
+                .scalar => self.propagateScalar(input, output),
+                .vector => self.propagateVector(input, output),
+                .sse2 => self.propagateSse2(input, output),
+                .avx2 => self.propagateAvx2(input, output),
+            }
+        }
+        /// Reference SSE2 arithmetic: widen unsigned activations and signed
+        /// weights, then sum adjacent products into wrapping i32 accumulators.
+        pub fn propagateSse2(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
+            self.propagatePacked(8, input, output);
+        }
+        pub fn propagateAvx2(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
+            self.propagatePacked(16, input, output);
+        }
+        fn propagatePacked(self: *const @This(), comptime lanes: usize, input: *const [inputs]u8, output: *[outputs]i32) void {
+            const cpu = @import("builtin").cpu;
+            if (cpu.arch != .x86_64) @compileError("Packed x86 NNUE backends require x86-64");
+            if (comptime lanes == 16 and !std.Target.x86.featureSetHas(cpu.features, .avx2)) @compileError("The AVX2 NNUE backend requires an AVX2 compilation target");
+            comptime std.debug.assert(inputs % lanes == 0);
+            for (&self.biases, &self.weights, output) |bias, row, *value| {
+                var sums: @Vector(lanes / 2, i32) = @splat(0);
+                var offset: usize = 0;
+                while (offset < inputs) : (offset += lanes) {
+                    const x: @Vector(lanes, u8) = input[offset..][0..lanes].*;
+                    const w: @Vector(lanes, i8) = row[offset..][0..lanes].*;
+                    const wide_x: @Vector(lanes, i16) = @intCast(x);
+                    const wide_w: @Vector(lanes, i16) = w;
+                    const products = if (lanes == 8) asm ("pmaddwd %[weights], %[result]"
+                        : [result] "=x" (-> @Vector(4, i32)),
+                        : [input] "0" (wide_x),
+                          [weights] "x" (wide_w),
+                    ) else asm ("vpmaddwd %[weights], %[input], %[result]"
+                        : [result] "=x" (-> @Vector(8, i32)),
+                        : [input] "x" (wide_x),
+                          [weights] "x" (wide_w),
+                    );
+                    sums +%= products;
+                }
+                value.* = bias +% @reduce(.Add, sums);
+            }
         }
         pub fn propagateVector(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
             const lanes = @min(16, std.simd.suggestVectorLength(i32) orelse 4);
@@ -105,5 +145,13 @@ test "vector affine matches scalar with signed weights and wrapping bias" {
         layer.propagateScalar(&input, &scalar);
         layer.propagateVector(&input, &vector);
         try std.testing.expectEqualSlices(i32, &scalar, &vector);
+        if (@import("builtin").cpu.arch == .x86_64) {
+            layer.propagateSse2(&input, &vector);
+            try std.testing.expectEqualSlices(i32, &scalar, &vector);
+            if (comptime std.Target.x86.featureSetHas(@import("builtin").cpu.features, .avx2)) {
+                layer.propagateAvx2(&input, &vector);
+                try std.testing.expectEqualSlices(i32, &scalar, &vector);
+            }
+        }
     }
 }

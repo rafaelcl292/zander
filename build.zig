@@ -4,7 +4,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize });
     const backend = b.addOptions();
-    backend.addOption(bool, "simd", b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false);
+    const Kernel = enum { scalar, vector, sse2, avx2 };
+    const kernel = b.option(Kernel, "nnue-backend", "NNUE kernel: scalar, vector, sse2, or avx2") orelse
+        (if (b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false) Kernel.vector else Kernel.scalar);
+    backend.addOption(Kernel, "nnue_backend", kernel);
+    backend.addOption(bool, "simd", kernel != .scalar);
     backend.addOption(bool, "prefetch", b.option(bool, "prefetch", "Issue the reference TT/history prefetch hints") orelse true);
     mod.addOptions("backend", backend);
     const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
