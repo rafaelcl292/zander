@@ -46,6 +46,12 @@ pub const RootMove = @import("root_move.zig").RootMove;
 const NodeType = enum { root, pv, non_pv };
 pub const Worker = struct {
     base: *QWorker,
+    progress_context: ?*anyopaque = null,
+    on_progress: ?*const fn (?*anyopaque, *Worker) void = null,
+    previous_score: i32 = t.value_infinite,
+    previous_average: i32 = t.value_infinite,
+    previous_time_reduction: f64 = 1.0,
+    completed_depth: i32 = 0,
     reductions: s.Reductions,
     tt_move_history: h.TTMoveHistory = .{ .value = 0 },
     root_depth: i32 = 0,
@@ -101,6 +107,7 @@ pub const Worker = struct {
         self.root_moves = storage[0..count];
         for (selected[0..count], self.root_moves) |move, *rm| rm.* = RootMove.init(move);
         self.root_depth = 0;
+        self.completed_depth = 0;
         self.nmp_min_ply = 0;
         self.best_move_changes = 0;
         self.pv_idx = 0;
@@ -117,9 +124,20 @@ pub const Worker = struct {
         var last_best_pv: s.PV = .{};
         var last_best_score: i32 = -t.value_infinite;
         var fail_high_recovery: i32 = 0;
+        var search_again: i32 = 0;
+        var last_best_depth: i32 = 0;
+        var time_reduction: f64 = 1;
+        var total_changes: f64 = 0;
+        var iter_values: [4]i32 = @splat(if (self.previous_score == t.value_infinite) 0 else self.previous_score);
+        var iter_index: usize = 0;
+        var iteration_value: i32 = -t.value_infinite;
         const us = @intFromEnum(pos.side);
-        while (self.root_depth < limits.depth) {
+        while (self.root_depth < limits.depth and !self.base.stopped()) {
             self.root_depth += 1;
+            total_changes /= 2;
+            if (self.base.control) |control| {
+                if (!control.increase_depth) search_again += 1;
+            }
             for (self.root_moves, 0..) |*rm, i| {
                 rm.previous_score = rm.score;
                 rm.previous_pv = rm.pv;
@@ -145,13 +163,16 @@ pub const Worker = struct {
                 var failed_high_count: i32 = 0;
                 if (self.pv_idx == 0) fail_high_recovery = @max(0, fail_high_recovery - 2);
                 while (true) {
-                    const adjusted_depth = @max(1, self.root_depth - failed_high_count - fail_high_recovery);
+                    const adjusted_depth = @max(1, self.root_depth - failed_high_count - fail_high_recovery - div(3 * (search_again + 1), 4));
                     const best = self.searchRoot(pos, alpha, beta, adjusted_depth);
+                    iteration_value = best;
                     std.mem.sort(RootMove, self.root_moves[self.pv_idx..self.pv_last], {}, RootMove.lessThan);
+                    if (self.base.stopped()) break;
                     if (best <= alpha) {
                         beta = alpha;
                         alpha = @max(best - delta, -t.value_infinite);
                         failed_high_count = 0;
+                        if (self.base.control) |control| control.stop_on_ponderhit = false;
                     } else if (best >= beta) {
                         alpha = @max(beta - delta, alpha);
                         beta = @min(best + delta, t.value_infinite);
@@ -160,29 +181,92 @@ pub const Worker = struct {
                     delta += div(47 * delta, 128);
                 }
                 if (failed_high_count > 0 and self.pv_idx == 0) fail_high_recovery = div(failed_high_count + 1, 2) + 2;
+                if (self.base.stopped() and self.pv_idx != 0) self.repairAbortedMultiPV(multi_pv);
                 std.mem.sort(RootMove, self.root_moves[pv_first .. self.pv_idx + 1], {}, RootMove.lessThan);
+                if (self.base.stopped()) break;
             }
             const best = &self.root_moves[0];
             const forgotten_mate = last_best_score != -t.value_infinite and @abs(last_best_score) >= s.mate_in_max_ply and (@abs(best.score) < @abs(last_best_score) or best.isInexact());
-            if (!forgotten_mate) {
+            if (!self.base.stopped() and (last_best_pv.len == 0 or last_best_pv.moves[0].data != best.pv.moves[0].data)) last_best_depth = self.root_depth;
+            const aborted_loss = self.base.stopped() and self.pv_idx == 0 and best.isExactLoss();
+            if (!self.base.stopped() and !forgotten_mate) {
                 last_best_pv = best.pv;
                 last_best_score = best.score;
-            } else if (best.score != -t.value_infinite and last_best_pv.len != 0) {
-                for (self.root_moves, 0..) |*rm, i| {
-                    if (rm.pv.moves[0].data != last_best_pv.moves[0].data) continue;
-                    const saved = rm.*;
-                    std.mem.copyBackwards(RootMove, self.root_moves[1 .. i + 1], self.root_moves[0..i]);
-                    self.root_moves[0] = saved;
-                    break;
+            }
+            if (aborted_loss or (best.score != -t.value_infinite and forgotten_mate)) {
+                if (last_best_pv.len != 0) {
+                    for (self.root_moves, 0..) |*rm, i| {
+                        if (rm.pv.moves[0].data != last_best_pv.moves[0].data) continue;
+                        const saved = rm.*;
+                        std.mem.copyBackwards(RootMove, self.root_moves[1 .. i + 1], self.root_moves[0..i]);
+                        self.root_moves[0] = saved;
+                        break;
+                    }
+                    self.root_moves[0].score = last_best_score;
+                    self.root_moves[0].uci_score = last_best_score;
+                    self.root_moves[0].pv = last_best_pv;
+                    self.root_moves[0].unsetInexact();
+                } else if (aborted_loss) self.root_moves[0].inexact_lower = true;
+            }
+            if (!self.base.stopped()) {
+                self.completed_depth = self.root_depth;
+                if (self.on_progress) |callback| callback(self.progress_context, self);
+            }
+            total_changes += @floatFromInt(self.best_move_changes);
+            if (self.base.control) |control| {
+                const best_score = self.root_moves[0].score;
+                if (control.limits.mate != 0 and !control.stopped() and @abs(best_score) >= s.mate_in_max_ply and t.value_mate - @as(i32, @intCast(@abs(best_score))) <= 2 * control.limits.mate) control.requestStop();
+                if (control.limits.managed() and !control.stopped() and !control.stop_on_ponderhit) {
+                    const effort = self.root_moves[0].effort * 100000 / @max(1, self.base.nodes);
+                    const falling = std.math.clamp((11.48 + 2.30 * @as(f64, @floatFromInt(self.previous_average - iteration_value)) + 1.1 * @as(f64, @floatFromInt(iter_values[iter_index] - iteration_value))) / 100.0, 0.576, 1.728);
+                    time_reduction = std.math.clamp(interpolate(@floatFromInt(self.root_depth - last_best_depth), 4.96, 18.79, 0.639, 1.712), 0.629, 1.544);
+                    const reduction = (1.468 + self.previous_time_reduction) / (2.284 * time_reduction);
+                    const instability = 1.077 + 2.229 * total_changes;
+                    const high_effort = std.math.clamp(interpolate(@floatFromInt(effort), 75800, 104510, 0.969, 0.714), 0.693, 0.838);
+                    var total_time = @as(f64, @floatFromInt(control.budget.optimum)) * falling * reduction * instability * high_effort;
+                    if (count == 1) total_time = @min(500, total_time);
+                    const elapsed: f64 = @floatFromInt(control.elapsed());
+                    if (elapsed > @min(total_time, @as(f64, @floatFromInt(control.budget.maximum))) or self.root_moves[multi_pv - 1].score >= t.value_mate - 3 or best_score == -t.value_mate + 2) {
+                        if (control.ponder.load(.acquire)) control.stop_on_ponderhit = true else control.requestStop();
+                    } else control.increase_depth = control.ponder.load(.acquire) or elapsed <= total_time * 0.50;
                 }
-                self.root_moves[0].score = last_best_score;
-                self.root_moves[0].uci_score = last_best_score;
-                self.root_moves[0].pv = last_best_pv;
-                self.root_moves[0].unsetInexact();
             }
             self.best_move_changes = 0;
+            iter_values[iter_index] = iteration_value;
+            iter_index = (iter_index + 1) & 3;
         }
-        return .{ .best_move = self.root_moves[0].pv.moves[0], .score = self.root_moves[0].score, .depth = self.root_depth, .nodes = self.base.nodes };
+        self.previous_time_reduction = time_reduction;
+        self.previous_score = self.root_moves[0].score;
+        self.previous_average = self.root_moves[0].average_score;
+        return .{ .best_move = self.root_moves[0].pv.moves[0], .score = if (self.root_moves[0].score == -t.value_infinite) 0 else self.root_moves[0].score, .depth = self.completed_depth, .nodes = self.base.nodes };
+    }
+    fn interpolate(x: f64, x0: f64, x1: f64, y0: f64, y1: f64) f64 {
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+    fn repairAbortedMultiPV(self: *Worker, multi_pv: usize) void {
+        const prior = &self.root_moves[self.pv_idx - 1];
+        const current = &self.root_moves[self.pv_idx];
+        if ((loss(prior.score) and RootMove.lessThan({}, current.*, prior.*)) or current.isExactLoss()) {
+            if (current.previous_score != -t.value_infinite and current.previous_score_exact and current.previous_score <= prior.score) {
+                current.score = current.previous_score;
+                current.uci_score = current.previous_score;
+                current.previous_score = -t.value_infinite;
+                current.pv = current.previous_pv;
+                current.unsetInexact();
+            } else {
+                if (loss(prior.score)) {
+                    current.score = prior.score;
+                    current.uci_score = prior.score;
+                    current.previous_score = -t.value_infinite;
+                    current.pv.resize(1);
+                    current.inexact_upper = true;
+                } else current.inexact_upper = false;
+                current.inexact_lower = !current.inexact_upper;
+            }
+        }
+        for (self.root_moves[self.pv_idx + 1 .. multi_pv]) |*rm| if (rm.isExactLoss()) {
+            rm.inexact_lower = true;
+        };
     }
     /// Diagnostic non-root entry. Retain histories and TT between calls.
     pub fn run(self: *Worker, comptime pv_node: bool, pos: *p.Position, pv: *s.PV, alpha: i32, beta: i32, depth: i32, cut_node: bool) i32 {
@@ -215,6 +299,8 @@ pub const Worker = struct {
         const all_node = !(pv_node or cut_node);
         const seek_mate = self.root_depth >= 16 and @abs(if (self.root_moves.len != 0) self.root_moves[self.pv_idx].score else self.root_score) >= 2000;
         if (initial_depth <= 0) return w.search(pv_node, pos, frame, initial_alpha, initial_beta);
+        if (w.control) |control| control.poll(w.nodes);
+        if (w.stopped()) return 0;
         var depth = @min(initial_depth, t.max_ply - 1);
         var alpha = initial_alpha;
         var beta = initial_beta;
@@ -315,6 +401,7 @@ pub const Worker = struct {
                 w.doNullMove(pos, &state, frame);
                 const value = -self.search(false, pos, frame + 1, -beta, -beta + 1, depth - reduction, false);
                 w.undoNullMove(pos);
+                if (w.stopped()) return 0;
                 if (value >= beta and !win(value)) {
                     if (self.nmp_min_ply != 0 or depth < 16) {
                         ss.prior_nmp_fail_high += 1;
@@ -323,6 +410,7 @@ pub const Worker = struct {
                     self.nmp_min_ply = ss.ply + div(3 * (depth - reduction), 4);
                     const verified = self.search(false, pos, frame, beta - 1, beta, depth - reduction, false);
                     self.nmp_min_ply = 0;
+                    if (w.stopped()) return 0;
                     if (verified >= beta) {
                         ss.prior_nmp_fail_high += 1;
                         return value;
@@ -343,6 +431,7 @@ pub const Worker = struct {
                     var value = -w.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1);
                     if (value >= prob_beta and prob_depth > 0) value = -self.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1, prob_depth, !cut_node);
                     w.undoMove(pos, move);
+                    if (w.stopped()) return 0;
                     if (value >= prob_beta) {
                         w.save(probe.writer, key, s.valueToTT(value, ss.ply), ss.tt_pv, .lower, prob_depth + 1, move, unadjusted);
                         if (!decisive(value)) return value - (prob_beta - beta);
@@ -411,6 +500,7 @@ pub const Worker = struct {
                 ss.excluded_move = move;
                 value = self.search(false, pos, frame, singular_beta - 1, singular_beta, singular_depth, cut_node);
                 ss.excluded_move = .none;
+                if (w.stopped()) return 0;
                 if (value < singular_beta) {
                     const adj: @TypeOf(correction) = @intCast(@abs(correction) / 198368);
                     const double_margin = -2 + 204 * b(pv_node) - 152 * b(!tt_capture) - adj - div(1175 * @as(i32, self.tt_move_history.get()), 114178) - 38 * b(ss.ply > self.root_depth);
@@ -458,6 +548,7 @@ pub const Worker = struct {
                 value = -self.search(true, pos, frame + 1, -beta, -alpha, new_depth, false);
             }
             w.undoMove(pos, move);
+            if (w.stopped()) return 0;
             std.debug.assert(value > -t.value_infinite and value < t.value_infinite);
             if (root_node) {
                 for (self.root_moves) |*rm| {

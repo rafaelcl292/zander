@@ -1,3 +1,5 @@
+pub const time_management = @import("time_management.zig");
+pub const search_control = @import("search_control.zig");
 pub const search = @import("search.zig");
 pub const search_history = @import("search_history.zig");
 pub const quiescence = @import("quiescence.zig");
@@ -20,6 +22,7 @@ pub const nnue_features = @import("nnue/features.zig");
 pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
+    _ = search_control;
     _ = nnue_layers;
     _ = nnue_reader;
     _ = nnue_features;

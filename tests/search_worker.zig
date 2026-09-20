@@ -335,4 +335,34 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expectError(error.TooManyRootMoves, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .search_moves = &duplicates }));
         try std.testing.expectError(error.InsufficientRootStorage, search.iterativeDeepening(&pos, roots[0..19], .{ .depth = 1 }));
     }
+    for (@import("reference").time_cases) |case| {
+        var adjustment: f64 = -1;
+        const budget = z.time_management.Budget.init(.{ .time = .{ case.own, case.other }, .increment = .{ case.increment, 0 }, .moves_to_go = case.moves }, 0, case.ply, 10, case.ponder, &adjustment);
+        try std.testing.expectEqual(case.optimum, budget.optimum);
+        try std.testing.expectEqual(case.maximum, budget.maximum);
+    }
+    const Clock = struct {
+        fn now(_: ?*anyopaque) i64 {
+            return 0;
+        }
+    };
+    var control: z.search_control.Control = .{ .clock = Clock.now };
+    worker.control = &control;
+    defer worker.control = null;
+    for ([_]u64{ 1, 64, 512, 4096 }) |limit| {
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(z.position.start_fen, false, &state, tables, keys);
+        const key = pos.key();
+        control.reset(.{ .nodes = limit }, .{});
+        const result = try search.iterativeDeepening(&pos, roots, .{ .depth = 64, .multi_pv = 3 });
+        try std.testing.expect(control.stopped());
+        try std.testing.expect(result.nodes >= limit);
+        try std.testing.expect(pos.legal(result.best_move));
+        try std.testing.expectEqual(key, pos.key());
+        try std.testing.expect(pos.st == &state);
+        try std.testing.expectEqual(@as(usize, 1), accumulators.size);
+        try std.testing.expectEqual(@as(i32, 0), search.nmp_min_ply);
+        for (worker.frames) |frame| try std.testing.expectEqual(@as(u16, 0), frame.excluded_move.data);
+    }
 }

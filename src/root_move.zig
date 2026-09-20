@@ -27,6 +27,9 @@ pub const RootMove = struct {
     pub fn lessThan(_: void, a: RootMove, c: RootMove) bool {
         return if (a.score != c.score) a.score > c.score else a.previous_score > c.previous_score;
     }
+    pub fn isExactLoss(self: *const RootMove) bool {
+        return self.score != -t.value_infinite and self.score <= -s.tb_win_in_max_ply and !self.isInexact();
+    }
     pub fn isInexact(self: *const RootMove) bool {
         return self.inexact_lower or self.inexact_upper;
     }

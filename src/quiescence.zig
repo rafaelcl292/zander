@@ -24,9 +24,13 @@ pub const Worker = struct {
     shared: *h.SharedHistories,
     continuation_correction: *h.ContinuationCorrectionHistory,
     frames: [t.max_ply + 10]s.Stack = @splat(.{}),
+    control: ?*@import("search_control.zig").Control = null,
     nodes: u64 = 0,
     sel_depth: i32 = 0,
     optimism: [2]i32 = @splat(0),
+    pub fn stopped(self: *const Worker) bool {
+        return if (self.control) |control| control.stopped() else false;
+    }
     /// Start a fresh diagnostic root. TT and history contents are retained;
     /// the owner decides when to clear them or advance the TT generation.
     pub fn run(self: *Worker, comptime pv_node: bool, pos: *p.Position, pv: *s.PV, alpha: i32, beta: i32) i32 {
@@ -92,6 +96,7 @@ pub const Worker = struct {
     pub fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, beta: i32) i32 {
         std.debug.assert(initial_alpha >= -t.value_infinite and initial_alpha < beta and beta <= t.value_infinite);
         std.debug.assert(pv_node or initial_alpha == beta - 1);
+        if (self.stopped()) return 0;
         const ss = &self.frames[frame];
         var alpha = initial_alpha;
         if (alpha < 0 and pos.upcomingRepetition(ss.ply)) {
@@ -163,6 +168,7 @@ pub const Worker = struct {
             self.doMove(pos, move, &state, frame);
             const value = -self.search(pv_node, pos, frame + 1, -beta, -alpha);
             self.undoMove(pos, move);
+            if (self.stopped()) return 0;
             std.debug.assert(value > -t.value_infinite and value < t.value_infinite);
             if (value > best_value) {
                 best_value = value;

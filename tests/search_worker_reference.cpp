@@ -310,4 +310,15 @@ int main(int argc, char** argv) {
     }
     std::puts("};");
 
+    options.add("Move Overhead",Option(10,0,5000));
+    options.add("Ponder",Option(false));
+    std::puts("pub const TimeCase = struct { own: i64, other: i64, increment: i64, moves: i32, ply: i32, ponder: bool, optimum: i64, maximum: i64 };\npub const time_cases = [_]TimeCase{");
+    for(int own : {1,100,999,1000,10000,60000,600000}) for(int other : {100,60000}) for(int inc : {0,1000}) for(int moves : {0,1,20,60}) for(int ply : {0,40,120}) for(bool ponder : {false,true}) {
+        std::istringstream setting(ponder?"name Ponder value true":"name Ponder value false"); options.setoption(setting);
+        Search::LimitsType limits; limits.time[WHITE]=own; limits.time[BLACK]=other; limits.inc[WHITE]=inc; limits.movestogo=moves; limits.startTime=0;
+        TimeManagement tm; double adjust=-1; tm.init(limits,WHITE,ply,options,adjust);
+        std::printf(".{ .own=%d,.other=%d,.increment=%d,.moves=%d,.ply=%d,.ponder=%s,.optimum=%lld,.maximum=%lld },\n",own,other,inc,moves,ply,ponder?"true":"false",(long long)tm.optimum(),(long long)tm.maximum());
+    }
+    std::puts("};");
+
 }
