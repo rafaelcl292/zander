@@ -46,7 +46,8 @@ test "persistent engine retains state and replaces resources transactionally" {
     try std.testing.expectEqual(@as(usize, 1), engine.accumulators.size);
     try engine.resizeThreads(3);
     const original_position = engine.position.key();
-    try engine.prepareSearch(.{ .depth = 8 }, .{ .nodes = 4096 }, 10, false);
+    // Let the node budget stop this search; a depth limit can finish first.
+    try engine.prepareSearch(.{ .depth = z.types.max_ply - 1 }, .{ .nodes = 4096 }, 10, false);
     const parallel = try engine.runSearch();
     try std.testing.expect(parallel.nodes >= 4096);
     try std.testing.expectEqual(original_position, engine.position.key());
