@@ -25,6 +25,12 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
         }
         pub fn propagate(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
             switch (@import("backend").nnue_backend) {
+                .auto => {
+                    if (@import("builtin").cpu.arch == .x86_64) {
+                        const dispatch = @import("dispatch.zig");
+                        if (dispatch.hasAvx2()) dispatch.zander_affine_avx2(input, @ptrCast(&self.weights), &self.biases, output, inputs, outputs) else self.propagateSse2(input, output);
+                    } else self.propagateVector(input, output);
+                },
                 .scalar => self.propagateScalar(input, output),
                 .vector => self.propagateVector(input, output),
                 .sse2 => self.propagateSse2(input, output),
@@ -143,6 +149,8 @@ test "vector affine matches scalar with signed weights and wrapping bias" {
     for (0..32) |_| {
         for (&input) |*x| x.* = @truncate(rng.next());
         layer.propagateScalar(&input, &scalar);
+        layer.propagate(&input, &vector);
+        try std.testing.expectEqualSlices(i32, &scalar, &vector);
         layer.propagateVector(&input, &vector);
         try std.testing.expectEqualSlices(i32, &scalar, &vector);
         if (@import("builtin").cpu.arch == .x86_64) {

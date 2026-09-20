@@ -4,13 +4,14 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize });
     const backend = b.addOptions();
-    const Kernel = enum { scalar, vector, sse2, avx2 };
-    const kernel = b.option(Kernel, "nnue-backend", "NNUE kernel: scalar, vector, sse2, or avx2") orelse
+    const Kernel = enum { scalar, vector, sse2, avx2, auto };
+    const kernel = b.option(Kernel, "nnue-backend", "NNUE kernel: scalar, vector, sse2, avx2, or auto") orelse
         (if (b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false) Kernel.vector else Kernel.scalar);
     backend.addOption(Kernel, "nnue_backend", kernel);
     backend.addOption(bool, "simd", kernel != .scalar);
     backend.addOption(bool, "prefetch", b.option(bool, "prefetch", "Issue the reference TT/history prefetch hints") orelse true);
     mod.addOptions("backend", backend);
+    if (kernel == .auto) addDispatchObject(b, mod, target, optimize);
     const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
     exe_mod.addImport("zander", mod);
     const exe = b.addExecutable(.{ .name = "zander", .root_module = exe_mod });
@@ -32,6 +33,7 @@ pub fn build(b: *std.Build) void {
     const diff_mod = b.createModule(.{ .root_source_file = b.path("tests/differential.zig"), .target = b.graph.host, .optimize = optimize });
     diff_mod.addImport("zander", b.createModule(.{ .root_source_file = b.path("src/root.zig"), .target = b.graph.host, .optimize = optimize }));
     diff_mod.import_table.get("zander").?.addOptions("backend", backend);
+    if (kernel == .auto) addDispatchObject(b, diff_mod.import_table.get("zander").?, b.graph.host, optimize);
     diff_mod.addObjectFile(obj);
     const reference_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
     reference_cpp.addFileArg(b.path("tests/position_reference.cpp"));
@@ -192,4 +194,21 @@ pub fn build(b: *std.Build) void {
     const diff = b.addTest(.{ .root_module = diff_mod });
     const diff_step = b.step("differential", "Compare with pinned Stockfish C++ (requires host c++)");
     diff_step.dependOn(&b.addRunArtifact(diff).step);
+}
+
+fn addDispatchObject(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+    if (target.result.cpu.arch != .x86_64) return;
+    var query = target.query;
+    query.cpu_model = .baseline;
+    query.cpu_features_add = std.Target.x86.featureSet(&.{.avx2});
+    query.cpu_features_sub = .empty;
+    const object = b.addObject(.{
+        .name = "nnue-avx2",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/nnue/avx2.zig"),
+            .target = b.resolveTargetQuery(query),
+            .optimize = optimize,
+        }),
+    });
+    module.addObject(object);
 }
