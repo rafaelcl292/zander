@@ -75,6 +75,26 @@ pub const FeatureTransformer = struct {
         };
     }
     pub fn transform(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
+        if (@import("backend").simd) return transformVector(acc, side, output);
+        transformScalar(acc, side, output);
+    }
+    pub fn transformVector(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
+        const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+        const Signed = @Vector(lanes, i16);
+        const Unsigned = @Vector(lanes, u16);
+        for (0..2) |p| {
+            var j: usize = 0;
+            while (j < dimensions / 2) : (j += lanes) {
+                const a: Signed = acc[side ^ p][j..][0..lanes].*;
+                const b: Signed = acc[side ^ p][j + dimensions / 2 ..][0..lanes].*;
+                const first: Unsigned = @intCast(@min(@max(a, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
+                const second: Unsigned = @intCast(@min(@max(b, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
+                // 255 * 255 fits u16; the clipped product fits seven bits.
+                output[p * (dimensions / 2) + j ..][0..lanes].* = @as(@Vector(lanes, u8), @intCast((first * second) >> @splat(9)));
+            }
+        }
+    }
+    pub fn transformScalar(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
         for (0..2) |p| {
             for (0..dimensions / 2) |j| {
                 const first: u32 = @intCast(std.math.clamp(acc[side ^ p][j], 0, 255));
@@ -84,3 +104,21 @@ pub const FeatureTransformer = struct {
         }
     }
 };
+
+test "vector feature transformation matches scalar clipping and lane order" {
+    var rng = @import("../prng.zig").Prng.init(789);
+    var acc: [2][dimensions]i16 = undefined;
+    var scalar: [dimensions]u8 = undefined;
+    var vector: [dimensions]u8 = undefined;
+    const edges = [_]i16{ -32768, -1, 0, 1, 254, 255, 256, 32767 };
+    for (0..16) |pattern| {
+        for (&acc) |*row| for (row, 0..) |*value, i| {
+            value.* = if (pattern < edges.len) edges[(i + pattern) % edges.len] else @bitCast(@as(u16, @truncate(rng.next())));
+        };
+        for (0..2) |side| {
+            FeatureTransformer.transformScalar(&acc, side, &scalar);
+            FeatureTransformer.transformVector(&acc, side, &vector);
+            try std.testing.expectEqualSlices(u8, &scalar, &vector);
+        }
+    }
+}
