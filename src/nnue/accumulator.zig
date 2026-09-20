@@ -139,17 +139,21 @@ fn refresh(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator
     var added: f.SmallList = undefined;
     added.len = 0;
     changed(entry, &pos.board, pos.pieces(), c, pos.king(c), &removed, &added);
-    ft.applyPsq(false, &entry.accumulation, &entry.psqt, removed.slice());
-    ft.applyPsq(true, &entry.accumulation, &entry.psqt, added.slice());
     entry.pieces = pos.board;
     entry.piece_bb = pos.pieces();
     var active: f.ThreatList = undefined;
     active.len = 0;
     f.FullThreats.appendActive(c, pos, &active);
     f.PawnPairs.appendActive(c, pos, &active);
-    target.accumulation[side] = entry.accumulation;
-    target.psqt[side] = entry.psqt;
-    ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], active.slice());
+    if (@import("backend").simd) {
+        ft.applyRefresh(&entry.accumulation, &entry.psqt, &target.accumulation[side], &target.psqt[side], removed.slice(), added.slice(), active.slice());
+    } else {
+        ft.applyPsq(false, &entry.accumulation, &entry.psqt, removed.slice());
+        ft.applyPsq(true, &entry.accumulation, &entry.psqt, added.slice());
+        target.accumulation[side] = entry.accumulation;
+        target.psqt[side] = entry.psqt;
+        ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], active.slice());
+    }
     target.computed[side] = true;
 }
 fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator, computed: *const Accumulator, cache: *Caches) void {

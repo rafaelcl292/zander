@@ -96,6 +96,27 @@ pub const FeatureTransformer = struct {
         for (threats_added) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
         to_psqt.* = psqt;
     }
+    /// Reference cache refresh: store updated PSQ values to the cache before
+    /// adding active threats to the same register tile for the live position.
+    pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, cache_psqt: *[buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, removed: []const u16, added: []const u16, active: []const u16) void {
+        const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+        var offset: usize = 0;
+        while (offset < dimensions) : (offset += lanes * 8) {
+            var tile: [8]@Vector(lanes, i16) = undefined;
+            inline for (0..8) |i| tile[i] = cache[offset + i * lanes ..][0..lanes].*;
+            self.applyTile(false, false, lanes, &tile, offset, removed);
+            self.applyTile(true, false, lanes, &tile, offset, added);
+            inline for (0..8) |i| cache[offset + i * lanes ..][0..lanes].* = tile[i];
+            self.applyTile(true, true, lanes, &tile, offset, active);
+            inline for (0..8) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
+        }
+        var psqt: @Vector(buckets, i32) = cache_psqt.*;
+        for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
+        for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
+        cache_psqt.* = psqt;
+        for (active) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
+        to_psqt.* = psqt;
+    }
     inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
         for (indices) |index| {
             inline for (0..8) |i| {
