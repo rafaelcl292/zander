@@ -432,3 +432,30 @@ test "NNUE index spaces match C++ across kings, pieces, threats and pawn pairs" 
     }
     try std.testing.expectEqualSlices(u64, &@import("position_reference").index_checksums, &hashes);
 }
+
+test "NNUE scalar layers and compressed parameters match C++" {
+    const reference = @import("nnue_reference");
+    var reader: z.nnue_reader.Reader = .{ .bytes = &reference.parameters };
+    var network: z.nnue_layers.Architecture = undefined;
+    try network.read(&reader);
+    try std.testing.expectEqual(reference.parameters.len, reader.offset);
+    try std.testing.expectEqual(reference.architecture_hash, z.nnue_layers.Architecture.hash());
+    for (&reference.cases) |*case| {
+        var buffer: z.nnue_layers.Architecture.Buffer = undefined;
+        try std.testing.expectEqual(case.result, network.propagate(&case.input, &buffer));
+        try std.testing.expectEqualSlices(i32, &case.fc0, &buffer.fc0);
+        try std.testing.expectEqualSlices(u8, &case.concat, &buffer.concat);
+        try std.testing.expectEqualSlices(i32, &case.fc1, &buffer.fc1);
+        try std.testing.expectEqual(case.fc2, buffer.fc2[0]);
+    }
+    reader = .{ .bytes = &reference.compressed };
+    var shorts: [8]i16 = undefined;
+    var longs: [8]i32 = undefined;
+    try reader.leb128(i16, &shorts);
+    try reader.leb128(i32, &longs);
+    try std.testing.expectEqualSlices(i16, &.{ -32768, -8192, -65, -1, 0, 64, 8192, 32767 }, &shorts);
+    try std.testing.expectEqualSlices(i32, &.{ std.math.minInt(i32), -2097152, -8193, -1, 0, 8192, 2097152, std.math.maxInt(i32) }, &longs);
+    try std.testing.expectEqual(reference.compressed.len, reader.offset);
+    reader = .{ .bytes = reference.parameters[0 .. reference.parameters.len - 1] };
+    try std.testing.expectError(error.Truncated, network.read(&reader));
+}

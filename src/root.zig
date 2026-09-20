@@ -9,7 +9,11 @@ pub const perft = @import("perft.zig");
 pub const tt = @import("tt.zig");
 pub const dirty = @import("dirty.zig");
 pub const nnue_features = @import("nnue/features.zig");
+pub const nnue_layers = @import("nnue/layers.zig");
+pub const nnue_reader = @import("nnue/reader.zig");
 test {
+    _ = nnue_layers;
+    _ = nnue_reader;
     _ = nnue_features;
     _ = dirty;
     _ = tt;
