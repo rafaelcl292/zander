@@ -131,6 +131,31 @@ pub fn build(b: *std.Build) void {
         b.step("search-test", "Compare single-worker search and histories with Stockfish").dependOn(&worker_test_run.step);
         b.step("quiescence-test", "Alias for search-test").dependOn(&worker_test_run.step);
     }
+    if (b.option([]const u8, "tablebases", "Path to the small Syzygy regression tables")) |path| {
+        const positions = b.addSystemCommand(&.{"python3"});
+        positions.addFileArg(b.path("tests/syzygy_positions.py"));
+        positions.addFileInput(b.path("tests/syzygy_manifest.json"));
+        const cpp_tb = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections", "-pthread" });
+        cpp_tb.addFileArg(b.path("tests/syzygy_reference.cpp"));
+        cpp_tb.addFileArg(b.path("vendor/stockfish/src/syzygy/tbprobe.cpp"));
+        cpp_tb.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
+        cpp_tb.addFileArg(b.path("vendor/stockfish/src/tt.cpp"));
+        cpp_tb.addFileArg(b.path("vendor/stockfish/src/misc.cpp"));
+        cpp_tb.addArgs(&.{ "-Wl,--gc-sections", "-o" });
+        const oracle = cpp_tb.addOutputFileArg("syzygy-reference");
+        const reference = std.Build.Step.Run.create(b, "generate Syzygy reference");
+        reference.addFileArg(oracle);
+        reference.addArg(path);
+        reference.addFileArg(positions.captureStdOut(.{ .basename = "syzygy-positions.txt" }));
+        const tb_options = b.addOptions();
+        tb_options.addOption([]const u8, "tablebase_path", path);
+        const tb_mod = b.createModule(.{ .root_source_file = b.path("tests/syzygy.zig"), .target = b.graph.host, .optimize = optimize });
+        tb_mod.addImport("zander", diff_mod.import_table.get("zander").?);
+        tb_mod.addOptions("options", tb_options);
+        tb_mod.addAnonymousImport("reference", .{ .root_source_file = reference.captureStdOut(.{ .basename = "syzygy_reference.zig" }) });
+        const tb_test = b.addTest(.{ .root_module = tb_mod });
+        b.step("syzygy-test", "Compare native WDL and DTZ probing with Stockfish").dependOn(&b.addRunArtifact(tb_test).step);
+    }
     history_cpp.addArg("-o");
     const history_exe = history_cpp.addOutputFileArg("history-reference");
     const history_run = std.Build.Step.Run.create(b, "generate history reference");

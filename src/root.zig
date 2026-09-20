@@ -1,3 +1,4 @@
+pub const syzygy = @import("syzygy/database.zig");
 pub const numa = @import("numa.zig");
 pub const memory = @import("memory.zig");
 pub const uci = @import("uci.zig");
@@ -27,6 +28,7 @@ pub const nnue_features = @import("nnue/features.zig");
 pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
+    _ = @import("syzygy/pairs.zig");
     _ = memory;
     _ = numa;
     _ = search_control;
