@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const linux = std.os.linux;
-pub const Policy = enum { auto, none, system, custom };
+pub const Policy = enum { auto, none, system, hardware, custom };
 pub const Mask = linux.cpu_set_t;
 pub const Node = struct { id: usize = 0, cpus: Mask = @splat(0) };
 pub const Topology = struct {
@@ -9,10 +9,18 @@ pub const Topology = struct {
     count: usize = 1,
     available: bool = false,
     pub fn discover(io: std.Io) Topology {
+        return discoverWithAffinity(io, true);
+    }
+    pub fn discoverWithAffinity(io: std.Io, respect_affinity: bool) Topology {
         var result: Topology = .{};
         if (builtin.os.tag != .linux) return result;
         var allowed: Mask = @splat(0);
         if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &allowed)) != .SUCCESS) return result;
+        if (!respect_affinity) {
+            var online_buffer: [8192]u8 = undefined;
+            const online = std.Io.Dir.cwd().readFile(io, "/sys/devices/system/cpu/online", &online_buffer) catch return result;
+            allowed = parseCpuList(online) catch return result;
+        }
         result.nodes[0].cpus = allowed;
         result.available = true;
         var found: usize = 0;
@@ -28,6 +36,56 @@ pub const Topology = struct {
             found += 1;
         }
         if (found != 0) result.count = found;
+        return result.withL3(io);
+    }
+    fn withL3(system: Topology, io: std.Io) Topology {
+        var domains: [64]Node = undefined;
+        var count: usize = 0;
+        var seen: Mask = @splat(0);
+        // CPU order within each physical node determines the adjacent bundles.
+        for (system.nodes[0..system.count]) |node| {
+            for (0..@bitSizeOf(Mask)) |cpu| {
+                const bit = @as(usize, 1) << @intCast(cpu % @bitSizeOf(usize));
+                const word = cpu / @bitSizeOf(usize);
+                if (node.cpus[word] & bit == 0 or seen[word] & bit != 0) continue;
+                var path: [128]u8 = undefined;
+                const name = std.fmt.bufPrint(&path, "/sys/devices/system/cpu/cpu{d}/cache/index3/shared_cpu_list", .{cpu}) catch unreachable;
+                var buffer: [8192]u8 = undefined;
+                const text = std.Io.Dir.cwd().readFile(io, name, &buffer) catch continue;
+                var mask = parseCpuList(text) catch continue;
+                for (&mask, node.cpus, &seen) |*member, allowed, *visited| {
+                    member.* &= allowed;
+                    visited.* |= member.*;
+                }
+                if (cpuCount(mask) == 0) continue;
+                if (count == domains.len) return system;
+                domains[count] = .{ .id = node.id, .cpus = mask };
+                count += 1;
+            }
+        }
+        if (count == 0) return system;
+        return bundleL3(domains[0..count], 32);
+    }
+    /// Repeated adjacent-pair merging, confined to each physical NUMA node.
+    pub fn bundleL3(domains: []const Node, bundle_size: usize) Topology {
+        std.debug.assert(domains.len > 0 and domains.len <= 64);
+        var result: Topology = .{ .count = domains.len, .available = true };
+        @memcpy(result.nodes[0..domains.len], domains);
+        var changed = true;
+        while (changed) {
+            changed = false;
+            var j: usize = 0;
+            while (j + 1 < result.count) : (j += 1) {
+                const first = &result.nodes[j];
+                const second = result.nodes[j + 1];
+                if (first.id == second.id and cpuCount(first.cpus) + cpuCount(second.cpus) <= bundle_size) {
+                    for (&first.cpus, second.cpus) |*word, other| word.* |= other;
+                    std.mem.copyForwards(Node, result.nodes[j + 1 .. result.count - 1], result.nodes[j + 2 .. result.count]);
+                    result.count -= 1;
+                    changed = true;
+                }
+            }
+        }
         return result;
     }
     /// Parse explicit domains in Stockfish's colon-separated CPU-list format.
@@ -51,7 +109,7 @@ pub const Topology = struct {
     }
     pub fn binding(self: *const Topology, policy: Policy, threads: usize) bool {
         if (!self.available or policy == .none) return false;
-        if (policy == .system or policy == .custom) return true;
+        if (policy == .system or policy == .hardware or policy == .custom) return true;
         if (threads <= 1 or self.count <= 1) return false;
         var largest: usize = 0;
         for (self.nodes[0..self.count]) |node| largest = @max(largest, cpuCount(node.cpus));
@@ -149,6 +207,16 @@ test "affinity guard restores the calling thread mask" {
         var current: Mask = @splat(0);
         try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &current)));
         try std.testing.expectEqualSlices(usize, &single, &current);
+        const restricted = Topology.discover(std.testing.io);
+        try std.testing.expect(restricted.available);
+        try std.testing.expectEqual(@as(usize, 1), restricted.count);
+        try std.testing.expectEqualSlices(usize, &single, &restricted.nodes[0].cpus);
+        const hardware = Topology.discoverWithAffinity(std.testing.io, false);
+        var all: Mask = @splat(0);
+        for (hardware.nodes[0..hardware.count]) |node| {
+            for (&all, node.cpus) |*word, cpus| word.* |= cpus;
+        }
+        for (all, single) |word, selected| try std.testing.expectEqual(selected, word & selected);
     }
     var restored: Mask = @splat(0);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &restored)));
@@ -171,4 +239,24 @@ test "custom domains and upstream binding thresholds" {
     var assignment: [6]usize = undefined;
     topology.distribute(&assignment);
     try std.testing.expectEqualSlices(usize, &.{ 1, 0, 1, 1, 0, 1 }, &assignment);
+}
+
+test "L3 bundles preserve physical boundaries and repeated pair order" {
+    const domains = [_]Node{
+        .{ .id = 0, .cpus = try parseCpuList("0-7") },
+        .{ .id = 0, .cpus = try parseCpuList("8-15") },
+        .{ .id = 0, .cpus = try parseCpuList("16-23") },
+        .{ .id = 0, .cpus = try parseCpuList("24-31") },
+        .{ .id = 1, .cpus = try parseCpuList("32-39") },
+    };
+    const bundled = Topology.bundleL3(&domains, 32);
+    try std.testing.expectEqual(@as(usize, 2), bundled.count);
+    try std.testing.expectEqual(@as(usize, 32), cpuCount(bundled.nodes[0].cpus));
+    try std.testing.expectEqual(@as(usize, 8), cpuCount(bundled.nodes[1].cpus));
+    const separate = Topology.bundleL3(&domains, 0);
+    try std.testing.expectEqual(domains.len, separate.count);
+    const uneven = Topology.bundleL3(&domains, 24);
+    try std.testing.expectEqual(@as(usize, 3), uneven.count);
+    try std.testing.expectEqual(@as(usize, 16), cpuCount(uneven.nodes[0].cpus));
+    try std.testing.expectEqual(@as(usize, 16), cpuCount(uneven.nodes[1].cpus));
 }

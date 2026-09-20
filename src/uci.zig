@@ -170,7 +170,11 @@ const Session = struct {
         } else if (std.ascii.eqlIgnoreCase(name, "NumaPolicy")) {
             const numa = @import("numa.zig");
             const policy = std.meta.stringToEnum(numa.Policy, value) orelse numa.Policy.custom;
-            const topology = if (policy == .custom) try numa.Topology.fromString(value) else numa.Topology.discover(self.engine.io);
+            const topology = switch (policy) {
+                .custom => try numa.Topology.fromString(value),
+                .hardware => numa.Topology.discoverWithAffinity(self.engine.io, false),
+                else => self.engine.startup_topology,
+            };
             const previous = self.engine.numa_policy;
             const previous_topology = self.engine.topology;
             self.engine.numa_policy = policy;

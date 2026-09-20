@@ -22,6 +22,7 @@ pub const Engine = struct {
     helpers: []*Helper,
     main_storage: *Helper,
     topology: numa.Topology,
+    startup_topology: numa.Topology,
     numa_policy: numa.Policy,
     groups: []*Group,
     worker_nodes: [256]usize,
@@ -64,6 +65,7 @@ pub const Engine = struct {
         self.shared_arena = std.heap.ArenaAllocator.init(allocator);
         errdefer self.shared_arena.deinit();
         self.topology = numa.Topology.discover(io);
+        self.startup_topology = self.topology;
         self.numa_policy = .auto;
         self.worker_nodes = @splat(0);
         self.groups = try allocator.alloc(*Group, 0);
