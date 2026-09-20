@@ -53,6 +53,9 @@ const Session = struct {
     wake_mutex: std.Io.Mutex = .init,
     wake_condition: std.Io.Condition = .init,
     multi_pv: usize = 1,
+    skill_level: i32 = 20,
+    limit_strength: bool = false,
+    elo: i32 = 1320,
     chess960: bool = false,
     show_wdl: bool = false,
     ponder_option: bool = false,
@@ -89,6 +92,10 @@ const Session = struct {
             try self.text("id name Zander\nid author Zander contributors\n" ++
                 "option name Hash type spin default 16 min 1 max 4096\n" ++
                 "option name Threads type spin default 1 min 1 max 1\n" ++
+                "option name Skill Level type spin default 20 min 0 max 20\n" ++
+                "option name UCI_LimitStrength type check default false\n" ++
+                "option name UCI_Elo type spin default 1320 min 1320 max 3190\n" ++
+                "option name nodestime type spin default 0 min 0 max 10000\n" ++
                 "option name MultiPV type spin default 1 min 1 max 256\n" ++
                 "option name Ponder type check default false\n" ++
                 "option name UCI_Chess960 type check default false\n" ++
@@ -146,6 +153,9 @@ const Session = struct {
         if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, 4096)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
             _ = try integer(usize, value, 1, 1);
             self.engine.newGame();
+        } else if (std.ascii.eqlIgnoreCase(name, "Skill Level")) self.skill_level = try integer(i32, value, 0, 20) else if (std.ascii.eqlIgnoreCase(name, "UCI_LimitStrength")) self.limit_strength = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Elo")) self.elo = try integer(i32, value, 1320, 3190) else if (std.ascii.eqlIgnoreCase(name, "nodestime")) {
+            self.engine.node_rate = try integer(i64, value, 0, 10000);
+            self.engine.node_time = .{};
         } else if (std.ascii.eqlIgnoreCase(name, "MultiPV")) self.multi_pv = try integer(usize, value, 1, t.max_moves) else if (std.ascii.eqlIgnoreCase(name, "Ponder")) self.ponder_option = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Chess960")) self.chess960 = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_ShowWDL")) self.show_wdl = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "Move Overhead")) self.move_overhead = try integer(i64, value, 0, 5000) else if (std.ascii.eqlIgnoreCase(name, "EvalFile")) {
             if (value.len == 0) return error.EmptyNetworkPath;
             try self.engine.loadNetwork(value);
@@ -202,6 +212,8 @@ const Session = struct {
             if (std.mem.eql(u8, key, "depth")) limits.depth = try integer(i32, value, 1, t.max_ply - 1) else if (std.mem.eql(u8, key, "nodes")) time_limits.nodes = try integer(u64, value, 0, std.math.maxInt(i64)) else if (std.mem.eql(u8, key, "movetime")) time_limits.move_time = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "wtime")) time_limits.time[0] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "btime")) time_limits.time[1] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "winc")) time_limits.increment[0] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "binc")) time_limits.increment[1] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "movestogo")) time_limits.moves_to_go = try integer(i32, value, 0, 100000) else if (std.mem.eql(u8, key, "mate")) time_limits.mate = try integer(i32, value, 0, t.max_ply / 2) else return error.UnknownGoOption;
         }
         limits.search_moves = requested[0..count];
+        self.engine.worker.skill_level = self.skill_level;
+        self.engine.worker.skill_elo = if (self.limit_strength) self.elo else 0;
         try self.engine.prepareSearch(limits, time_limits, self.move_overhead, self.ponder_option);
         self.thread = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, searchThread, .{self});
     }

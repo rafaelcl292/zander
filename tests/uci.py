@@ -78,7 +78,7 @@ def main():
     try:
         client.send("uci")
         handshake = client.until("uciok")
-        for option in ("Hash", "MultiPV", "Ponder", "UCI_Chess960", "UCI_ShowWDL", "EvalFile"):
+        for option in ("Hash", "MultiPV", "Ponder", "UCI_Chess960", "UCI_ShowWDL", "EvalFile", "Skill Level", "UCI_LimitStrength", "UCI_Elo", "nodestime"):
             assert any(line.startswith(f"option name {option} ") for line in handshake), handshake
         client.send(f"setoption name EvalFile value {args.network}")
         client.send("setoption name Hash value 1")
@@ -103,6 +103,19 @@ def main():
         lines = client.search("go depth 3 searchmoves e2e4")
         assert lines[-1].startswith("bestmove e2e4"), lines
         client.send("setoption name MultiPV value 1")
+        for option in ("Skill Level value 0", "Skill Level value 19",
+                       "UCI_LimitStrength value true", "UCI_Elo value 3190"):
+            client.send("setoption name " + option)
+            client.search("go depth 2")
+        client.send("setoption name Skill Level value 20")
+        client.send("setoption name UCI_LimitStrength value false")
+        client.send("setoption name nodestime value 10")
+        client.send("ucinewgame")
+        lines = client.search("go movetime 100")
+        nodes = int(re.findall(r" nodes (\d+)", "\n".join(lines))[-1])
+        assert 1000 <= nodes < 3000, lines
+        client.search("go wtime 1000 btime 1000 winc 10 binc 10")
+        client.send("setoption name nodestime value 0")
         client.send("position startpos moves e2e4 e7e5 g1f3 b8c6")
         client.search("go nodes 64")
         for command in ("go movetime 40", "go wtime 100 btime 100 winc 0 binc 0", "go wtime 100 btime 200 movestogo 1"):

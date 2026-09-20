@@ -34,6 +34,8 @@ pub const Engine = struct {
     requested: [t.max_moves]t.Move = undefined,
     original_time_adjust: f64 = -1,
     hash_mb: usize,
+    node_time: tm.NodeTime = .{},
+    node_rate: i64 = 0,
 
     pub fn create(allocator: std.mem.Allocator, io: std.Io, hash_mb: usize) !*Engine {
         if (hash_mb < 1 or hash_mb > 4096) return error.InvalidHashSize;
@@ -73,8 +75,11 @@ pub const Engine = struct {
         self.control = .{ .context = self, .clock = clock };
         self.search_limits = .{ .depth = t.max_ply - 1 };
         self.original_time_adjust = -1;
+        self.node_time = .{};
+        self.node_rate = 0;
         self.base.* = .{ .network = undefined, .accumulators = self.accumulators, .caches = self.caches, .table = &self.table, .main_history = main, .low_ply_history = low, .capture_history = capture, .shared = &self.shared, .continuation_correction = continuation_correction, .control = &self.control };
         self.worker = search.Worker.init(self.base);
+        self.worker.skill_rng = .init(@as(u64, @bitCast(clock(self))) | 1);
         self.newGame();
         return self;
     }
@@ -102,6 +107,7 @@ pub const Engine = struct {
         self.worker.previous_average = t.value_infinite;
         self.worker.previous_time_reduction = 0.85;
         self.original_time_adjust = -1;
+        self.node_time = .{};
         self.table.clear();
         self.accumulators.reset();
         if (self.network) |network| self.caches.clear(&network.transformer);
@@ -155,11 +161,15 @@ pub const Engine = struct {
         @memcpy(self.requested[0..limits.search_moves.len], limits.search_moves);
         self.search_limits = limits;
         self.search_limits.search_moves = self.requested[0..limits.search_moves.len];
-        const budget = tm.Budget.init(time_limits, @intFromEnum(self.position.side), self.position.game_ply, overhead, ponder_option, &self.original_time_adjust);
-        self.control.reset(time_limits, budget);
+        var adjusted_overhead = overhead;
+        const adjusted_limits = self.node_time.prepare(time_limits, @intFromEnum(self.position.side), self.node_rate, &adjusted_overhead);
+        const budget = tm.Budget.init(adjusted_limits, @intFromEnum(self.position.side), self.position.game_ply, adjusted_overhead, ponder_option, &self.original_time_adjust);
+        self.control.reset(adjusted_limits, budget);
     }
     pub fn runSearch(self: *Engine) !search.Worker.Result {
-        return self.worker.iterativeDeepening(&self.position, self.roots, self.search_limits);
+        const result = try self.worker.iterativeDeepening(&self.position, self.roots, self.search_limits);
+        if (self.control.limits.npmsec != 0 and self.control.limits.managed()) self.node_time.advance(@intCast(result.nodes), self.control.limits.increment[@intFromEnum(self.position.side)]);
+        return result;
     }
     pub fn extendPonder(self: *Engine) void {
         if (self.worker.root_moves.len == 0) return;

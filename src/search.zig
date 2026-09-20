@@ -46,6 +46,9 @@ pub const RootMove = @import("root_move.zig").RootMove;
 const NodeType = enum { root, pv, non_pv };
 pub const Worker = struct {
     base: *QWorker,
+    skill_level: i32 = 20,
+    skill_elo: i32 = 0,
+    skill_rng: @import("prng.zig").Prng = .init(1),
     progress_context: ?*anyopaque = null,
     on_progress: ?*const fn (?*anyopaque, *Worker) void = null,
     previous_score: i32 = t.value_infinite,
@@ -116,7 +119,8 @@ pub const Worker = struct {
         self.base.prepare(&pv);
         self.base.table.newSearch();
         if (count == 0) return .{ .best_move = .none, .score = if (pos.st.checkers != 0) -t.value_mate else 0, .depth = 0, .nodes = 0 };
-        const multi_pv = @min(limits.multi_pv, count);
+        var skill = @import("skill.zig").Skill.init(self.skill_level, self.skill_elo);
+        const multi_pv = @min(@max(limits.multi_pv, @as(usize, if (skill.enabled()) 4 else 1)), count);
         h.fill(self.base.low_ply_history, 102);
         for (self.base.main_history) |*color| for (color) |*entry| {
             entry.set(@intCast(div(@as(i32, entry.get()) * 729, 1024)));
@@ -212,6 +216,7 @@ pub const Worker = struct {
                 self.completed_depth = self.root_depth;
                 if (self.on_progress) |callback| callback(self.progress_context, self);
             }
+            if (skill.enabled() and skill.timeToPick(self.root_depth)) _ = skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
             total_changes += @floatFromInt(self.best_move_changes);
             if (self.base.control) |control| {
                 const best_score = self.root_moves[0].score;
@@ -225,7 +230,7 @@ pub const Worker = struct {
                     const high_effort = std.math.clamp(interpolate(@floatFromInt(effort), 75800, 104510, 0.969, 0.714), 0.693, 0.838);
                     var total_time = @as(f64, @floatFromInt(control.budget.optimum)) * falling * reduction * instability * high_effort;
                     if (count == 1) total_time = @min(500, total_time);
-                    const elapsed: f64 = @floatFromInt(control.elapsed());
+                    const elapsed: f64 = @floatFromInt(control.searchElapsed(self.base.nodes));
                     if (elapsed > @min(total_time, @as(f64, @floatFromInt(control.budget.maximum))) or self.root_moves[multi_pv - 1].score >= t.value_mate - 3 or best_score == -t.value_mate + 2) {
                         if (control.ponder.load(.acquire)) control.stop_on_ponderhit = true else control.requestStop();
                     } else control.increase_depth = control.ponder.load(.acquire) or elapsed <= total_time * 0.50;
@@ -234,6 +239,13 @@ pub const Worker = struct {
             self.best_move_changes = 0;
             iter_values[iter_index] = iteration_value;
             iter_index = (iter_index + 1) & 3;
+        }
+        if (skill.enabled()) {
+            const chosen = if (skill.best.data != 0) skill.best else skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
+            for (self.root_moves) |*root| if (root.pv.moves[0].data == chosen.data) {
+                std.mem.swap(RootMove, &self.root_moves[0], root);
+                break;
+            };
         }
         self.previous_time_reduction = time_reduction;
         self.previous_score = self.root_moves[0].score;

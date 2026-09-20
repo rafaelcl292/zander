@@ -35,12 +35,15 @@ pub const Control = struct {
     pub fn elapsed(self: *const Control) i64 {
         return @max(0, self.clock(self.context) - self.start);
     }
+    pub fn searchElapsed(self: *const Control, nodes: u64) i64 {
+        return if (self.limits.npmsec != 0) @intCast(nodes) else self.elapsed();
+    }
     pub fn poll(self: *Control, nodes: u64) void {
         self.calls -= 1;
         if (self.calls > 0) return;
         self.calls = if (self.limits.nodes != 0) @intCast(@min(512, self.limits.nodes / 1024)) else 512;
         if (self.ponder.load(.acquire)) return;
-        const elapsed_ms = self.elapsed();
+        const elapsed_ms = self.searchElapsed(nodes);
         if ((self.limits.managed() and (elapsed_ms > self.budget.maximum or self.stop_on_ponderhit)) or (self.limits.move_time != 0 and elapsed_ms >= self.limits.move_time) or (self.limits.nodes != 0 and nodes >= self.limits.nodes)) self.requestStop();
     }
 };

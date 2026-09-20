@@ -26,6 +26,8 @@ pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
     _ = search_control;
+    _ = time_management;
+    _ = @import("skill.zig");
     _ = nnue_layers;
     _ = nnue_reader;
     _ = nnue_features;
