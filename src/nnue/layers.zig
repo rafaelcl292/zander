@@ -4,6 +4,7 @@ const Reader = @import("reader.zig").Reader;
 pub const output_scale: i32 = 16;
 pub const weight_scale_bits = 6;
 pub const hidden_one = 128;
+const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and @import("builtin").cpu.arch == .x86_64;
 pub fn clipped(input: i32, comptime scale: u5) u8 {
     return @intCast(std.math.clamp(input >> scale, 0, 127));
 }
@@ -99,6 +100,9 @@ pub const Architecture = struct {
     fc0: Affine(1024, 32),
     fc1: Affine(64, 32),
     fc2: Affine(128, 1),
+    // The upstream four-input weight permutation, prepared once at load time.
+    // Canonical weights remain available for scalar oracles and network export.
+    sparse_weights: if (use_sparse) [256][32][4]i8 else void,
     pub fn hash() u32 {
         var h: u32 = 0xec42e90d ^ (1024 * 2);
         h = Affine(1024, 32).hash(h);
@@ -111,6 +115,12 @@ pub const Architecture = struct {
         try self.fc0.read(reader);
         try self.fc1.read(reader);
         try self.fc2.read(reader);
+        if (use_sparse) self.prepareSparse();
+    }
+    pub fn prepareSparse(self: *Architecture) void {
+        if (use_sparse) for (0..1024) |input| {
+            for (0..32) |output| self.sparse_weights[input / 4][output][input % 4] = self.fc0.weights[output][input];
+        };
     }
     pub const Buffer = struct {
         fc0: [32]i32 align(64),
@@ -120,7 +130,12 @@ pub const Architecture = struct {
     };
     /// Both kernels consume the same serialized weight layout.
     pub fn propagate(self: *const Architecture, input: *const [1024]u8, buffer: *Buffer) i32 {
-        self.fc0.propagate(input, &buffer.fc0);
+        if (use_sparse) {
+            const dispatch = @import("dispatch.zig");
+            if (dispatch.sparseFunction(dispatch.selected())) |kernel| {
+                kernel(input, @ptrCast(&self.sparse_weights), &self.fc0.biases, &buffer.fc0);
+            } else self.fc0.propagate(input, &buffer.fc0);
+        } else self.fc0.propagate(input, &buffer.fc0);
         for (buffer.fc0, 0..) |value, i| {
             buffer.concat[i] = squared(value, 7);
             buffer.concat[32 + i] = clipped(value, 7);
@@ -161,5 +176,31 @@ test "vector affine matches scalar with signed weights and wrapping bias" {
                 try std.testing.expectEqualSlices(i32, &scalar, &vector);
             }
         }
+    }
+}
+
+test "block sparse affine preserves signed extremes, zero blocks and wrapping sums" {
+    if (!use_sparse) return error.SkipZigTest;
+    const dispatch = @import("dispatch.zig");
+    const kernel = dispatch.sparseFunction(dispatch.selected()) orelse return error.SkipZigTest;
+    var layer: Architecture = undefined;
+    var rng = @import("../prng.zig").Prng.init(9876);
+    for (&layer.fc0.biases) |*bias| bias.* = @bitCast(@as(u32, @truncate(rng.next())));
+    for (&layer.fc0.weights) |*row| for (row, 0..) |*weight, i| {
+        weight.* = switch (i % 3) {
+            0 => -128,
+            1 => 127,
+            else => @bitCast(@as(u8, @truncate(rng.next()))),
+        };
+    };
+    layer.prepareSparse();
+    var input: [1024]u8 = undefined;
+    var scalar: [32]i32 = undefined;
+    var sparse: [32]i32 = undefined;
+    for (0..16) |pattern| {
+        for (&input, 0..) |*value, i| value.* = if (pattern == 0) 0 else if (pattern == 1) 127 else if ((i / 4) % pattern == 0) @truncate(rng.next() & 127) else 0;
+        layer.fc0.propagateScalar(&input, &scalar);
+        kernel(&input, @ptrCast(&layer.sparse_weights), &layer.fc0.biases, &sparse);
+        try std.testing.expectEqualSlices(i32, &scalar, &sparse);
     }
 }

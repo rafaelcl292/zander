@@ -39,3 +39,46 @@ fn affine(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output
         output[row] = sum;
     }
 }
+
+// Derived from Stockfish affine_transform_sparse_input.h; GPL-3.0-or-later.
+// Activations are bounded to 0..127 by the feature transformer, so adjacent
+// unsigned-byte/signed-byte products cannot saturate the intermediate i16 sum.
+comptime {
+    @export(&sparse, .{ .name = "zander_sparse_" ++ @tagName(kind) });
+}
+fn sparse(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
+    const bytes = if (kind == .avx512 or kind == .vnni512) 64 else 32;
+    const width = bytes / 4;
+    const Vec = @Vector(width, i32);
+    var accumulators: [32 / width]Vec = undefined;
+    inline for (0..32 / width) |i| accumulators[i] = biases[i * width ..][0..width].*;
+    for (0..256) |block| {
+        const input_word = @import("std").mem.readInt(u32, input[block * 4 ..][0..4], .little);
+        if (input_word == 0) continue;
+        const x: @Vector(bytes, u8) = @bitCast(@as(@Vector(width, u32), @splat(input_word)));
+        inline for (0..32 / width) |i| {
+            const w: @Vector(bytes, i8) = weights[block * 128 + i * bytes ..][0..bytes].*;
+            if (dot_product) {
+                accumulators[i] = asm ("vpdpbusd %[weights], %[input], %[result]"
+                    : [result] "=x" (-> Vec),
+                    : [input] "x" (x),
+                      [weights] "x" (w),
+                      [previous] "0" (accumulators[i]),
+                );
+            } else {
+                const pairs = asm ("vpmaddubsw %[weights], %[input], %[result]"
+                    : [result] "=x" (-> @Vector(bytes / 2, i16)),
+                    : [input] "x" (x),
+                      [weights] "x" (w),
+                );
+                const products = asm ("vpmaddwd %[ones], %[pairs], %[result]"
+                    : [result] "=x" (-> Vec),
+                    : [pairs] "x" (pairs),
+                      [ones] "x" (@as(@Vector(bytes / 2, i16), @splat(1))),
+                );
+                accumulators[i] +%= products;
+            }
+        }
+    }
+    inline for (0..32 / width) |i| output[i * width ..][0..width].* = accumulators[i];
+}

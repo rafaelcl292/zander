@@ -97,3 +97,18 @@ test "extended dispatch requires complete AVX512 state and VNNI leaves" {
     no_dot.ebx &= ~(@as(u32, 1) << 30);
     try std.testing.expectEqual(Kernel.avx2, selectFeatures(7, flags, 0xe6, no_dot, 0));
 }
+
+const Sparse = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
+extern fn zander_sparse_avx2([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_sparse_avx512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_sparse_avxvnni([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_sparse_vnni512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+pub fn sparseFunction(kernel: Kernel) ?Sparse {
+    return switch (kernel) {
+        .sse2 => null,
+        .avx2 => &zander_sparse_avx2,
+        .avx512 => &zander_sparse_avx512,
+        .avxvnni => &zander_sparse_avxvnni,
+        .vnni512 => &zander_sparse_vnni512,
+    };
+}
