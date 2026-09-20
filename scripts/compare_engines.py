@@ -19,11 +19,17 @@ class Engine:
         self.process = subprocess.Popen([self.executable], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, bufsize=1)
-        self.lines = queue.Queue()
-        self.errors = []
+        assert self.process.stdin is not None
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        self.stdin = self.process.stdin
+        self.stdout = self.process.stdout
+        self.stderr = self.process.stderr
+        self.lines: queue.Queue[str | None] = queue.Queue()
+        self.errors: list[str] = []
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
-        threading.Thread(target=lambda: self.errors.extend(self.process.stderr.readlines()), daemon=True).start()
+        threading.Thread(target=lambda: self.errors.extend(self.stderr.readlines()), daemon=True).start()
         try:
             self.send("uci")
             self.until("uciok")
@@ -37,13 +43,13 @@ class Engine:
             raise
 
     def _read(self):
-        for line in self.process.stdout:
+        for line in self.stdout:
             self.lines.put(line.strip())
         self.lines.put(None)
 
     def send(self, command):
-        self.process.stdin.write(command + "\n")
-        self.process.stdin.flush()
+        self.stdin.write(command + "\n")
+        self.stdin.flush()
 
     def until(self, prefix, timeout=120):
         deadline = time.monotonic() + timeout

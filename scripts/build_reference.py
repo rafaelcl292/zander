@@ -15,7 +15,10 @@ def main():
     args = parser.parse_args()
     source = ROOT / "vendor/stockfish/src"
     makefile = (source / "Makefile").read_text().replace("\\\n", " ")
-    sources = re.search(r"^SRCS\s*=\s*(.*)$", makefile, re.MULTILINE).group(1).split()
+    match = re.search(r"^SRCS\s*=\s*(.*)$", makefile, re.MULTILINE)
+    if match is None:
+        raise ValueError("Could not find SRCS in the pinned Stockfish Makefile")
+    sources = match.group(1).split()
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [args.cxx, "-std=c++17", "-O3", "-DNDEBUG", "-DIS_64BIT",

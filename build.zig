@@ -16,6 +16,9 @@ pub fn build(b: *std.Build) void {
     const unit = b.addTest(.{ .root_module = mod });
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&b.addRunArtifact(unit).step);
+    const python_check = b.addSystemCommand(&.{ "uvx", "ty==0.0.32", "check" });
+    python_check.setCwd(b.path("."));
+    b.step("python-check", "Type-check Python scripts and tests with ty").dependOn(&python_check.step);
     // The C++ oracle is host-only; keep it outside the portable library.
     const cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-c" });
     cpp.addFileArg(b.path("tests/oracle.cpp"));

@@ -1,0 +1,9 @@
+[environment]
+python-version = "3.11"
+
+[src]
+include = ["scripts", "tests"]
+exclude = ["vendor"]
+
+[terminal]
+error-on-warning = true

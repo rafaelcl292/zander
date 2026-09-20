@@ -12,19 +12,25 @@ class Client:
     def __init__(self, executable):
         self.process = subprocess.Popen([executable], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True, bufsize=1)
-        self.lines = queue.Queue()
-        self.errors = []
+        assert self.process.stdin is not None
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        self.stdin = self.process.stdin
+        self.stdout = self.process.stdout
+        self.stderr = self.process.stderr
+        self.lines: queue.Queue[str | None] = queue.Queue()
+        self.errors: list[str] = []
         threading.Thread(target=self._read, daemon=True).start()
-        threading.Thread(target=lambda: self.errors.extend(self.process.stderr.readlines()), daemon=True).start()
+        threading.Thread(target=lambda: self.errors.extend(self.stderr.readlines()), daemon=True).start()
 
     def _read(self):
-        for line in self.process.stdout:
+        for line in self.stdout:
             self.lines.put(line.rstrip())
         self.lines.put(None)
 
     def send(self, command):
-        self.process.stdin.write(command + "\n")
-        self.process.stdin.flush()
+        self.stdin.write(command + "\n")
+        self.stdin.flush()
 
     def until(self, prefix, timeout=60):
         result = []
@@ -222,7 +228,7 @@ def main():
         eof_client.send("isready")
         eof_client.until("readyok")
         eof_client.send("go infinite")
-        eof_client.process.stdin.close()
+        eof_client.stdin.close()
         eof_client.process.wait(timeout=10)
     finally:
         eof_client.close()
