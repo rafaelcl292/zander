@@ -102,7 +102,9 @@ fn hqAttacks(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
     const mask: Vec = .{ masks[0], masks[1], 0, masks[3] };
     const o = mask & @as(Vec, @splat(occupied));
     const reversed = @shuffle(u64, @byteSwap(o), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
-    const rev = reversed -% @as(Vec, @splat(@bitReverse(bb.square(s)) *% 2));
+    // Reversing a one-bit board maps square s to 63 - s. Keep that invariant
+    // explicit so x86 needs a shift instead of a general software bit reversal.
+    const rev = reversed -% @as(Vec, @splat(bb.square(@enumFromInt(63 - @intFromEnum(s))) *% 2));
     const restored = @shuffle(u64, @byteSwap(rev), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
     const result = ((o -% @as(Vec, @splat(bb.square(s) *% 2))) ^ restored) & mask;
     const shift: u6 = @as(u6, s.rank()) * 8;
