@@ -269,9 +269,9 @@ pub const Position = struct {
                 }
             }
         }
-        // Canonical six-field FEN input. Reject malformed numeric tokens.
-        self.st.rule50 = std.fmt.parseInt(i32, fields.next() orelse return error.InvalidFen, 10) catch return error.InvalidFen;
-        const fullmove = std.fmt.parseInt(i32, fields.next() orelse return error.InvalidFen, 10) catch return error.InvalidFen;
+        // Upstream accepts omitted counters, but explicit malformed numbers remain errors.
+        self.st.rule50 = std.fmt.parseInt(i32, fields.next() orelse "0", 10) catch return error.InvalidFen;
+        const fullmove = std.fmt.parseInt(i32, fields.next() orelse "1", 10) catch return error.InvalidFen;
         if (self.st.rule50 < 0 or self.st.rule50 > 32767 or fullmove < 0 or fullmove > 100000) return error.UnsupportedPosition;
         self.game_ply = @max(2 * (fullmove - 1), 0) + @as(i32, @intFromEnum(self.side));
         self.setState();

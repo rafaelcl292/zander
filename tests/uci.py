@@ -6,6 +6,9 @@ import queue
 import re
 import subprocess
 import threading
+import tempfile
+import pathlib
+import struct
 import time
 
 
@@ -88,6 +91,9 @@ def main():
         handshake = client.until("uciok")
         for option in ("Hash", "MultiPV", "Ponder", "UCI_Chess960", "UCI_ShowWDL", "EvalFile", "Skill Level", "UCI_LimitStrength", "UCI_Elo", "nodestime"):
             assert any(line.startswith(f"option name {option} ") for line in handshake), handshake
+        client.send("position fen 7k/7P/6K1/8/3B4/8/8/8 b - -")
+        client.send("go perft 1")
+        assert client.until("Nodes searched:")[-1] == "Nodes searched: 0"
         client.send("position startpos")
         client.send("go perft 3")
         divided = client.until("Nodes searched:")
@@ -107,6 +113,36 @@ def main():
         client.send("isready")
         assert all(line in ("", "readyok") for line in client.until("readyok"))
         client.send(f"setoption name EvalFile value {args.network}")
+        client.send("compiler")
+        assert any("Zig " in line for line in client.until("NNUE backend:"))
+        client.send("d")
+        assert "Fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" in client.until("Checkers:")
+        client.send("flip")
+        client.send("d")
+        assert "Fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1" in client.until("Checkers:")
+        client.send("flip")
+        client.send("eval")
+        assert any(line.startswith("raw ") for line in client.until("adjusted "))
+        with tempfile.TemporaryDirectory(prefix="zander-export-") as directory:
+            exported = pathlib.Path(directory) / "export.nnue"
+            client.send(f"export_net {exported}")
+            client.until("info string Network saved", timeout=120)
+            original = pathlib.Path(args.network).read_bytes()
+            saved = exported.read_bytes()
+            original_offset = 12 + struct.unpack_from("<I", original, 8)[0]
+            saved_offset = 12 + struct.unpack_from("<I", saved, 8)[0]
+            assert original[:8] == saved[:8]
+            assert original[original_offset:] == saved[saved_offset:], "Export changed network weights"
+            client.send(f"setoption name EvalFile value {exported}")
+            client.send("isready")
+            assert client.until("readyok") == ["readyok"]
+        # The source is gone: the engine must continue using its owned weights.
+
+        client.send("bench 1 1 3 current perft")
+        assert "Nodes searched  : 8902" in client.until("Nodes/second")
+        client.send("bench 1 1 2 current depth")
+        assert any(line.startswith("bestmove ") for line in client.until("Nodes/second"))
+        client.send("ucinewgame")
         client.send("setoption name Hash value 1")
         if hasattr(os, "sched_getaffinity"):
             cpus = sorted(os.sched_getaffinity(0))

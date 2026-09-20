@@ -32,6 +32,35 @@ pub const Network = struct {
         self.initialized = true;
         return description;
     }
+    /// Serialize the live weights, independently of the source file lifetime.
+    pub fn save(self: *const Network, writer: *std.Io.Writer, description: []const u8) !void {
+        if (!self.initialized) return error.UninitializedNetwork;
+        const out = @import("writer.zig");
+        const features = @import("features.zig");
+        try out.int(writer, u32, version);
+        try out.int(writer, u32, hash);
+        try out.int(writer, u32, @intCast(description.len));
+        try writer.writeAll(description);
+        try out.int(writer, u32, FeatureTransformer.hash());
+        const ft = &self.transformer;
+        try out.leb128(writer, i16, &ft.biases);
+        const threats = features.FullThreats.dimensions;
+        const pairs = features.PawnPairs.dimensions;
+        try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[0..threats]));
+        try out.leb128(writer, i32, @as([*]const i32, @ptrCast(&ft.threat_psqt))[0 .. threats * 8]);
+        try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[threats..]));
+        try out.leb128(writer, i32, @as([*]const i32, @ptrCast(&ft.threat_psqt[threats]))[0 .. pairs * 8]);
+        try out.leb128(writer, i16, @as([*]const i16, @ptrCast(&ft.weights))[0 .. features.HalfKA.dimensions * 1024]);
+        try out.leb128(writer, i32, @as([*]const i32, @ptrCast(&ft.psqt_weights))[0 .. features.HalfKA.dimensions * 8]);
+        for (&self.layers) |*layer| {
+            try out.int(writer, u32, Architecture.hash());
+            inline for (.{ "fc0", "fc1", "fc2" }) |name| {
+                const affine = &@field(layer, name);
+                for (affine.biases) |bias| try out.int(writer, i32, bias);
+                try writer.writeAll(std.mem.asBytes(&affine.weights));
+            }
+        }
+    }
     pub const Output = struct { psqt: i32, positional: i32 };
     pub fn evaluate(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) Output {
         std.debug.assert(self.initialized);

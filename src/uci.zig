@@ -134,11 +134,154 @@ const Session = struct {
                 self.report(err);
                 try self.text("bestmove 0000\n");
             };
+        } else if (std.mem.eql(u8, cmd, "bench")) {
+            self.stopAndJoin();
+            try self.bench(args[1..]);
+        } else if (std.mem.eql(u8, cmd, "d") or std.mem.eql(u8, cmd, "flip") or std.mem.eql(u8, cmd, "eval") or std.mem.eql(u8, cmd, "compiler") or std.mem.eql(u8, cmd, "export_net")) {
+            self.stopAndJoin();
+            try self.diagnostic(args);
+        } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "license") or std.mem.eql(u8, cmd, "--license")) {
+            try self.text("Zander is a Stockfish port in Zig, licensed under GPL-3.0-or-later. See README.md and LICENSE.\nCommands: uci, position, go, stop, ponderhit, setoption, isready, ucinewgame, d, flip, eval, compiler, export_net, quit.\n");
+        } else if (std.mem.startsWith(u8, cmd, "#")) {
+            return;
         } else if (std.mem.eql(u8, cmd, "debug")) {
             if (args.len != 2 or (!std.mem.eql(u8, args[1], "on") and !std.mem.eql(u8, args[1], "off"))) return error.InvalidDebugCommand;
         } else if (std.mem.eql(u8, cmd, "register")) {
             try self.text("registration ok\n");
         } else return error.UnknownCommand;
+    }
+    // Defaults are copied from the pinned GPL-3.0-or-later benchmark.cpp.
+    fn bench(self: *Session, args: []const []const u8) !void {
+        if (args.len > 5) return error.UnexpectedArgument;
+        const hash = if (args.len > 0) args[0] else "16";
+        const threads = if (args.len > 1) args[1] else "1";
+        const limit = if (args.len > 2) args[2] else "13";
+        const source = if (args.len > 3) args[3] else "default";
+        const kind = if (args.len > 4) args[4] else "depth";
+        var current_buffer: [256]u8 = undefined;
+        var current = std.Io.Writer.fixed(&current_buffer);
+        try self.engine.position.writeFen(&current);
+        const file = if (!std.mem.eql(u8, source, "default") and !std.mem.eql(u8, source, "current")) try std.Io.Dir.cwd().readFileAlloc(self.engine.io, source, self.engine.allocator, .limited(16 * 1024 * 1024)) else null;
+        defer if (file) |bytes| self.engine.allocator.free(bytes);
+        const positions = file orelse if (std.mem.eql(u8, source, "current")) current.buffered() else @embedFile("benchmark_positions.txt");
+        try self.setOption(&.{ "name", "Threads", "value", threads });
+        try self.setOption(&.{ "name", "Hash", "value", hash });
+        self.engine.newGame();
+        const start = std.Io.Clock.awake.now(self.engine.io).toMilliseconds();
+        var total: u64 = 0;
+        var lines = std.mem.tokenizeAny(u8, positions, "\r\n");
+        while (lines.next()) |line| {
+            if (std.mem.startsWith(u8, line, "setoption ")) {
+                var parts = std.mem.tokenizeScalar(u8, line[10..], ' ');
+                var tokens: [64][]const u8 = undefined;
+                var n: usize = 0;
+                while (parts.next()) |part| {
+                    if (n == tokens.len) return error.TooManyTokens;
+                    tokens[n] = part;
+                    n += 1;
+                }
+                try self.setOption(tokens[0..n]);
+                continue;
+            }
+            const split = std.mem.indexOf(u8, line, " moves ") orelse line.len;
+            var moves: [16384][]const u8 = undefined;
+            var count: usize = 0;
+            if (split < line.len) {
+                var tokens = std.mem.tokenizeScalar(u8, line[split + 7 ..], ' ');
+                while (tokens.next()) |move| {
+                    if (count == moves.len) return error.TooManyTokens;
+                    moves[count] = move;
+                    count += 1;
+                }
+            }
+            try self.engine.setPosition(line[0..split], self.chess960, moves[0..count]);
+            if (std.mem.eql(u8, kind, "eval")) {
+                try self.diagnostic(&.{"eval"});
+            } else if (std.mem.eql(u8, kind, "perft")) {
+                total += try self.writePerft(try integer(u8, limit, 1, t.max_ply - 1));
+            } else {
+                try self.go(&.{ kind, limit });
+                if (self.thread) |thread| thread.join();
+                self.thread = null;
+                total += self.engine.totalNodes();
+            }
+        }
+        const elapsed: u64 = @intCast(@max(1, std.Io.Clock.awake.now(self.engine.io).toMilliseconds() - start + 1));
+        self.output_mutex.lockUncancelable(self.engine.io);
+        defer self.output_mutex.unlock(self.engine.io);
+        try self.writer.print("Total time (ms) : {d}\nNodes searched  : {d}\nNodes/second    : {d}\n", .{ elapsed, total, 1000 * total / elapsed });
+        try self.writer.flush();
+    }
+    fn diagnostic(self: *Session, args: []const []const u8) !void {
+        const cmd = args[0];
+        if (!std.mem.eql(u8, cmd, "export_net") and args.len != 1) return error.UnexpectedArgument;
+        const pos = &self.engine.position;
+        if (std.mem.eql(u8, cmd, "flip")) {
+            var original: [256]u8 = undefined;
+            var fen = std.Io.Writer.fixed(&original);
+            try pos.writeFen(&fen);
+            var fields = std.mem.tokenizeScalar(u8, fen.buffered(), ' ');
+            var ranks = std.mem.splitScalar(u8, fields.next().?, '/');
+            var rows: [8][]const u8 = undefined;
+            for (&rows) |*row| row.* = ranks.next().?;
+            var buffer: [256]u8 = undefined;
+            var flipped = std.Io.Writer.fixed(&buffer);
+            for (0..8) |i| {
+                for (rows[7 - i]) |c| try flipped.writeByte(if (std.ascii.isLower(c)) std.ascii.toUpper(c) else std.ascii.toLower(c));
+                if (i != 7) try flipped.writeByte('/');
+            }
+            try flipped.writeAll(if (std.mem.eql(u8, fields.next().?, "w")) " b " else " w ");
+            for (fields.next().?) |c| try flipped.writeByte(if (std.ascii.isLower(c)) std.ascii.toUpper(c) else std.ascii.toLower(c));
+            try flipped.writeByte(' ');
+            const ep = fields.next().?;
+            if (ep[0] == '-') try flipped.writeByte('-') else try flipped.print("{c}{c}", .{ ep[0], @as(u8, if (ep[1] == '3') '6' else '3') });
+            try flipped.print(" {s} {s}", .{ fields.next().?, fields.next().? });
+            try self.engine.setPosition(flipped.buffered(), pos.chess960, &.{});
+            return;
+        }
+        self.output_mutex.lockUncancelable(self.engine.io);
+        defer self.output_mutex.unlock(self.engine.io);
+        if (std.mem.eql(u8, cmd, "d")) {
+            const border = " +---+---+---+---+---+---+---+---+\n";
+            try self.writer.writeAll("\n");
+            try self.writer.writeAll(border);
+            for (0..8) |r| {
+                for (0..8) |f| try self.writer.print(" | {c}", .{" PNBRQK  pnbrqk"[@intFromEnum(pos.pieceOn(t.Square.make(@intCast(f), @intCast(7 - r))))]});
+                try self.writer.print(" | {d}\n{s}", .{ 8 - r, border });
+            }
+            try self.writer.writeAll("   a   b   c   d   e   f   g   h\n\nFen: ");
+            try pos.writeFen(self.writer);
+            try self.writer.print("\nKey: {X:0>16}\nCheckers: ", .{pos.key()});
+            var checkers = pos.st.checkers;
+            while (checkers != 0) {
+                const square: t.Square = @enumFromInt(@ctz(checkers));
+                checkers &= checkers - 1;
+                try self.writer.print("{c}{c} ", .{ @as(u8, 'a') + square.file(), @as(u8, '1') + square.rank() });
+            }
+            try self.writer.writeByte('\n');
+        } else if (std.mem.eql(u8, cmd, "compiler")) {
+            const builtin = @import("builtin");
+            try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{ builtin.zig_version_string, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), @tagName(builtin.mode), @tagName(@import("backend").nnue_backend) });
+        } else if (std.mem.eql(u8, cmd, "eval")) {
+            try self.engine.ensureNetwork();
+            self.engine.accumulators.reset();
+            const network = self.engine.network.?;
+            const result = network.evaluate(pos, self.engine.accumulators, self.engine.caches);
+            try self.writer.print("psqt {d}\npositional {d}\nraw {d}\n", .{ result.psqt, result.positional, result.psqt + result.positional });
+            if (pos.st.checkers == 0) try self.writer.print("adjusted {d}\n", .{network.evaluateAdjusted(pos, self.engine.accumulators, self.engine.caches, 0)}) else try self.writer.writeAll("adjusted unavailable (in check)\n");
+        } else if (std.mem.eql(u8, cmd, "export_net")) {
+            if (args.len > 2) return error.UnexpectedArgument;
+            try self.engine.ensureNetwork();
+            const name = if (args.len == 2) args[1] else "nn-export.nnue";
+            const file = try std.Io.Dir.cwd().createFile(self.engine.io, name, .{});
+            defer file.close(self.engine.io);
+            var buffer: [65536]u8 = undefined;
+            var output = file.writer(self.engine.io, &buffer);
+            try self.engine.network.?.save(&output.interface, "Zander exported network");
+            try output.interface.flush();
+            try self.writer.print("info string Network saved to {s}\n", .{name});
+        }
+        try self.writer.flush();
     }
     fn integer(comptime T: type, text_value: []const u8, min: T, max: T) !T {
         const value = std.fmt.parseInt(T, text_value, 10) catch return error.InvalidNumber;
@@ -210,9 +353,16 @@ const Session = struct {
         if (std.mem.eql(u8, args[0], "startpos")) {
             fen = p.start_fen;
             next = 1;
-        } else if (std.mem.eql(u8, args[0], "fen") and args.len >= 7) {
-            fen = try std.fmt.bufPrint(&fen_buffer, "{s} {s} {s} {s} {s} {s}", .{ args[1], args[2], args[3], args[4], args[5], args[6] });
-            next = 7;
+        } else if (std.mem.eql(u8, args[0], "fen") and args.len >= 5) {
+            var output = std.Io.Writer.fixed(&fen_buffer);
+            next = 1;
+            while (next < args.len and !std.mem.eql(u8, args[next], "moves")) : (next += 1) {
+                if (next > 6) return error.InvalidPosition;
+                if (next > 1) try output.writeByte(' ');
+                try output.writeAll(args[next]);
+            }
+            if (next < 5) return error.InvalidPosition;
+            fen = output.buffered();
         } else return error.InvalidPosition;
         if (next < args.len) {
             if (!std.mem.eql(u8, args[next], "moves")) return error.ExpectedMoves;
@@ -220,7 +370,7 @@ const Session = struct {
         }
         try self.engine.setPosition(fen, self.chess960, args[next..]);
     }
-    fn writePerft(self: *Session, depth: u8) !void {
+    fn writePerft(self: *Session, depth: u8) !u64 {
         self.output_mutex.lockUncancelable(self.engine.io);
         defer self.output_mutex.unlock(self.engine.io);
         var moves: @import("movegen.zig").MoveList = .{};
@@ -241,11 +391,13 @@ const Session = struct {
         }
         try self.writer.print("\nNodes searched: {d}\n\n", .{total});
         try self.writer.flush();
+        return total;
     }
     fn go(self: *Session, args: []const []const u8) !void {
         if (args.len != 0 and std.mem.eql(u8, args[0], "perft")) {
             if (args.len != 2) return error.InvalidPerftCommand;
-            return self.writePerft(try integer(u8, args[1], 1, t.max_ply - 1));
+            _ = try self.writePerft(try integer(u8, args[1], 1, t.max_ply - 1));
+            return;
         }
         var limits: search.Worker.Limits = .{ .depth = t.max_ply - 1, .multi_pv = self.multi_pv };
         var time_limits: tm.Limits = .{};
