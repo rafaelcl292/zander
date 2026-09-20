@@ -24,6 +24,23 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
             };
         }
         pub fn propagate(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
+            if (@import("backend").simd) self.propagateVector(input, output) else self.propagateScalar(input, output);
+        }
+        pub fn propagateVector(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
+            const lanes = @min(16, std.simd.suggestVectorLength(i32) orelse 4);
+            comptime std.debug.assert(inputs % lanes == 0);
+            for (&self.biases, &self.weights, output) |bias, row, *value| {
+                var sums: @Vector(lanes, i32) = @splat(0);
+                var offset: usize = 0;
+                while (offset < inputs) : (offset += lanes) {
+                    const x: @Vector(lanes, u8) = input[offset..][0..lanes].*;
+                    const w: @Vector(lanes, i8) = row[offset..][0..lanes].*;
+                    sums +%= @as(@Vector(lanes, i32), @intCast(x)) * @as(@Vector(lanes, i32), w);
+                }
+                value.* = bias +% @reduce(.Add, sums);
+            }
+        }
+        pub fn propagateScalar(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
             for (&self.biases, &self.weights, output) |bias, row, *value| {
                 var sum = bias;
                 for (input, row) |x, w| sum +%= @as(i32, x) * w;
@@ -55,7 +72,7 @@ pub const Architecture = struct {
         fc1: [32]i32 align(64),
         fc2: [1]i32 align(64),
     };
-    /// Scalar reference path. SIMD-specific weight permutations are not applied.
+    /// Both kernels consume the same serialized weight layout.
     pub fn propagate(self: *const Architecture, input: *const [1024]u8, buffer: *Buffer) i32 {
         self.fc0.propagate(input, &buffer.fc0);
         for (buffer.fc0, 0..) |value, i| {
@@ -72,3 +89,21 @@ pub const Architecture = struct {
         return @intCast(@divTrunc(@as(i64, forward) * (600 * output_scale), hidden_one * (1 << weight_scale_bits) * 2));
     }
 };
+
+test "vector affine matches scalar with signed weights and wrapping bias" {
+    var layer: Affine(1024, 32) = undefined;
+    var rng = @import("../prng.zig").Prng.init(123);
+    for (&layer.biases) |*bias| bias.* = @bitCast(@as(u32, @truncate(rng.next())));
+    for (&layer.weights) |*row| for (row) |*weight| {
+        weight.* = @bitCast(@as(u8, @truncate(rng.next())));
+    };
+    var input: [1024]u8 = undefined;
+    var scalar: [32]i32 = undefined;
+    var vector: [32]i32 = undefined;
+    for (0..32) |_| {
+        for (&input) |*x| x.* = @truncate(rng.next());
+        layer.propagateScalar(&input, &scalar);
+        layer.propagateVector(&input, &vector);
+        try std.testing.expectEqualSlices(i32, &scalar, &vector);
+    }
+}

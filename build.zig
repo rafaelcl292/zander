@@ -3,6 +3,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize });
+    const backend = b.addOptions();
+    backend.addOption(bool, "simd", b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false);
+    mod.addOptions("backend", backend);
     const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
     exe_mod.addImport("zander", mod);
     const exe = b.addExecutable(.{ .name = "zander", .root_module = exe_mod });
@@ -20,6 +23,7 @@ pub fn build(b: *std.Build) void {
     const obj = cpp.addOutputFileArg("oracle.o");
     const diff_mod = b.createModule(.{ .root_source_file = b.path("tests/differential.zig"), .target = b.graph.host, .optimize = optimize });
     diff_mod.addImport("zander", b.createModule(.{ .root_source_file = b.path("src/root.zig"), .target = b.graph.host, .optimize = optimize }));
+    diff_mod.import_table.get("zander").?.addOptions("backend", backend);
     diff_mod.addObjectFile(obj);
     const reference_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
     reference_cpp.addFileArg(b.path("tests/position_reference.cpp"));

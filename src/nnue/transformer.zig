@@ -30,6 +30,7 @@ pub const FeatureTransformer = struct {
         try reader.leb128(i32, @as([*]i32, @ptrCast(&self.psqt_weights))[0 .. features.HalfKA.dimensions * buckets]);
     }
     pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, psqt: *[buckets]i32, indices: []const u16) void {
+        if (@import("backend").simd) return self.applyVector(add, false, acc, psqt, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
                 if (add) value.* +%= self.weights[index][j] else value.* -%= self.weights[index][j];
@@ -42,6 +43,7 @@ pub const FeatureTransformer = struct {
         }
     }
     pub fn applyThreats(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, psqt: *[buckets]i32, indices: []const u16) void {
+        if (@import("backend").simd) return self.applyVector(add, true, acc, psqt, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
                 if (add) value.* +%= self.threat_weights[index][j] else value.* -%= self.threat_weights[index][j];
@@ -52,6 +54,25 @@ pub const FeatureTransformer = struct {
                 if (add) value.* +%= self.threat_psqt[index][j] else value.* -%= self.threat_psqt[index][j];
             }
         }
+    }
+    fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, psqt: *[buckets]i32, indices: []const u16) void {
+        const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+        var offset: usize = 0;
+        while (offset < dimensions) : (offset += lanes) {
+            var value: @Vector(lanes, i16) = acc[offset..][0..lanes].*;
+            for (indices) |index| {
+                const weight: @Vector(lanes, i16) = if (threats)
+                    @as(@Vector(lanes, i8), self.threat_weights[index][offset..][0..lanes].*)
+                else
+                    self.weights[index][offset..][0..lanes].*;
+                if (add) value +%= weight else value -%= weight;
+            }
+            acc[offset..][0..lanes].* = value;
+        }
+        for (psqt, 0..) |*value, j| for (indices) |index| {
+            const weight = if (threats) self.threat_psqt[index][j] else self.psqt_weights[index][j];
+            if (add) value.* +%= weight else value.* -%= weight;
+        };
     }
     pub fn transform(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
         for (0..2) |p| {
