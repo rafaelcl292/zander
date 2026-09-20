@@ -345,6 +345,7 @@ const Session = struct {
         } else if (std.mem.eql(u8, cmd, "compiler")) {
             const builtin = @import("builtin");
             try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{ builtin.zig_version_string, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), @tagName(builtin.mode), @tagName(@import("backend").nnue_backend) });
+            if (@import("backend").nnue_backend == .auto and builtin.cpu.arch == .x86_64) try self.writer.print("Selected affine kernel: {s}\n", .{@tagName(@import("nnue/dispatch.zig").selected())});
         } else if (std.mem.eql(u8, cmd, "eval")) {
             try self.engine.ensureNetwork();
             if (pos.st.checkers != 0) {

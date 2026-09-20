@@ -5,8 +5,9 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize });
     const backend = b.addOptions();
     const Kernel = enum { scalar, vector, sse2, avx2, auto };
+    const simd = b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false;
     const kernel = b.option(Kernel, "nnue-backend", "NNUE kernel: scalar, vector, sse2, avx2, or auto") orelse
-        (if (b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false) Kernel.vector else Kernel.scalar);
+        (if (simd) Kernel.vector else Kernel.scalar);
     backend.addOption(Kernel, "nnue_backend", kernel);
     backend.addOption(bool, "simd", kernel != .scalar);
     backend.addOption(bool, "prefetch", b.option(bool, "prefetch", "Issue the reference TT/history prefetch hints") orelse true);
@@ -198,17 +199,25 @@ pub fn build(b: *std.Build) void {
 
 fn addDispatchObject(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     if (target.result.cpu.arch != .x86_64) return;
-    var query = target.query;
-    query.cpu_model = .baseline;
-    query.cpu_features_add = std.Target.x86.featureSet(&.{.avx2});
-    query.cpu_features_sub = .empty;
-    const object = b.addObject(.{
-        .name = "nnue-avx2",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/nnue/avx2.zig"),
+    const Variant = enum { avx2, avx512, avxvnni, vnni512 };
+    inline for (.{ Variant.avx2, Variant.avx512, Variant.avxvnni, Variant.vnni512 }) |variant| {
+        var query = target.query;
+        query.cpu_model = .baseline;
+        query.cpu_features_add = std.Target.x86.featureSet(switch (variant) {
+            .avx2 => &.{.avx2},
+            .avx512 => &.{ .avx512f, .avx512bw },
+            .avxvnni => &.{ .avx2, .avxvnni },
+            .vnni512 => &.{ .avx512f, .avx512bw, .avx512vnni },
+        });
+        query.cpu_features_sub = .empty;
+        const options = b.addOptions();
+        options.addOption(Variant, "kind", variant);
+        const root = b.createModule(.{
+            .root_source_file = b.path("src/nnue/x86_affine.zig"),
             .target = b.resolveTargetQuery(query),
             .optimize = optimize,
-        }),
-    });
-    module.addObject(object);
+        });
+        root.addOptions("kernel_options", options);
+        module.addObject(b.addObject(.{ .name = "nnue-" ++ @tagName(variant), .root_module = root, .use_llvm = true }));
+    }
 }

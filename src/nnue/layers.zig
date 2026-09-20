@@ -28,7 +28,7 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
                 .auto => {
                     if (@import("builtin").cpu.arch == .x86_64) {
                         const dispatch = @import("dispatch.zig");
-                        if (dispatch.hasAvx2()) dispatch.zander_affine_avx2(input, @ptrCast(&self.weights), &self.biases, output, inputs, outputs) else self.propagateSse2(input, output);
+                        if (dispatch.function(dispatch.selected())) |kernel| kernel(input, @ptrCast(&self.weights), &self.biases, output, inputs, outputs) else self.propagateSse2(input, output);
                     } else self.propagateVector(input, output);
                 },
                 .scalar => self.propagateScalar(input, output),
