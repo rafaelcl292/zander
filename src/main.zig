@@ -6,11 +6,12 @@ const usage =
     \\  zander perft <depth: 0..8> [--chess960] ["FEN"]
     \\  zander eval <network.nnue> [--chess960] ["FEN"]
     \\  zander search <network.nnue> <depth: 1..245> [--multipv=N] [--chess960] ["FEN"]
+    \\  zander uci [network.nnue]
     \\  zander help
     \\
     \\The default position is the standard initial position.
     \\Scores use internal units from the side-to-move perspective.
-    \\Search uses one worker and a fixed depth. UCI is not implemented yet.
+    \\No arguments starts UCI. Search uses one worker.
     \\
 ;
 pub fn main(init: std.process.Init) void {
@@ -21,10 +22,15 @@ pub fn main(init: std.process.Init) void {
 }
 fn run(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 1 or std.mem.eql(u8, args[1], "uci")) {
+        if (args.len > 3) return error.UnexpectedArgument;
+        try z.uci.run(init.gpa, init.io, if (args.len == 3) args[2] else null);
+        return;
+    }
     var buffer: [4096]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), init.io, &buffer);
     const writer = &output.interface;
-    if (args.len == 1 or (args.len == 2 and (std.mem.eql(u8, args[1], "help") or std.mem.eql(u8, args[1], "--help")))) {
+    if (args.len == 2 and (std.mem.eql(u8, args[1], "help") or std.mem.eql(u8, args[1], "--help"))) {
         try writer.writeAll(usage);
         try writer.flush();
         return;

@@ -1,3 +1,4 @@
+pub const uci = @import("uci.zig");
 pub const engine = @import("engine.zig");
 pub const notation = @import("notation.zig");
 pub const time_management = @import("time_management.zig");

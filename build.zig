@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
     if (b.args) |args| run.addArgs(args);
-    b.step("run", "Run the diagnostic CLI").dependOn(&run.step);
+    b.step("run", "Run the UCI engine or diagnostic CLI").dependOn(&run.step);
     const unit = b.addTest(.{ .root_module = mod });
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&b.addRunArtifact(unit).step);
@@ -103,6 +103,11 @@ pub fn build(b: *std.Build) void {
         const engine_mod = b.createModule(.{ .root_source_file = b.path("tests/engine.zig"), .target = b.graph.host, .optimize = optimize });
         engine_mod.addImport("zander", diff_mod.import_table.get("zander").?);
         engine_mod.addOptions("options", options);
+        const uci_run = b.addSystemCommand(&.{"python3"});
+        uci_run.addFileArg(b.path("tests/uci.py"));
+        uci_run.addArtifactArg(exe);
+        uci_run.addFileArg(.{ .cwd_relative = path });
+        b.step("uci-test", "Exercise UCI through real pipes").dependOn(&uci_run.step);
         const engine_test = b.addTest(.{ .root_module = engine_mod });
         b.step("engine-test", "Check persistent engine state and resource replacement").dependOn(&b.addRunArtifact(engine_test).step);
         const worker_exe = worker_cpp.addOutputFileArg("search-worker-reference");
