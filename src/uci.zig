@@ -70,6 +70,7 @@ const Session = struct {
     show_wdl: bool = false,
     ponder_option: bool = false,
     move_overhead: i64 = 10,
+    silent: bool = false,
 
     fn report(self: *Session, err: anyerror) void {
         self.output_mutex.lockUncancelable(self.engine.io);
@@ -143,6 +144,9 @@ const Session = struct {
                 self.report(err);
                 try self.text("bestmove 0000\n");
             };
+        } else if (std.mem.eql(u8, cmd, "speedtest")) {
+            self.stopAndJoin();
+            try self.speedtest(args[1..]);
         } else if (std.mem.eql(u8, cmd, "bench")) {
             self.stopAndJoin();
             try self.bench(args[1..]);
@@ -150,7 +154,7 @@ const Session = struct {
             self.stopAndJoin();
             try self.diagnostic(args);
         } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "license") or std.mem.eql(u8, cmd, "--license")) {
-            try self.text("Zander is a Stockfish port in Zig, licensed under GPL-3.0-or-later. See README.md and LICENSE.\nCommands: uci, position, go, stop, ponderhit, setoption, isready, ucinewgame, d, flip, eval, compiler, export_net, quit.\n");
+            try self.text("Zander is a Stockfish port in Zig, licensed under GPL-3.0-or-later. See README.md and LICENSE.\nCommands: uci, position, go, stop, ponderhit, setoption, isready, ucinewgame, d, flip, eval, compiler, export_net, bench, speedtest, quit.\n");
         } else if (std.mem.startsWith(u8, cmd, "#")) {
             return;
         } else if (std.mem.eql(u8, cmd, "debug")) {
@@ -158,6 +162,70 @@ const Session = struct {
         } else if (std.mem.eql(u8, cmd, "register")) {
             try self.text("registration ok\n");
         } else return error.UnknownCommand;
+    }
+    fn speedSearch(self: *Session, fen: []const u8, milliseconds: i64) !u64 {
+        try self.engine.setPosition(fen, false, &.{});
+        var buffer: [24]u8 = undefined;
+        const limit = try std.fmt.bufPrint(&buffer, "{d}", .{milliseconds});
+        try self.go(&.{ "movetime", limit });
+        if (self.thread) |thread| thread.join();
+        self.thread = null;
+        return self.engine.totalNodes();
+    }
+    fn speedtest(self: *Session, args: []const []const u8) !void {
+        if (args.len > 3) return error.UnexpectedArgument;
+        const threads: usize = if (args.len > 0) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[0], 10), 1, 256)) else @min(256, std.Thread.getCpuCount() catch 1);
+        const hash: usize = if (args.len > 1) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[1], 10), 1, 4096)) else @min(4096, 128 * threads);
+        const seconds: i64 = if (args.len > 2) std.math.clamp(try std.fmt.parseInt(i64, args[2], 10), 1, std.math.maxInt(i32) / 1000) else 150;
+        try self.engine.resizeThreads(threads);
+        try self.engine.resizeHash(hash);
+        self.chess960 = false;
+        self.silent = true;
+        defer self.silent = false;
+        const positions = @embedFile("speedtest_positions.txt");
+        var games = std.mem.tokenizeSequence(u8, positions, "\n\n");
+        var total_time: f32 = 0;
+        while (games.next()) |game| {
+            var lines = std.mem.tokenizeScalar(u8, game, '\n');
+            var ply: usize = 1;
+            while (lines.next() != null) : (ply += 1) total_time += @as(f32, @floatCast(50000.0 / @as(f64, @floatFromInt(ply + 15))));
+        }
+        const scale = @as(f32, @floatFromInt(seconds * 1000)) / total_time;
+        games.reset();
+        self.engine.newGame();
+        var warmup = std.mem.tokenizeScalar(u8, games.next().?, '\n');
+        for (1..4) |ply| {
+            _ = try self.speedSearch(warmup.next().?, @intFromFloat(50000.0 / @as(f64, @floatFromInt(ply + 15)) * scale));
+        }
+        games.reset();
+        var nodes: u64 = 0;
+        var elapsed: i64 = 0;
+        var samples: u32 = 0;
+        var hash_total: [2]u32 = @splat(0);
+        var hash_max: [2]u32 = @splat(0);
+        while (games.next()) |game| {
+            self.engine.newGame();
+            var lines = std.mem.tokenizeScalar(u8, game, '\n');
+            var ply: usize = 1;
+            while (lines.next()) |fen| : (ply += 1) {
+                const start = std.Io.Clock.awake.now(self.engine.io).toMilliseconds();
+                nodes += try self.speedSearch(fen, @intFromFloat(50000.0 / @as(f64, @floatFromInt(ply + 15)) * scale));
+                elapsed += std.Io.Clock.awake.now(self.engine.io).toMilliseconds() - start;
+                for ([_]i32{ 0, 999 }, 0..) |age, i| {
+                    const reading = self.engine.table.hashfull(age);
+                    hash_total[i] += reading;
+                    hash_max[i] = @max(hash_max[i], reading);
+                }
+                samples += 1;
+            }
+        }
+        const milliseconds: u64 = @intCast(@max(1, elapsed));
+        self.output_mutex.lockUncancelable(self.engine.io);
+        defer self.output_mutex.unlock(self.engine.io);
+        try self.writer.print("Filled invocation          : speedtest {d} {d} {d}\nThread count               : {d}\nTT size [MiB]              : {d}\n", .{ threads, hash, seconds, threads, hash });
+        try self.writer.print("Hash max, avg [per mille]   :\n    single search          : {d}, {d}\n    single game            : {d}, {d}\n", .{ hash_max[0], hash_total[0] / samples, hash_max[1], hash_total[1] / samples });
+        try self.writer.print("Total nodes searched       : {d}\nTotal search time [s]      : {d:.3}\nNodes/second               : {d}\n", .{ nodes, @as(f64, @floatFromInt(milliseconds)) / 1000, 1000 * nodes / milliseconds });
+        try self.writer.flush();
     }
     // Defaults are copied from the pinned GPL-3.0-or-later benchmark.cpp.
     fn bench(self: *Session, args: []const []const u8) !void {
@@ -484,6 +552,7 @@ const Session = struct {
             self.text("bestmove 0000\n") catch {};
             return;
         };
+        if (self.silent) return;
         self.engine.extendPonder();
         self.output_mutex.lockUncancelable(self.engine.io);
         defer self.output_mutex.unlock(self.engine.io);
@@ -502,6 +571,7 @@ const Session = struct {
     }
     fn progress(context: ?*anyopaque, _: *search.Worker) void {
         const self: *Session = @ptrCast(@alignCast(context.?));
+        if (self.silent) return;
         self.output_mutex.lockUncancelable(self.engine.io);
         defer self.output_mutex.unlock(self.engine.io);
         self.writeInfo() catch {

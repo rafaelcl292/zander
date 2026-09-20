@@ -155,6 +155,11 @@ def main():
         assert "Nodes searched  : 8902" in client.until("Nodes/second")
         client.send("bench 1 1 2 current depth")
         assert any(line.startswith("bestmove ") for line in client.until("Nodes/second"))
+        client.send("speedtest 1 1 1")
+        speed = client.until("Nodes/second")
+        assert not any(line.startswith("bestmove ") for line in speed), speed
+        assert any(line.startswith("Total nodes searched") and int(line.split(":")[1]) > 0 for line in speed), speed
+        client.send("position startpos")
         client.send("ucinewgame")
         client.send("setoption name Hash value 1")
         if hasattr(os, "sched_getaffinity"):
