@@ -101,7 +101,7 @@ pub const Engine = struct {
         self.node_rate = 0;
         self.wait_context = null;
         self.on_wait = null;
-        self.main_storage = try Helper.create(allocator, io, 0, &self.shared, &self.table, &self.control);
+        self.main_storage = try Helper.create(allocator, io, 0, &self.shared, &self.table, &self.control, null);
         self.base = self.main_storage.base;
         self.accumulators = self.base.accumulators;
         self.caches = self.base.caches;
@@ -183,7 +183,7 @@ pub const Engine = struct {
         const main_storage = block: {
             const guard = try numa.Guard.bind(if (groups[assignment[0]].mask) |*mask| mask else null);
             defer guard.restore();
-            break :block try Helper.create(self.allocator, self.io, 0, &self.shared, &self.table, &self.control);
+            break :block try Helper.create(self.allocator, self.io, 0, &self.shared, &self.table, &self.control, groups[assignment[0]].mask);
         };
         errdefer main_storage.destroy(self.allocator);
         var region = try memory.Region.allocate(self.allocator, self.hash_mb * 1024 * 1024, self.page_policy);
@@ -196,7 +196,7 @@ pub const Engine = struct {
             const group = groups[assignment[index]];
             const guard = try numa.Guard.bind(if (group.mask) |*mask| mask else null);
             defer guard.restore();
-            helper.* = try Helper.create(self.allocator, self.io, index, &group.shared, &self.table, &self.control);
+            helper.* = try Helper.create(self.allocator, self.io, index, &group.shared, &self.table, &self.control, group.mask);
             initialized += 1;
         }
         for (self.helpers) |helper| helper.destroy(self.allocator);

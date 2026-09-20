@@ -11,6 +11,7 @@ const QWorker = @import("quiescence.zig").Worker;
 pub const Helper = struct {
     arena: std.heap.ArenaAllocator,
     io: std.Io,
+    affinity: ?@import("numa.zig").Mask,
     thread: ?std.Thread = null,
     mutex: std.Io.Mutex = .init,
     condition: std.Io.Condition = .init,
@@ -24,10 +25,10 @@ pub const Helper = struct {
     limits: search.Worker.Limits = .{ .depth = t.max_ply - 1 },
     failure: ?anyerror = null,
 
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, index: usize, shared: *h.SharedHistories, table: *@import("tt.zig").Table, control: *@import("search_control.zig").Control) !*Helper {
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, index: usize, shared: *h.SharedHistories, table: *@import("tt.zig").Table, control: *@import("search_control.zig").Control, affinity: ?@import("numa.zig").Mask) !*Helper {
         const self = try allocator.create(Helper);
         errdefer allocator.destroy(self);
-        self.* = .{ .arena = .init(std.heap.page_allocator), .io = io, .base = undefined, .worker = undefined, .roots = undefined };
+        self.* = .{ .arena = .init(std.heap.page_allocator), .io = io, .affinity = affinity, .base = undefined, .worker = undefined, .roots = undefined };
         errdefer self.arena.deinit();
         const a = self.arena.allocator();
         const base = try a.create(QWorker);
@@ -102,6 +103,11 @@ pub const Helper = struct {
         self.arena.deinit();
         allocator.destroy(self);
     }
+    fn runJob(self: *Helper) !void {
+        const guard = try @import("numa.zig").Guard.bind(if (self.affinity) |*mask| mask else null);
+        defer guard.restore();
+        _ = try self.worker.iterativeDeepening(&self.position, self.roots, self.limits);
+    }
     fn loop(self: *Helper) void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -109,7 +115,7 @@ pub const Helper = struct {
             while (!self.busy and !self.exiting) self.condition.waitUncancelable(self.io, &self.mutex);
             if (self.exiting) return;
             self.mutex.unlock(self.io);
-            _ = self.worker.iterativeDeepening(&self.position, self.roots, self.limits) catch |err| {
+            self.runJob() catch |err| {
                 self.failure = err;
                 self.base.control.?.requestStop();
             };

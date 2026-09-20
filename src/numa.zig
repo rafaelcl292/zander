@@ -12,6 +12,7 @@ pub const Topology = struct {
         return discoverWithAffinity(io, true);
     }
     pub fn discoverWithAffinity(io: std.Io, respect_affinity: bool) Topology {
+        if (builtin.os.tag == .windows and @sizeOf(usize) == 8) return @import("numa_windows.zig").discover(respect_affinity);
         var result: Topology = .{};
         if (builtin.os.tag != .linux) return result;
         var allowed: Mask = @splat(0);
@@ -90,7 +91,7 @@ pub const Topology = struct {
     }
     /// Parse explicit domains in Stockfish's colon-separated CPU-list format.
     pub fn fromString(text: []const u8) !Topology {
-        var result: Topology = .{ .count = 0, .available = builtin.os.tag == .linux };
+        var result: Topology = .{ .count = 0, .available = builtin.os.tag == .linux or (builtin.os.tag == .windows and @sizeOf(usize) == 8) };
         var used: Mask = @splat(0);
         var domains = std.mem.splitScalar(u8, text, ':');
         while (domains.next()) |domain| {
@@ -141,7 +142,11 @@ pub const Topology = struct {
 };
 pub const Guard = struct {
     previous: ?Mask = null,
+    windows: ?@import("numa_windows.zig").Guard = null,
     pub fn bind(mask: ?*const Mask) !Guard {
+        if (builtin.os.tag == .windows and @sizeOf(usize) == 8) {
+            return if (mask) |cpus| .{ .windows = try @import("numa_windows.zig").Guard.bind(cpus.*) } else .{};
+        }
         if (builtin.os.tag != .linux or mask == null) return .{};
         var previous: Mask = @splat(0);
         if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &previous)) != .SUCCESS) return error.AffinityUnavailable;
@@ -149,6 +154,7 @@ pub const Guard = struct {
         return .{ .previous = previous };
     }
     pub fn restore(self: Guard) void {
+        if (builtin.os.tag == .windows and @sizeOf(usize) == 8) if (self.windows) |guard| guard.restore();
         if (builtin.os.tag == .linux) if (self.previous) |mask| {
             linux.sched_setaffinity(0, &mask) catch {};
         };
