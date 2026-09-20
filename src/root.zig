@@ -1,3 +1,5 @@
+pub const engine = @import("engine.zig");
+pub const notation = @import("notation.zig");
 pub const time_management = @import("time_management.zig");
 pub const search_control = @import("search_control.zig");
 pub const search = @import("search.zig");

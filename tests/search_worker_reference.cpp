@@ -321,4 +321,22 @@ int main(int argc, char** argv) {
     }
     std::puts("};");
 
+    std::puts("pub const NotationCase = struct { root: usize, value: i32, score: []const u8, wdl: []const u8 };\npub const notation_cases = [_]NotationCase{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    while(std::getline(inputs,line)) {
+        size_t index=root++; Position pos; StateInfo st;
+        if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
+        for(int value : {-32000,-31999,-31997,-31753,-31752,-31507,-1000,-1,0,1,1000,31507,31752,31753,31997,31999,32000}) {
+            std::printf(".{ .root=%zu,.value=%d,.score=\"%s\",.wdl=\"%s\" },\n",index,value,UCIEngine::format_score(Score(value,pos)).c_str(),UCIEngine::wdl(value,pos).c_str());
+        }
+    }
+    std::puts("};\npub const NotationMove = struct { root: usize, move: u16, text: []const u8 };\npub const notation_moves = [_]NotationMove{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    while(std::getline(inputs,line)) {
+        size_t index=root++; Position pos; StateInfo st;
+        if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
+        for(Move move:MoveList<LEGAL>(pos)) std::printf(".{ .root=%zu,.move=%u,.text=\"%s\" },\n",index,unsigned(move.raw()),UCIEngine::move(move,pos.is_chess960()).c_str());
+    }
+    std::puts("};");
+
 }

@@ -50,7 +50,7 @@ pub const Worker = struct {
     on_progress: ?*const fn (?*anyopaque, *Worker) void = null,
     previous_score: i32 = t.value_infinite,
     previous_average: i32 = t.value_infinite,
-    previous_time_reduction: f64 = 1.0,
+    previous_time_reduction: f64 = 0.85,
     completed_depth: i32 = 0,
     reductions: s.Reductions,
     tt_move_history: h.TTMoveHistory = .{ .value = 0 },

@@ -100,6 +100,11 @@ pub fn build(b: *std.Build) void {
         const network_test = b.addTest(.{ .root_module = network_mod });
         b.step("network-test", "Compare real NNUE weights and incremental evaluation with Stockfish").dependOn(&b.addRunArtifact(network_test).step);
         worker_cpp.addArgs(&.{ "-Wl,--gc-sections", "-o" });
+        const engine_mod = b.createModule(.{ .root_source_file = b.path("tests/engine.zig"), .target = b.graph.host, .optimize = optimize });
+        engine_mod.addImport("zander", diff_mod.import_table.get("zander").?);
+        engine_mod.addOptions("options", options);
+        const engine_test = b.addTest(.{ .root_module = engine_mod });
+        b.step("engine-test", "Check persistent engine state and resource replacement").dependOn(&b.addRunArtifact(engine_test).step);
         const worker_exe = worker_cpp.addOutputFileArg("search-worker-reference");
         const worker_run = std.Build.Step.Run.create(b, "generate search worker reference");
         worker_run.addFileArg(worker_exe);

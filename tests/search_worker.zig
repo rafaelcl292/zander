@@ -365,4 +365,25 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expectEqual(@as(i32, 0), search.nmp_min_ply);
         for (worker.frames) |frame| try std.testing.expectEqual(@as(u16, 0), frame.excluded_move.data);
     }
+    for (@import("reference").notation_cases) |case| {
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(lines[case.root][2..], lines[case.root][0] == '1', &state, tables, keys);
+        var buffer: [128]u8 = undefined;
+        var writer = std.Io.Writer.fixed(&buffer);
+        try z.notation.writeScore(&writer, case.value, &pos);
+        try std.testing.expectEqualStrings(case.score, writer.buffered());
+        writer = std.Io.Writer.fixed(&buffer);
+        const wdl = z.notation.wdl(case.value, &pos);
+        try writer.print("{d} {d} {d}", .{ wdl[0], wdl[1], wdl[2] });
+        try std.testing.expectEqualStrings(case.wdl, writer.buffered());
+    }
+    for (@import("reference").notation_moves) |case| {
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(lines[case.root][2..], lines[case.root][0] == '1', &state, tables, keys);
+        var buffer: [6]u8 = undefined;
+        try std.testing.expectEqualStrings(case.text, z.notation.moveText(.{ .data = case.move }, pos.chess960, &buffer));
+        try std.testing.expectEqual(case.move, z.notation.parseMove(&pos, case.text).?.data);
+    }
 }
