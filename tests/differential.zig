@@ -520,3 +520,60 @@ test "shared history storage partitions and key masks preserve capacities" {
         try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .black) == &correction[(key ^ 12345) & 131071]);
     }
 }
+
+fn historySample(seed: u64, index: usize, limit: i32) i16 {
+    return @intCast(@as(i32, @intCast((z.types.makeKey(seed ^ index) >> 32) % @as(u32, @intCast(2 * limit + 1)))) - limit);
+}
+test "staged move ordering matches Stockfish with varied histories and TT moves" {
+    const h = z.history;
+    const allocator = std.testing.allocator;
+    const main = try allocator.create(h.ButterflyHistory);
+    defer allocator.destroy(main);
+    const low = try allocator.create(h.LowPlyHistory);
+    defer allocator.destroy(low);
+    const capture = try allocator.create(h.CapturePieceToHistory);
+    defer allocator.destroy(capture);
+    const continuation = try allocator.create([6]h.PieceToHistory);
+    defer allocator.destroy(continuation);
+    var ch: [6]*const h.PieceToHistory = undefined;
+    const correction = try allocator.alloc(h.CorrectionEntry, h.correction_history_base_size);
+    defer allocator.free(correction);
+    const pawn = try allocator.alloc(h.PawnEntry, h.pawn_history_base_size);
+    defer allocator.free(pawn);
+    const block = try allocator.create(h.ContinuationHistoryBlock);
+    defer allocator.destroy(block);
+    var shared = try h.SharedHistories.init(1, correction, block, pawn);
+    const tables = try allocator.create(z.attacks.Tables);
+    defer allocator.destroy(tables);
+    tables.init();
+    const keys = try allocator.create(z.position_keys.PositionKeys);
+    defer allocator.destroy(keys);
+    keys.init();
+    var current_pattern: ?bool = null;
+    for (@import("movepick_reference").cases, 0..) |case, case_index| {
+        if (current_pattern == null or current_pattern.? != case.flat) {
+            current_pattern = case.flat;
+            for (main, 0..) |*color, c| for (color, 0..) |*entry, m| entry.set(if (case.flat) 0 else historySample(11, c * 65536 + m, 7183));
+            for (low, 0..) |*ply, p| for (ply, 0..) |*entry, m| entry.set(if (case.flat) 0 else historySample(22, p * 65536 + m, 7183));
+            for (capture, 0..) |*piece, pc| for (piece, 0..) |*dest, to| for (dest, 0..) |*entry, cap| entry.set(if (case.flat) 0 else historySample(33, (pc * 64 + to) * 8 + cap, 10692));
+            for (continuation, 0..) |*table, j| {
+                ch[j] = table;
+                for (table, 0..) |*piece, pc| for (piece, 0..) |*entry, to| entry.set(if (case.flat) 0 else historySample(44, (j * 16 + pc) * 64 + to, 30000));
+            }
+        }
+
+        errdefer std.debug.print("Move ordering case {d}, FEN {s}\n", .{ case_index, case.fen });
+        var state: z.position.StateInfo = undefined;
+        var pos: z.position.Position = undefined;
+        try pos.set(case.fen, case.chess960, &state, tables, keys);
+        for (shared.pawnEntry(&pos), 0..) |*piece, pc| for (piece, 0..) |*entry, to| entry.set(if (case.flat) 0 else historySample(55, pc * 64 + to, 8192));
+        var picker = if (case.probcut) z.movepick.MovePicker.initProbcut(&pos, .{ .data = case.tt }, case.threshold, capture) else z.movepick.MovePicker.init(&pos, .{ .data = case.tt }, case.depth, .{ .main = main, .low_ply = low, .capture = capture, .continuation = if (case.depth > 0) &ch else ch[0..1], .shared = &shared }, case.ply);
+        for (case.moves, 0..) |expected, i| {
+            if (i == case.skip_after) picker.skipQuietMoves();
+            try std.testing.expectEqual(expected, picker.next().data);
+        }
+        if (case.moves.len == case.skip_after) picker.skipQuietMoves();
+        try std.testing.expectEqual(@as(u16, 0), picker.next().data);
+        try std.testing.expectEqual(@as(u16, 0), picker.next().data);
+    }
+}
