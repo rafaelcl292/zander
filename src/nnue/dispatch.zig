@@ -112,3 +112,31 @@ pub fn sparseFunction(kernel: Kernel) ?Sparse {
         .vnni512 => &zander_sparse_vnni512,
     };
 }
+
+extern fn zander_hidden_avx2([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_hidden_avx512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_hidden_avxvnni([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_hidden_vnni512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+pub fn hiddenFunction(kernel: Kernel) ?Sparse {
+    return switch (kernel) {
+        .sse2 => null,
+        .avx2 => &zander_hidden_avx2,
+        .avx512 => &zander_hidden_avx512,
+        .avxvnni => &zander_hidden_avxvnni,
+        .vnni512 => &zander_hidden_vnni512,
+    };
+}
+
+extern fn zander_output_avx2([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_output_avx512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_output_avxvnni([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_output_vnni512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+pub fn outputFunction(kernel: Kernel) ?Sparse {
+    return switch (kernel) {
+        .sse2 => null,
+        .avx2 => &zander_output_avx2,
+        .avx512 => &zander_output_avx512,
+        .avxvnni => &zander_output_avxvnni,
+        .vnni512 => &zander_output_vnni512,
+    };
+}

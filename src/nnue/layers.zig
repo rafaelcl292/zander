@@ -103,6 +103,7 @@ pub const Architecture = struct {
     // The upstream four-input weight permutation, prepared once at load time.
     // Canonical weights remain available for scalar oracles and network export.
     sparse_weights: if (use_sparse) [256][32][4]i8 else void,
+    hidden_weights: if (use_sparse) [16][32][4]i8 else void,
     pub fn hash() u32 {
         var h: u32 = 0xec42e90d ^ (1024 * 2);
         h = Affine(1024, 32).hash(h);
@@ -115,7 +116,12 @@ pub const Architecture = struct {
         try self.fc0.read(reader);
         try self.fc1.read(reader);
         try self.fc2.read(reader);
-        if (use_sparse) self.prepareSparse();
+        if (use_sparse) {
+            self.prepareSparse();
+            for (0..64) |input| for (0..32) |output| {
+                self.hidden_weights[input / 4][output][input % 4] = self.fc1.weights[output][input];
+            };
+        }
     }
     pub fn prepareSparse(self: *Architecture) void {
         if (use_sparse) for (0..1024) |input| {
@@ -140,12 +146,22 @@ pub const Architecture = struct {
             buffer.concat[i] = squared(value, 7);
             buffer.concat[32 + i] = clipped(value, 7);
         }
-        self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
+        if (use_sparse) {
+            const dispatch = @import("dispatch.zig");
+            if (dispatch.hiddenFunction(dispatch.selected())) |kernel| {
+                kernel(&buffer.concat, @ptrCast(&self.hidden_weights), &self.fc1.biases, &buffer.fc1);
+            } else self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
+        } else self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
         for (buffer.fc1, 0..) |value, i| {
             buffer.concat[64 + i] = squared(value, 6);
             buffer.concat[96 + i] = clipped(value, 6);
         }
-        self.fc2.propagate(&buffer.concat, &buffer.fc2);
+        if (use_sparse) {
+            const dispatch = @import("dispatch.zig");
+            if (dispatch.outputFunction(dispatch.selected())) |kernel| {
+                kernel(&buffer.concat, @ptrCast(&self.fc2.weights), &self.fc2.biases, &buffer.fc2);
+            } else self.fc2.propagate(&buffer.concat, &buffer.fc2);
+        } else self.fc2.propagate(&buffer.concat, &buffer.fc2);
         const forward = buffer.fc2[0] +% (buffer.fc0[30] -% buffer.fc0[31]);
         return @intCast(@divTrunc(@as(i64, forward) * (600 * output_scale), hidden_one * (1 << weight_scale_bits) * 2));
     }
@@ -202,5 +218,37 @@ test "block sparse affine preserves signed extremes, zero blocks and wrapping su
         layer.fc0.propagateScalar(&input, &scalar);
         kernel(&input, @ptrCast(&layer.sparse_weights), &layer.fc0.biases, &sparse);
         try std.testing.expectEqualSlices(i32, &scalar, &sparse);
+    }
+}
+
+test "packed small layers match scalar at activation and weight boundaries" {
+    if (!use_sparse) return error.SkipZigTest;
+    const dispatch = @import("dispatch.zig");
+    const hidden = dispatch.hiddenFunction(dispatch.selected()) orelse return error.SkipZigTest;
+    const final = dispatch.outputFunction(dispatch.selected()).?;
+    var layer: Affine(64, 32) = undefined;
+    var last: Affine(128, 1) = undefined;
+    var packed_weights: [16][32][4]i8 = undefined;
+    var input: [128]u8 = undefined;
+    var rng = @import("../prng.zig").Prng.init(719);
+    for (0..32) |pattern| {
+        for (&input) |*v| v.* = if (pattern == 0) 127 else if (pattern == 1) 0 else @truncate(rng.next() & 127);
+        for (&layer.biases) |*v| v.* = @bitCast(@as(u32, @truncate(rng.next())));
+        for (&layer.weights, 0..) |*row, output| for (row, 0..) |*v, i| {
+            v.* = if (pattern == 0) -128 else if (pattern == 1) 127 else @bitCast(@as(u8, @truncate(rng.next())));
+            packed_weights[i / 4][output][i % 4] = v.*;
+        };
+        var expected: [32]i32 = undefined;
+        var actual: [32]i32 = undefined;
+        layer.propagateScalar(input[0..64], &expected);
+        hidden(&input, @ptrCast(&packed_weights), &layer.biases, &actual);
+        try std.testing.expectEqualSlices(i32, &expected, &actual);
+        last.biases[0] = layer.biases[0];
+        for (&last.weights[0], 0..) |*v, i| v.* = layer.weights[i / 64][i % 64];
+        var expected_last: [1]i32 = undefined;
+        var actual_last: [1]i32 = undefined;
+        last.propagateScalar(&input, &expected_last);
+        final(&input, @ptrCast(&last.weights), &last.biases, &actual_last);
+        try std.testing.expectEqualSlices(i32, &expected_last, &actual_last);
     }
 }
