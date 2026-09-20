@@ -74,6 +74,40 @@ pub const FeatureTransformer = struct {
             if (add) value.* +%= weight else value.* -%= weight;
         };
     }
+    /// Reference apply_combined: retain one tile in registers through all
+    /// feature removals/additions, then write the destination once.
+    pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, from_psqt: *const [buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, removed: []const u16, added: []const u16, threats_removed: []const u16, threats_added: []const u16) void {
+        const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+        const registers = 8;
+        var offset: usize = 0;
+        while (offset < dimensions) : (offset += lanes * registers) {
+            var tile: [registers]@Vector(lanes, i16) = undefined;
+            inline for (0..registers) |i| tile[i] = from[offset + i * lanes ..][0..lanes].*;
+            self.applyTile(false, false, lanes, &tile, offset, removed);
+            self.applyTile(true, false, lanes, &tile, offset, added);
+            self.applyTile(false, true, lanes, &tile, offset, threats_removed);
+            self.applyTile(true, true, lanes, &tile, offset, threats_added);
+            inline for (0..registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
+        }
+        var psqt: @Vector(buckets, i32) = from_psqt.*;
+        for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
+        for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
+        for (threats_removed) |index| psqt -%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
+        for (threats_added) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
+        to_psqt.* = psqt;
+    }
+    inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
+        for (indices) |index| {
+            inline for (0..8) |i| {
+                const start = offset + i * lanes;
+                const weight: @Vector(lanes, i16) = if (threats)
+                    @as(@Vector(lanes, i8), self.threat_weights[index][start..][0..lanes].*)
+                else
+                    self.weights[index][start..][0..lanes].*;
+                if (add) tile[i] +%= weight else tile[i] -%= weight;
+            }
+        }
+    }
     pub fn transform(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
         if (@import("backend").simd) return transformVector(acc, side, output);
         transformScalar(acc, side, output);

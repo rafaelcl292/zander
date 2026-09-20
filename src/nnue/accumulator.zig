@@ -97,12 +97,16 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT
     f.HalfKA.appendChanged(c, king, diff.piece, if (forward) &pr else &pa, if (forward) &pa else &pr);
     f.FullThreats.appendChanged(c, king, &diff.threats, if (forward) &tr else &ta, if (forward) &ta else &tr);
     f.PawnPairs.appendChanged(c, king, diff.before, diff.after, if (forward) &tr else &ta, if (forward) &ta else &tr);
-    target.accumulation[side] = computed.accumulation[side];
-    target.psqt[side] = computed.psqt[side];
-    ft.applyPsq(false, &target.accumulation[side], &target.psqt[side], pr.slice());
-    ft.applyPsq(true, &target.accumulation[side], &target.psqt[side], pa.slice());
-    ft.applyThreats(false, &target.accumulation[side], &target.psqt[side], tr.slice());
-    ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], ta.slice());
+    if (@import("backend").simd) {
+        ft.applyCombined(&computed.accumulation[side], &computed.psqt[side], &target.accumulation[side], &target.psqt[side], pr.slice(), pa.slice(), tr.slice(), ta.slice());
+    } else {
+        target.accumulation[side] = computed.accumulation[side];
+        target.psqt[side] = computed.psqt[side];
+        ft.applyPsq(false, &target.accumulation[side], &target.psqt[side], pr.slice());
+        ft.applyPsq(true, &target.accumulation[side], &target.psqt[side], pa.slice());
+        ft.applyThreats(false, &target.accumulation[side], &target.psqt[side], tr.slice());
+        ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], ta.slice());
+    }
     target.computed[side] = true;
 }
 fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, c: t.Color, king: t.Square, removed: *f.SmallList, added: *f.SmallList) void {
