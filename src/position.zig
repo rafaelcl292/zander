@@ -4,6 +4,7 @@ const t = @import("types.zig");
 const bb = @import("bitboard.zig");
 const a = @import("attacks.zig");
 const pk = @import("position_keys.zig");
+const dirty = @import("dirty.zig");
 const Square = t.Square;
 const Color = t.Color;
 const Piece = t.Piece;
@@ -65,6 +66,9 @@ pub const Position = struct {
         return if (self.st.rule50 < 14) self.st.key else self.st.key ^ t.makeKey(@intCast(@divTrunc(self.st.rule50 - 14, 8)));
     }
     fn put(self: *Position, pc: Piece, s: Square) void {
+        self.putWithThreats(pc, s, null);
+    }
+    fn putWithThreats(self: *Position, pc: Piece, s: Square, dts: ?*dirty.DirtyThreats) void {
         const bit = bb.square(s);
         std.debug.assert(self.pieceOn(s) == .none and pc != .none);
         self.board[@intFromEnum(s)] = pc;
@@ -73,9 +77,14 @@ pub const Position = struct {
         self.by_color[@intFromEnum(pc.color())] |= bit;
         self.piece_count[@intFromEnum(pc)] += 1;
         self.piece_count[@as(usize, @intFromEnum(pc.color())) * 8] += 1;
+        if (dts) |threats| self.updatePieceThreats(true, pc, true, s, threats, ~@as(u64, 0));
     }
     fn remove(self: *Position, s: Square) void {
+        self.removeWithThreats(s, null);
+    }
+    fn removeWithThreats(self: *Position, s: Square, dts: ?*dirty.DirtyThreats) void {
         const pc = self.pieceOn(s);
+        if (dts) |threats| self.updatePieceThreats(true, pc, false, s, threats, ~@as(u64, 0));
         const bit = bb.square(s);
         std.debug.assert(pc != .none);
         self.board[@intFromEnum(s)] = .none;
@@ -406,18 +415,94 @@ pub const Position = struct {
         };
     }
     fn movePiece(self: *Position, from: Square, to: Square) void {
+        self.movePieceWithThreats(from, to, null);
+    }
+    fn movePieceWithThreats(self: *Position, from: Square, to: Square, dts: ?*dirty.DirtyThreats) void {
         const pc = self.pieceOn(from);
         const bits = bb.square(from) | bb.square(to);
         std.debug.assert(pc != .none and self.pieceOn(to) == .none);
+        if (dts) |threats| self.updatePieceThreats(true, pc, false, from, threats, bits);
         self.by_type[0] ^= bits;
         self.by_type[@intFromEnum(pc.pieceType())] ^= bits;
         self.by_color[@intFromEnum(pc.color())] ^= bits;
         self.board[@intFromEnum(from)] = .none;
         self.board[@intFromEnum(to)] = pc;
+        if (dts) |threats| self.updatePieceThreats(true, pc, true, to, threats, bits);
     }
-    /// Requires a legal move and a fresh state at a stable address. TT/history
-    /// prefetch and NNUE dirty feature output are added with their own subsystems.
+    fn addThreat(dts: *dirty.DirtyThreats, put_piece: bool, pc: Piece, threatened: Piece, from: Square, to: Square) void {
+        dts.append(dirty.DirtyThreat.init(pc, threatened, from, to, put_piece));
+    }
+    fn processSliders(self: *const Position, pc: Piece, put_piece: bool, s: Square, dts: *dirty.DirtyThreats, no_rays: u64, sliders: u64, slider_attacks: u64, add_direct: bool) void {
+        var b = sliders;
+        while (b != 0) {
+            const slider_sq = bb.popLsb(&b);
+            const slider = self.pieceOn(slider_sq);
+            const ray = self.tables.ray_pass[@intFromEnum(slider_sq)][@intFromEnum(s)];
+            const discovered = ray & slider_attacks & (self.pieces() ^ self.by_type[6]);
+            std.debug.assert(!bb.moreThanOne(discovered));
+            if (discovered != 0 and (ray & no_rays) != no_rays) {
+                const threatened_sq = bb.lsb(discovered);
+                const threatened = self.pieceOn(threatened_sq);
+                if (threatened.pieceType() != .queen or slider.pieceType() == .queen) addThreat(dts, !put_piece, slider, threatened, slider_sq, threatened_sq);
+            }
+            if (add_direct and (pc.pieceType() != .queen or slider.pieceType() == .queen)) addThreat(dts, put_piece, slider, pc, slider_sq, s);
+        }
+    }
+    fn updatePieceThreats(self: *const Position, comptime compute_ray: bool, pc: Piece, put_piece: bool, s: Square, dts: *dirty.DirtyThreats, no_rays: u64) void {
+        const occupied = self.pieces();
+        const bishop_attacks = self.tables.attacks(.bishop, s, occupied);
+        const rook_attacks = self.tables.attacks(.rook, s, occupied);
+        const slider_attacks = bishop_attacks | rook_attacks;
+        const occupied_no_king = occupied ^ self.by_type[6];
+        const pt = pc.pieceType();
+        const sliders = ((self.by_type[3] | self.by_type[5]) & bishop_attacks) | ((self.by_type[4] | self.by_type[5]) & rook_attacks);
+        if (pt == .king) {
+            if (compute_ray) self.processSliders(pc, put_piece, s, dts, no_rays, sliders, slider_attacks, false);
+            return;
+        }
+        const targets = switch (pt) {
+            .pawn => self.by_type[2] | self.by_type[4],
+            .bishop, .rook => self.by_type[1] | self.by_type[2] | self.by_type[3] | self.by_type[4],
+            else => occupied_no_king,
+        };
+        var threatened = targets & switch (pt) {
+            .bishop => bishop_attacks,
+            .rook => rook_attacks,
+            .queen => slider_attacks,
+            .pawn => a.pseudo[@intFromEnum(pc.color())][@intFromEnum(s)],
+            else => a.pseudo[@intFromEnum(pt)][@intFromEnum(s)],
+        };
+        var incoming = a.pseudo[2][@intFromEnum(s)] & self.by_type[2];
+        if (pt == .knight or pt == .rook) incoming |= (a.pseudo[0][@intFromEnum(s)] & self.piecesOf(.black, .pawn)) | (a.pseudo[1][@intFromEnum(s)] & self.piecesOf(.white, .pawn));
+        while (threatened != 0) {
+            const to = bb.popLsb(&threatened);
+            addThreat(dts, put_piece, pc, self.pieceOn(to), s, to);
+        }
+        if (compute_ray) self.processSliders(pc, put_piece, s, dts, no_rays, sliders, slider_attacks, true) else incoming |= if (pt == .queen) sliders & self.by_type[5] else sliders;
+        while (incoming != 0) {
+            const from = bb.popLsb(&incoming);
+            addThreat(dts, put_piece, self.pieceOn(from), pc, from, s);
+        }
+    }
+    fn swapPiece(self: *Position, s: Square, pc: Piece, dts: ?*dirty.DirtyThreats) void {
+        const old = self.pieceOn(s);
+        self.remove(s);
+        if (dts) |threats| self.updatePieceThreats(false, old, false, s, threats, ~@as(u64, 0));
+        self.put(pc, s);
+        if (dts) |threats| self.updatePieceThreats(false, pc, true, s, threats, ~@as(u64, 0));
+    }
+
+    /// Requires a legal move and a fresh state at a stable address.
     pub fn doMove(self: *Position, m: t.Move, next: *StateInfo) void {
+        self.doMoveWithDirties(m, next, null);
+    }
+    /// Optional NNUE feature deltas preserve upstream scalar update ordering.
+    pub fn doMoveWithDirties(self: *Position, m: t.Move, next: *StateInfo, dirties: ?*dirty.Dirties) void {
+        const dts: ?*dirty.DirtyThreats = if (dirties) |d| &d.threats else null;
+        if (dirties) |d| {
+            d.* = .{};
+            d.before = .{ self.piecesOf(.white, .pawn), self.piecesOf(.black, .pawn) };
+        }
         std.debug.assert(next != self.st);
         const gives_check = self.givesCheck(m);
         const old = self.st;
@@ -444,6 +529,7 @@ pub const Position = struct {
         var to = m.to();
         const pc = self.pieceOn(from);
         const pi = @intFromEnum(pc);
+        if (dirties) |d| d.piece = .{ .pc = pc, .from = from, .to = to };
         var captured = if (m.kind() == .en_passant) Piece.make(them, .pawn) else self.pieceOn(to);
         const push: i16 = if (us == .white) 8 else -8;
         if (m.kind() == .castling) {
@@ -451,10 +537,17 @@ pub const Position = struct {
             const kingside = @intFromEnum(to) > @intFromEnum(from);
             const rto = Square.make(if (kingside) 5 else 3, 0).relative(us);
             to = Square.make(if (kingside) 6 else 2, 0).relative(us);
-            self.remove(from);
-            self.remove(rfrom);
-            self.put(Piece.make(us, .king), to);
-            self.put(Piece.make(us, .rook), rto);
+            if (dirties) |d| {
+                d.piece.to = to;
+                d.piece.remove_pc = Piece.make(us, .rook);
+                d.piece.add_pc = Piece.make(us, .rook);
+                d.piece.remove_sq = rfrom;
+                d.piece.add_sq = rto;
+            }
+            self.removeWithThreats(from, dts);
+            self.removeWithThreats(rfrom, dts);
+            self.putWithThreats(Piece.make(us, .king), to, dts);
+            self.putWithThreats(Piece.make(us, .rook), rto, dts);
             const delta = self.keys.psq[@intFromEnum(captured)][@intFromEnum(rfrom)] ^ self.keys.psq[@intFromEnum(captured)][@intFromEnum(rto)];
             k ^= delta;
             next.non_pawn_key[ui] ^= delta;
@@ -465,13 +558,17 @@ pub const Position = struct {
             if (captured.pieceType() == .pawn) {
                 if (m.kind() == .en_passant) {
                     capsq = @enumFromInt(@as(i16, @intFromEnum(to)) - push);
-                    self.remove(capsq);
+                    self.removeWithThreats(capsq, dts);
                 }
                 next.pawn_key ^= self.keys.psq[ci][@intFromEnum(capsq)];
             } else {
                 next.non_pawn_material[ti] -= piece_value[@intFromEnum(captured.pieceType())];
                 next.non_pawn_key[ti] ^= self.keys.psq[ci][@intFromEnum(capsq)];
                 if (@intFromEnum(captured.pieceType()) <= 3) next.minor_piece_key ^= self.keys.psq[ci][@intFromEnum(capsq)];
+            }
+            if (dirties) |d| {
+                d.piece.remove_pc = captured;
+                d.piece.remove_sq = capsq;
             }
             k ^= self.keys.psq[ci][@intFromEnum(capsq)];
             next.material_key ^= self.keys.psq[ci][@intCast(8 + self.piece_count[ci] - @as(i32, @intFromBool(m.kind() != .en_passant)))];
@@ -501,6 +598,11 @@ pub const Position = struct {
             } else if (m.kind() == .promotion) {
                 const pt = m.promotionType();
                 const promotion = @intFromEnum(Piece.make(us, pt));
+                if (dirties) |d| {
+                    d.piece.add_pc = @enumFromInt(promotion);
+                    d.piece.add_sq = to;
+                    d.piece.to = .none;
+                }
                 k ^= self.keys.psq[promotion][@intFromEnum(to)];
                 next.material_key ^= self.keys.psq[promotion][@intCast(8 + self.piece_count[promotion])] ^ self.keys.psq[pi][@intCast(8 + self.piece_count[pi] - 1)];
                 next.non_pawn_key[ui] ^= self.keys.psq[promotion][@intFromEnum(to)];
@@ -518,12 +620,11 @@ pub const Position = struct {
         if (m.kind() != .castling) {
             const to_pc = if (m.kind() == .promotion) Piece.make(us, m.promotionType()) else pc;
             if (captured != .none and m.kind() != .en_passant) {
-                self.remove(from);
-                self.remove(to);
-                self.put(to_pc, to);
-            } else if (pc == to_pc) self.movePiece(from, to) else {
-                self.remove(from);
-                self.put(to_pc, to);
+                self.removeWithThreats(from, dts);
+                self.swapPiece(to, to_pc, dts);
+            } else if (pc == to_pc) self.movePieceWithThreats(from, to, dts) else {
+                self.removeWithThreats(from, dts);
+                self.putWithThreats(to_pc, to, dts);
             }
         }
         next.captured_piece = captured;
@@ -542,6 +643,7 @@ pub const Position = struct {
                 }
             }
         }
+        if (dirties) |d| d.after = .{ self.piecesOf(.white, .pawn), self.piecesOf(.black, .pawn) };
     }
     pub fn undoMove(self: *Position, m: t.Move) void {
         self.side = self.side.opposite();

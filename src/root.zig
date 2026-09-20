@@ -7,7 +7,9 @@ pub const position = @import("position.zig");
 pub const movegen = @import("movegen.zig");
 pub const perft = @import("perft.zig");
 pub const tt = @import("tt.zig");
+pub const dirty = @import("dirty.zig");
 test {
+    _ = dirty;
     _ = tt;
     _ = perft;
     _ = movegen;

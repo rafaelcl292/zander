@@ -17,7 +17,7 @@ uint64_t perft(Position& pos, unsigned depth) {
     }
     return total;
 }
-void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0) {
+void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Dirties* changes = nullptr) {
         std::printf(".{ .valid = true, .fen = \"%s\", .data = &.{\n", pos.fen().c_str());
         const auto emit = [](uint64_t n) { std::printf("%llu,", (unsigned long long)n); };
         for (int i = 0; i < 64; ++i) emit(pos.piece_on(Square(i)));
@@ -77,8 +77,9 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0) {
         if (children) {
             for (auto move : MoveList<LEGAL>(pos)) {
                 StateInfo next;
-                pos.do_move(move, next);
-                emit_snapshot(pos, false, move.raw());
+                Dirties dirties;
+                pos.do_move(move, next, pos.gives_check(move), dirties, nullptr, nullptr);
+                emit_snapshot(pos, false, move.raw(), &dirties);
                 pos.undo_move(move);
             }
         }
@@ -93,8 +94,9 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0) {
                 if (legal.size() == 0) break;
                 Move move = legal.begin()[rng.rand<uint64_t>() % legal.size()];
                 moves[count] = move;
-                pos.do_move(move, states[count++]);
-                emit_snapshot(pos, false, move.raw());
+                Dirties dirties;
+                pos.do_move(move, states[count++], pos.gives_check(move), dirties, nullptr, nullptr);
+                emit_snapshot(pos, false, move.raw(), &dirties);
             }
             while (count) pos.undo_move(moves[--count]);
         }
@@ -104,6 +106,20 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0) {
             pos.do_null_move(next);
             emit_snapshot(pos, false, Move::null().raw());
             pos.undo_null_move();
+        }
+        std::puts("}, .dirty_piece = &.{");
+        if (changes) {
+            const auto& d = changes->dirtyPiece;
+            std::printf("%u,%u,%u,%u,%u,%u,%u", unsigned(d.pc), unsigned(d.from), unsigned(d.to),
+                unsigned(d.remove_sq), unsigned(d.add_sq), unsigned(d.remove_sq == SQ_NONE ? NO_PIECE : d.remove_pc),
+                unsigned(d.add_sq == SQ_NONE ? NO_PIECE : d.add_pc));
+        }
+        std::puts("}, .dirty_threats = &.{");
+        if (changes) for (auto d : changes->dirtyThreats.list) std::printf("%u,", d.raw());
+        std::puts("}, .dirty_pawns = &.{");
+        if (changes) {
+            for (auto b : changes->dirtyPawnPairs.before) emit(b);
+            for (auto b : changes->dirtyPawnPairs.after) emit(b);
         }
         std::printf("}, .move = %u, .nodes = %llu },\n", unsigned(incoming), (unsigned long long)(children ? perft(pos, 3) : 0));
 }
@@ -123,7 +139,7 @@ int main(int argc, char** argv) {
     std::puts("};\npub const cuckoo_moves = [_]u16{");
     for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
     std::puts("};");
-    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
+    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
     if (argc != 2) return 1;
     std::ifstream input(argv[1]);
     if (!input) return 1;
@@ -144,8 +160,9 @@ int main(int argc, char** argv) {
     const Move cycle[] = {Move(SQ_G1, SQ_F3), Move(SQ_G8, SQ_F6), Move(SQ_F3, SQ_G1), Move(SQ_F6, SQ_G8)};
     for (int i = 0; i < 12; ++i) {
         const Move move = cycle[i % 4];
-        pos.do_move(move, states[i + 1]);
-        emit_snapshot(pos, false, move.raw());
+        Dirties dirties;
+        pos.do_move(move, states[i + 1], pos.gives_check(move), dirties, nullptr, nullptr);
+        emit_snapshot(pos, false, move.raw(), &dirties);
     }
     std::puts("};");
 }

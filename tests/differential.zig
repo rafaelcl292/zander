@@ -165,7 +165,9 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
             var next: z.position.StateInfo = undefined;
             const move: z.types.Move = .{ .data = child.move };
             const gives_check = pos.givesCheck(move);
-            pos.doMove(move, &next);
+            var dirties: z.dirty.Dirties = undefined;
+            pos.doMoveWithDirties(move, &next, &dirties);
+            try expectDirties(child, &dirties);
             try std.testing.expectEqual(gives_check, pos.st.checkers != 0);
             try expectQueries(&pos, child);
             try std.testing.expectEqualSlices(u64, child.data, snapshotPosition(&pos, &snapshot));
@@ -179,7 +181,9 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         }
         var walk_states: [48]z.position.StateInfo = undefined;
         for (expected.walk, 0..) |step, i| {
-            pos.doMove(.{ .data = step.move }, &walk_states[i]);
+            var dirties: z.dirty.Dirties = undefined;
+            pos.doMoveWithDirties(.{ .data = step.move }, &walk_states[i], &dirties);
+            try expectDirties(step, &dirties);
             try expectQueries(&pos, step);
             try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
             z.movegen.generate(.legal, &pos, &list);
@@ -208,7 +212,9 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
     var history: [13]z.position.StateInfo = undefined;
     try pos.set(z.position.start_fen, false, &history[0], tables, keys);
     for (reference.repetition, 0..) |step, i| {
-        pos.doMove(.{ .data = step.move }, &history[i + 1]);
+        var dirties: z.dirty.Dirties = undefined;
+        pos.doMoveWithDirties(.{ .data = step.move }, &history[i + 1], &dirties);
+        try expectDirties(step, &dirties);
         try expectQueries(&pos, step);
         var snapshot: [256]u64 = undefined;
         try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
@@ -343,4 +349,14 @@ test "TT layout, probe, replacement, aging and hashfull match C++ trace" {
 }
 fn ttData(data: z.tt.Data) [6]i32 {
     return .{ data.move.data, data.value, data.eval, data.depth, @intFromEnum(data.bound), @intFromBool(data.is_pv) };
+}
+
+fn expectDirties(expected: @import("position_reference").Snapshot, actual: *const z.dirty.Dirties) !void {
+    const d = actual.piece;
+    const piece = [_]u8{ @intFromEnum(d.pc), @intFromEnum(d.from), @intFromEnum(d.to), @intFromEnum(d.remove_sq), @intFromEnum(d.add_sq), @intFromEnum(d.remove_pc), @intFromEnum(d.add_pc) };
+    try std.testing.expectEqualSlices(u8, expected.dirty_piece, &piece);
+    try std.testing.expectEqual(expected.dirty_threats.len, actual.threats.len);
+    for (expected.dirty_threats, actual.threats.list[0..actual.threats.len]) |e, threat| try std.testing.expectEqual(e, threat.data);
+    const pawns = actual.before ++ actual.after;
+    try std.testing.expectEqualSlices(u64, expected.dirty_pawns, &pawns);
 }
