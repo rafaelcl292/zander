@@ -44,23 +44,38 @@ pub const Worker = struct {
         self.frames[7].pv = pv;
         return self.search(pv_node, pos, 7, alpha, beta);
     }
+    /// Frames must already have their in-check flag and sentinel histories set.
+    pub fn doMove(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, frame: ?usize) void {
+        const capture = pos.captureStage(move);
+        self.nodes += 1;
+        const dirties = self.accumulators.push();
+        pos.doMoveWithDirties(move, state, dirties);
+        if (frame) |index| {
+            const ss = &self.frames[index];
+            ss.current_move = move;
+            ss.continuation_history = &self.shared.continuation[@intFromBool(ss.in_check)][@intFromBool(capture)][@intFromEnum(dirties.piece.pc)][@intFromEnum(move.to())];
+            ss.continuation_correction_history = &self.continuation_correction[@intFromEnum(dirties.piece.pc)][@intFromEnum(move.to())];
+        }
+    }
+    pub fn undoMove(self: *Worker, pos: *p.Position, move: t.Move) void {
+        pos.undoMove(move);
+        self.accumulators.pop();
+    }
+    pub fn doNullMove(self: *Worker, pos: *p.Position, state: *p.StateInfo, frame: usize) void {
+        pos.doNullMove(state);
+        const ss = &self.frames[frame];
+        ss.current_move = .null_move;
+        ss.continuation_history = &self.shared.continuation[0][0][0][0];
+        ss.continuation_correction_history = &self.continuation_correction[0][0];
+    }
+    pub fn undoNullMove(_: *Worker, pos: *p.Position) void {
+        pos.undoNullMove();
+    }
     fn evaluate(self: *Worker, pos: *const p.Position) i32 {
         return self.network.evaluateAdjusted(pos, self.accumulators, self.caches, self.optimism[@intFromEnum(pos.side)]);
     }
-    fn correctionValue(self: *const Worker, pos: *const p.Position, frame: usize) i32 {
-        const side = @intFromEnum(pos.side);
-        const pawn: i32 = self.shared.pawnCorrectionEntry(pos)[side].pawn.get();
-        const minor: i32 = self.shared.minorCorrectionEntry(pos)[side].minor.get();
-        const white: i32 = self.shared.nonPawnCorrectionEntry(pos, .white)[side].non_pawn_white.get();
-        const black: i32 = self.shared.nonPawnCorrectionEntry(pos, .black)[side].non_pawn_black.get();
-        const move = self.frames[frame - 1].current_move;
-        var continuation: i32 = 80695;
-        if (move.valid()) {
-            const to = @intFromEnum(move.to());
-            const pc = @intFromEnum(pos.pieceOn(move.to()));
-            continuation = 7885 * (@as(i32, self.frames[frame - 2].continuation_correction_history.?[pc][to].get()) + self.frames[frame - 4].continuation_correction_history.?[pc][to].get()) + 6307 * @as(i32, self.frames[frame - 6].continuation_correction_history.?[pc][to].get());
-        }
-        return 13806 * pawn + 9512 * minor + 11615 * (white + black) + continuation;
+    pub fn histories(self: *Worker) @import("search_history.zig").State {
+        return .{ .main = self.main_history, .low_ply = self.low_ply_history, .capture = self.capture_history, .shared = self.shared, .frames = &self.frames };
     }
     fn decisive(value: i32) bool {
         return value >= s.tb_win_in_max_ply or value <= -s.tb_win_in_max_ply;
@@ -101,7 +116,7 @@ pub const Worker = struct {
         var best_value: i32 = -t.value_infinite;
         var futility_base: i32 = -t.value_infinite;
         if (!ss.in_check) {
-            const correction = self.correctionValue(pos, frame);
+            const correction = self.histories().correctionValue(pos, frame);
             unadjusted_eval = if (probe.found) probe.data.eval else t.value_none;
             if (unadjusted_eval == t.value_none) unadjusted_eval = self.evaluate(pos);
             best_value = s.correctedStaticEval(unadjusted_eval, correction);
@@ -142,15 +157,9 @@ pub const Worker = struct {
                 if (!capture or !pos.seeGe(move, -74)) continue;
             }
             var state: p.StateInfo = undefined;
-            self.nodes += 1;
-            const dirties = self.accumulators.push();
-            pos.doMoveWithDirties(move, &state, dirties);
-            ss.current_move = move;
-            ss.continuation_history = &self.shared.continuation[@intFromBool(ss.in_check)][@intFromBool(capture)][@intFromEnum(dirties.piece.pc)][@intFromEnum(move.to())];
-            ss.continuation_correction_history = &self.continuation_correction[@intFromEnum(dirties.piece.pc)][@intFromEnum(move.to())];
+            self.doMove(pos, move, &state, frame);
             const value = -self.search(pv_node, pos, frame + 1, -beta, -alpha);
-            pos.undoMove(move);
-            self.accumulators.pop();
+            self.undoMove(pos, move);
             std.debug.assert(value > -t.value_infinite and value < t.value_infinite);
             if (value > best_value) {
                 best_value = value;

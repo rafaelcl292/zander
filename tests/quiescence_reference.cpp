@@ -79,4 +79,92 @@ int main(int argc, char** argv) {
         }
     }
     std::puts("};");
+    std::puts("pub const HistoryCase = struct { root: usize, variant: usize, best: u16, quiet: u16, quiets: []const u16, captures: []const u16, before: i32, after: i32, hashes: [7]u64 };\npub const histories = [_]HistoryCase{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    auto hashBytes=[](const void* pointer,size_t size) {
+        uint64_t hash=14695981039346656037ULL;
+        auto bytes=static_cast<const unsigned char*>(pointer);
+        for(size_t i=0;i<size;++i) hash=(hash^bytes[i])*1099511628211ULL;
+        return hash;
+    };
+    while(std::getline(inputs,line)) {
+        size_t index=root++; Position pos; StateInfo st;
+        if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
+        MoveList<LEGAL> legal(pos); if(!legal.size()) continue;
+        for(int variant=0;variant<4;++variant) {
+            Search::Stack frames[8]{}; auto ss=frames+7;
+            ss->ply=std::array{0,4,5,18}[variant]; ss->inCheck=variant==1;
+            for(int i=0;i<7;++i) {
+                frames[6-i].continuationHistory=&worker->continuationHistory[0][0][0][i];
+                frames[6-i].continuationCorrectionHistory=&worker->continuationCorrectionHistory[0][i];
+                frames[6-i].currentMove=(i+variant)%3==0?Move::null():Move(SQ_A2,SQ_A3);
+            }
+            frames[6].statScore=std::array{0,280,-280,-2800}[variant];
+            frames[6].ttHit=variant%2; frames[6].moveCount=variant<3?1+frames[6].ttHit:3;
+            Move best=variant%2?*(legal.end()-1):*legal.begin(), quiet=Move::none();
+            for(Move m:legal) {
+                if(!pos.capture_stage(m)) quiet=m;
+                if(variant==2 && pos.capture_stage(m)) best=m;
+            }
+            SearchedList quiets,captures;
+            for(Move m:legal) if(m!=best) {
+                auto& list=pos.capture_stage(m)?captures:quiets;
+                if(list.size()<8) list.push_back(m);
+            }
+            int before=correction_value(*worker,pos,ss);
+            const int bonus=std::array{-1000,-4,-3,1000}[variant];
+            update_correction_history(pos,ss,*worker,bonus);
+            if(quiet) update_quiet_histories(pos,ss,*worker,quiet,bonus);
+            update_all_stats(pos,ss,*worker,best,variant%2?SQ_NONE:pos.square<KING>(pos.side_to_move()),quiets,captures,std::array{1,4,12,1}[variant],variant==2?best:Move::none(),variant%2==0);
+            std::printf(".{ .root=%zu,.variant=%d,.best=%u,.quiet=%u,.before=%d,.after=%d,.quiets=&.{",index,variant,unsigned(best.raw()),unsigned(quiet.raw()),before,correction_value(*worker,pos,ss));
+            for(Move m:quiets) std::printf("%u,",unsigned(m.raw()));
+            std::printf("},.captures=&.{");
+            for(Move m:captures) std::printf("%u,",unsigned(m.raw()));
+            std::printf("},.hashes=.{");
+            const auto emitHash=[&](const auto& obj) { std::printf("%llu,",(unsigned long long)hashBytes(&obj,sizeof(obj))); };
+            emitHash(worker->mainHistory); emitHash(worker->lowPlyHistory); emitHash(worker->captureHistory);
+            emitHash(worker->continuationHistory); emitHash(worker->continuationCorrectionHistory);
+            std::printf("%llu,",(unsigned long long)hashBytes(&worker->sharedHistory.correctionHistory[0],worker->sharedHistory.correctionHistory.get_size()*sizeof(worker->sharedHistory.correctionHistory[0])));
+            emitHash(worker->sharedHistory.pawn_entry(pos));
+            std::puts("} },");
+        }
+    }
+    std::puts("};");
+
+    std::puts("pub const reductions = [_]i32{");
+    for(size_t i=1;i<worker->reductions.size();++i) std::printf("%d,",worker->reductions[i]);
+    std::puts("};\npub const ReductionCase = struct { improving: bool, root_delta: i32, delta: i32, checksum: u64 };\npub const reduction_cases = [_]ReductionCase{");
+    for (bool improving : {false,true}) for(int rootDelta : {1,21,320,64002}) for(int delta : {0,1,20,rootDelta}) {
+        worker->rootDelta=rootDelta;
+        uint64_t hash=14695981039346656037ULL;
+        for(int d=1;d<MAX_PLY;++d) for(int mn=1;mn<MAX_MOVES;++mn) hash=(hash^uint32_t(worker->reduction(improving,d,mn,delta)))*1099511628211ULL;
+        std::printf(".{ .improving=%s,.root_delta=%d,.delta=%d,.checksum=%llu },\n",improving?"true":"false",rootDelta,delta,(unsigned long long)hash);
+    }
+    std::puts("};");
+
+    std::puts("pub const MoveCase = struct { root: usize, move: u16, frame: bool, key: u64, nodes: u64, size: usize, current: u16, continuation: i32, correction: i32 };\npub const worker_moves = [_]MoveCase{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    while(std::getline(inputs,line)) {
+        size_t index=root++; Position pos; StateInfo st,next;
+        if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
+        auto emit=[&](Move move, bool withFrame) {
+            Search::Stack frames[8]{}; auto ss=frames+7; ss->inCheck=bool(pos.checkers());
+            for(int i=0;i<7;++i) {
+                frames[i].continuationHistory=&worker->continuationHistory[0][0][NO_PIECE][0];
+                frames[i].continuationCorrectionHistory=&worker->continuationCorrectionHistory[NO_PIECE][0];
+            }
+            worker->nodes=0; worker->accumulatorStack.reset();
+            bool null=move==Move::null();
+            if(null) worker->do_null_move(pos,next,ss);
+            else worker->do_move(pos,move,next,pos.gives_check(move),withFrame?ss:nullptr);
+            int continuation=ss->continuationHistory?int((reinterpret_cast<char*>(ss->continuationHistory)-reinterpret_cast<char*>(&worker->continuationHistory))/sizeof(PieceToHistory)):-1;
+            int correction=ss->continuationCorrectionHistory?int((reinterpret_cast<char*>(ss->continuationCorrectionHistory)-reinterpret_cast<char*>(&worker->continuationCorrectionHistory))/sizeof(CorrectionHistory<PieceTo>)):-1;
+            std::printf(".{ .root=%zu,.move=%u,.frame=%s,.key=%llu,.nodes=%llu,.size=%zu,.current=%u,.continuation=%d,.correction=%d },\n",index,unsigned(move.raw()),withFrame?"true":"false",(unsigned long long)pos.key(),(unsigned long long)uint64_t(worker->nodes),worker->accumulatorStack.size,unsigned(ss->currentMove.raw()),continuation,correction);
+            if(null) worker->undo_null_move(pos); else worker->undo_move(pos,move);
+        };
+        for(Move move:MoveList<LEGAL>(pos)) { emit(move,true); emit(move,false); }
+        if(!pos.checkers()) emit(Move::null(),true);
+    }
+    std::puts("};");
+
 }

@@ -1,3 +1,4 @@
+pub const search_history = @import("search_history.zig");
 pub const quiescence = @import("quiescence.zig");
 pub const search_support = @import("search_support.zig");
 pub const movepick = @import("movepick.zig");
