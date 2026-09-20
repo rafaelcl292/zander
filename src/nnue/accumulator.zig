@@ -90,10 +90,16 @@ pub const Stack = struct {
 fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
     const side = @intFromEnum(c);
     const diff = if (forward) &target.dirties else &computed.dirties;
-    var pr: f.SmallList = .{};
-    var pa: f.SmallList = .{};
-    var tr: f.ThreatList = .{};
-    var ta: f.ThreatList = .{};
+    // Match the reference list constructor: initialize the length only.
+    // Aggregate empty literals can lower to full-buffer clears in hot paths.
+    var pr: f.SmallList = undefined;
+    pr.len = 0;
+    var pa: f.SmallList = undefined;
+    pa.len = 0;
+    var tr: f.ThreatList = undefined;
+    tr.len = 0;
+    var ta: f.ThreatList = undefined;
+    ta.len = 0;
     f.HalfKA.appendChanged(c, king, diff.piece, if (forward) &pr else &pa, if (forward) &pa else &pr);
     f.FullThreats.appendChanged(c, king, &diff.threats, if (forward) &tr else &ta, if (forward) &ta else &tr);
     f.PawnPairs.appendChanged(c, king, diff.before, diff.after, if (forward) &tr else &ta, if (forward) &ta else &tr);
@@ -128,14 +134,17 @@ fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, 
 fn refresh(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator, cache: *Caches) void {
     const side = @intFromEnum(c);
     const entry = &cache.entries[@intFromEnum(pos.king(c))][side];
-    var removed: f.SmallList = .{};
-    var added: f.SmallList = .{};
+    var removed: f.SmallList = undefined;
+    removed.len = 0;
+    var added: f.SmallList = undefined;
+    added.len = 0;
     changed(entry, &pos.board, pos.pieces(), c, pos.king(c), &removed, &added);
     ft.applyPsq(false, &entry.accumulation, &entry.psqt, removed.slice());
     ft.applyPsq(true, &entry.accumulation, &entry.psqt, added.slice());
     entry.pieces = pos.board;
     entry.piece_bb = pos.pieces();
-    var active: f.ThreatList = .{};
+    var active: f.ThreatList = undefined;
+    active.len = 0;
     f.FullThreats.appendActive(c, pos, &active);
     f.PawnPairs.appendActive(c, pos, &active);
     target.accumulation[side] = entry.accumulation;
@@ -156,10 +165,14 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     previous_bb |= bb.square(dp.from);
     const old_entry = &cache.entries[@intFromEnum(dp.from)][side];
     const new_entry = &cache.entries[@intFromEnum(dp.to)][side];
-    var old_removed: f.SmallList = .{};
-    var old_added: f.SmallList = .{};
-    var new_removed: f.SmallList = .{};
-    var new_added: f.SmallList = .{};
+    var old_removed: f.SmallList = undefined;
+    old_removed.len = 0;
+    var old_added: f.SmallList = undefined;
+    old_added.len = 0;
+    var new_removed: f.SmallList = undefined;
+    new_removed.len = 0;
+    var new_added: f.SmallList = undefined;
+    new_added.len = 0;
     changed(old_entry, &previous_pieces, previous_bb, c, dp.from, &old_removed, &old_added);
     changed(new_entry, &pos.board, pos.pieces(), c, dp.to, &new_removed, &new_added);
     ft.applyPsq(false, &new_entry.accumulation, &new_entry.psqt, new_removed.slice());
@@ -168,8 +181,10 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     for (&target.psqt[side], new_entry.psqt, computed.psqt[side], old_entry.psqt) |*out, new, from, old| out.* = new +% from -% old;
     ft.applyPsq(true, &target.accumulation[side], &target.psqt[side], old_removed.slice());
     ft.applyPsq(false, &target.accumulation[side], &target.psqt[side], old_added.slice());
-    var removed: f.ThreatList = .{};
-    var added: f.ThreatList = .{};
+    var removed: f.ThreatList = undefined;
+    removed.len = 0;
+    var added: f.ThreatList = undefined;
+    added.len = 0;
     f.FullThreats.appendChanged(c, dp.to, &target.dirties.threats, &removed, &added);
     f.PawnPairs.appendChanged(c, dp.to, target.dirties.before, target.dirties.after, &removed, &added);
     ft.applyThreats(false, &target.accumulation[side], &target.psqt[side], removed.slice());
