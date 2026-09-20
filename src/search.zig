@@ -5,6 +5,7 @@ const t = @import("types.zig");
 const s = @import("search_support.zig");
 const p = @import("position.zig");
 const mp = @import("movepick.zig");
+const movegen = @import("movegen.zig");
 const h = @import("history.zig");
 const tt = @import("tt.zig");
 const QWorker = @import("quiescence.zig").Worker;
@@ -61,9 +62,132 @@ pub const Worker = struct {
         self.reductions.init();
         return self;
     }
+    pub const Limits = struct {
+        depth: i32,
+        multi_pv: usize = 1,
+        search_moves: []const t.Move = &.{},
+    };
+    pub const Result = struct {
+        best_move: t.Move,
+        score: i32,
+        depth: i32,
+        nodes: u64,
+    };
+    /// Fixed-depth, full-strength, single-worker driver. Storage must remain
+    /// valid while inspecting root_moves. Retain histories and TT across calls.
+    pub fn iterativeDeepening(self: *Worker, pos: *p.Position, storage: []RootMove, limits: Limits) !Result {
+        if (limits.depth < 1 or limits.depth >= t.max_ply) return error.InvalidDepth;
+        if (limits.multi_pv == 0 or limits.multi_pv > t.max_moves) return error.InvalidMultiPV;
+        var moves: movegen.MoveList = .{};
+        movegen.generate(.legal, pos, &moves);
+        var selected: [t.max_moves]t.Move = undefined;
+        var count: usize = 0;
+        // ThreadPool::start_thinking preserves requested order and falls back
+        // to all legal moves when no requested move is legal.
+        for (limits.search_moves) |candidate| {
+            for (moves.slice()) |move| {
+                if (candidate.data != move.data) continue;
+                if (count == selected.len) return error.TooManyRootMoves;
+                selected[count] = move;
+                count += 1;
+                break;
+            }
+        }
+        if (count == 0) {
+            count = moves.len;
+            @memcpy(selected[0..count], moves.slice());
+        }
+        if (storage.len < count) return error.InsufficientRootStorage;
+        self.root_moves = storage[0..count];
+        for (selected[0..count], self.root_moves) |move, *rm| rm.* = RootMove.init(move);
+        self.root_depth = 0;
+        self.nmp_min_ply = 0;
+        self.best_move_changes = 0;
+        self.pv_idx = 0;
+        self.pv_last = 0;
+        var pv: s.PV = .{};
+        self.base.prepare(&pv);
+        self.base.table.newSearch();
+        if (count == 0) return .{ .best_move = .none, .score = if (pos.st.checkers != 0) -t.value_mate else 0, .depth = 0, .nodes = 0 };
+        const multi_pv = @min(limits.multi_pv, count);
+        h.fill(self.base.low_ply_history, 102);
+        for (self.base.main_history) |*color| for (color) |*entry| {
+            entry.set(@intCast(div(@as(i32, entry.get()) * 729, 1024)));
+        };
+        var last_best_pv: s.PV = .{};
+        var last_best_score: i32 = -t.value_infinite;
+        var fail_high_recovery: i32 = 0;
+        const us = @intFromEnum(pos.side);
+        while (self.root_depth < limits.depth) {
+            self.root_depth += 1;
+            for (self.root_moves, 0..) |*rm, i| {
+                rm.previous_score = rm.score;
+                rm.previous_pv = rm.pv;
+                rm.previous_score_exact = i < multi_pv;
+            }
+            var pv_first: usize = 0;
+            self.pv_last = 0;
+            self.pv_idx = 0;
+            while (self.pv_idx < multi_pv) : (self.pv_idx += 1) {
+                if (self.pv_idx == self.pv_last) {
+                    pv_first = self.pv_last;
+                    self.pv_last += 1;
+                    while (self.pv_last < count and self.root_moves[self.pv_last].tb_rank == self.root_moves[pv_first].tb_rank) self.pv_last += 1;
+                }
+                self.last_iteration_pv.assignRoot(self.root_moves[self.pv_idx].previous_pv.slice());
+                self.base.sel_depth = 0;
+                var delta: i32 = 5 + @as(i32, @intCast(@abs(self.root_moves[self.pv_idx].mean_squared_score) / 10193));
+                const average = self.root_moves[self.pv_idx].average_score;
+                var alpha = @max(average - delta, -t.value_infinite);
+                var beta = @min(average + delta, t.value_infinite);
+                self.base.optimism[us] = div(114 * average, @as(i32, @intCast(@abs(average))) + 85);
+                self.base.optimism[us ^ 1] = -self.base.optimism[us];
+                var failed_high_count: i32 = 0;
+                if (self.pv_idx == 0) fail_high_recovery = @max(0, fail_high_recovery - 2);
+                while (true) {
+                    const adjusted_depth = @max(1, self.root_depth - failed_high_count - fail_high_recovery);
+                    const best = self.searchRoot(pos, alpha, beta, adjusted_depth);
+                    std.mem.sort(RootMove, self.root_moves[self.pv_idx..self.pv_last], {}, RootMove.lessThan);
+                    if (best <= alpha) {
+                        beta = alpha;
+                        alpha = @max(best - delta, -t.value_infinite);
+                        failed_high_count = 0;
+                    } else if (best >= beta) {
+                        alpha = @max(beta - delta, alpha);
+                        beta = @min(best + delta, t.value_infinite);
+                        failed_high_count += 1;
+                    } else break;
+                    delta += div(47 * delta, 128);
+                }
+                if (failed_high_count > 0 and self.pv_idx == 0) fail_high_recovery = div(failed_high_count + 1, 2) + 2;
+                std.mem.sort(RootMove, self.root_moves[pv_first .. self.pv_idx + 1], {}, RootMove.lessThan);
+            }
+            const best = &self.root_moves[0];
+            const forgotten_mate = last_best_score != -t.value_infinite and @abs(last_best_score) >= s.mate_in_max_ply and (@abs(best.score) < @abs(last_best_score) or best.isInexact());
+            if (!forgotten_mate) {
+                last_best_pv = best.pv;
+                last_best_score = best.score;
+            } else if (best.score != -t.value_infinite and last_best_pv.len != 0) {
+                for (self.root_moves, 0..) |*rm, i| {
+                    if (rm.pv.moves[0].data != last_best_pv.moves[0].data) continue;
+                    const saved = rm.*;
+                    std.mem.copyBackwards(RootMove, self.root_moves[1 .. i + 1], self.root_moves[0..i]);
+                    self.root_moves[0] = saved;
+                    break;
+                }
+                self.root_moves[0].score = last_best_score;
+                self.root_moves[0].uci_score = last_best_score;
+                self.root_moves[0].pv = last_best_pv;
+                self.root_moves[0].unsetInexact();
+            }
+            self.best_move_changes = 0;
+        }
+        return .{ .best_move = self.root_moves[0].pv.moves[0], .score = self.root_moves[0].score, .depth = self.root_depth, .nodes = self.base.nodes };
+    }
     /// Diagnostic non-root entry. Retain histories and TT between calls.
     pub fn run(self: *Worker, comptime pv_node: bool, pos: *p.Position, pv: *s.PV, alpha: i32, beta: i32, depth: i32, cut_node: bool) i32 {
         self.base.prepare(pv);
+        self.root_moves = &.{};
         self.root_depth = depth;
         self.root_delta = beta - alpha;
         self.nmp_min_ply = 0;

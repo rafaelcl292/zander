@@ -252,4 +252,87 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expect(pos.st == &state);
         try std.testing.expectEqual(@as(usize, 1), accumulators.size);
     }
+    for (@import("reference").iteration_cases, 0..) |case, case_index| {
+        errdefer std.debug.print("Iteration case {d}, root {d}, depth {d}, mode {d}, warm {any}\n", .{ case_index, case.root, case.depth, case.mode, case.warm });
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(lines[case.root][2..], lines[case.root][0] == '1', &state, tables, keys);
+        const key = pos.key();
+        if (!case.warm) {
+            z.history.fill(main, -5);
+            z.history.fill(capture, -742);
+            z.history.fill(continuation_correction, 5);
+            shared.clearRange(0, 1);
+            search.tt_move_history.set(0);
+            caches.clear(&network.transformer);
+            table.clear();
+        }
+        var moves: z.movegen.MoveList = .{};
+        z.movegen.generate(.legal, &pos, &moves);
+        var selected: [z.types.max_moves]z.types.Move = undefined;
+        var count_selected: usize = 0;
+        for (moves.slice(), 0..) |move, index| {
+            if (index % 2 != 0) continue;
+            selected[count_selected] = move;
+            count_selected += 1;
+        }
+        std.mem.reverse(z.types.Move, selected[0..count_selected]);
+        const result = try search.iterativeDeepening(&pos, roots, .{ .depth = case.depth, .multi_pv = if (case.mode == 0) 1 else 3, .search_moves = if (case.mode == 2) selected[0..count_selected] else if (case.mode == 1) &.{ .none, .null_move } else &.{} });
+        try std.testing.expectEqual(case.depth, result.depth);
+        try std.testing.expectEqual(case.records[0].score, result.score);
+        try std.testing.expectEqual(case.records[0].pv[0], result.best_move.data);
+        try std.testing.expectEqual(case.nodes, result.nodes);
+        try std.testing.expectEqual(case.sel_depth, worker.sel_depth);
+        try std.testing.expectEqual(case.tt_history, search.tt_move_history.get());
+        try std.testing.expectEqual(case.records.len, search.root_moves.len);
+        for (case.records, search.root_moves, 0..) |expected, actual, index| {
+            errdefer std.debug.print("Iteration root record {d}\n", .{index});
+            try std.testing.expectEqual(expected.effort, actual.effort);
+            try std.testing.expectEqual(expected.score, actual.score);
+            try std.testing.expectEqual(expected.average, actual.average_score);
+            try std.testing.expectEqual(expected.squared, actual.mean_squared_score);
+            try std.testing.expectEqual(expected.uci, actual.uci_score);
+            try std.testing.expectEqual(expected.lower, actual.inexact_lower);
+            try std.testing.expectEqual(expected.upper, actual.inexact_upper);
+            try std.testing.expectEqual(expected.sel_depth, actual.sel_depth);
+            try std.testing.expectEqual(expected.pv.len, actual.pv.len);
+            for (expected.pv, actual.pv.slice()) |a, c| try std.testing.expectEqual(a, c.data);
+            try std.testing.expectEqual(case.previous_scores[index], actual.previous_score);
+            try std.testing.expectEqual(case.previous_exact[index], actual.previous_score_exact);
+            try std.testing.expectEqual(case.previous_pvs[index].len, actual.previous_pv.len);
+            for (case.previous_pvs[index], actual.previous_pv.slice()) |a, c| try std.testing.expectEqual(a, c.data);
+        }
+        var checksum: u64 = 14695981039346656037;
+        for (std.mem.sliceAsBytes(clusters)) |byte| checksum = (checksum ^ byte) *% 1099511628211;
+        try std.testing.expectEqual(case.tt_checksum, checksum);
+        try std.testing.expectEqual(key, pos.key());
+        try std.testing.expect(pos.st == &state);
+        try std.testing.expectEqual(@as(usize, 1), accumulators.size);
+    }
+    for (lines[0..count]) |line| {
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        pos.set(line[2..], line[0] == '1', &state, tables, keys) catch continue;
+        var moves: z.movegen.MoveList = .{};
+        z.movegen.generate(.legal, &pos, &moves);
+        if (moves.len != 0) continue;
+        const result = try search.iterativeDeepening(&pos, roots, .{ .depth = 4 });
+        try std.testing.expectEqual(@as(u16, 0), result.best_move.data);
+        try std.testing.expectEqual(@as(i32, if (pos.st.checkers != 0) -z.types.value_mate else 0), result.score);
+        try std.testing.expectEqual(@as(u64, 0), result.nodes);
+        try std.testing.expectEqual(@as(i32, 0), result.depth);
+        try std.testing.expectEqual(@as(usize, 0), search.root_moves.len);
+    }
+    {
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(z.position.start_fen, false, &state, tables, keys);
+        try std.testing.expectError(error.InvalidDepth, search.iterativeDeepening(&pos, roots, .{ .depth = 0 }));
+        try std.testing.expectError(error.InvalidDepth, search.iterativeDeepening(&pos, roots, .{ .depth = z.types.max_ply }));
+        try std.testing.expectError(error.InvalidMultiPV, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .multi_pv = 0 }));
+        try std.testing.expectError(error.InvalidMultiPV, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .multi_pv = z.types.max_moves + 1 }));
+        const duplicates = [_]z.types.Move{z.types.Move.make(.normal, z.types.Square.make(4, 1), z.types.Square.make(4, 3), .knight)} ** (z.types.max_moves + 1);
+        try std.testing.expectError(error.TooManyRootMoves, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .search_moves = &duplicates }));
+        try std.testing.expectError(error.InsufficientRootStorage, search.iterativeDeepening(&pos, roots[0..19], .{ .depth = 1 }));
+    }
 }

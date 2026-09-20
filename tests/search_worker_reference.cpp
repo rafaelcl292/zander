@@ -245,5 +245,69 @@ int main(int argc, char** argv) {
         }
     }
     std::puts("};");
+    options.add("MultiPV",Option(1,1,256));
+    options.add("Skill Level",Option(20,0,20));
+    options.add("UCI_LimitStrength",Option(false));
+    options.add("UCI_Elo",Option(1320,1320,3190));
+    options.add("UCI_ShowWDL",Option(false));
+    options.add("nodestime",Option(0,0,10000));
+    Search::SearchManager::UpdateContext updates;
+    updates.onUpdateFull=[](const auto&){};
+    updates.onIter=[](const auto&){};
+    updates.onStart=[](){};
+    updates.onBestmove=[](auto,auto){};
+    updates.onUpdateNoMoves=[](const auto&){};
+    worker->manager=std::make_unique<Search::SearchManager>(updates);
+    worker->threadIdx=0;
+    std::puts("pub const IterationCase = struct { root: usize, depth: i32, mode: usize, warm: bool, nodes: u64, sel_depth: i32, tt_checksum: u64, tt_history: i16, records: []const RootRecord, previous_scores: []const i32, previous_exact: []const bool, previous_pvs: []const []const u16 };\npub const iteration_cases = [_]IterationCase{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    while(std::getline(inputs,line)) {
+        size_t index=root++;
+        if(worker->rootPos.set(line.substr(2),line[0]=='1',&worker->rootState)) continue;
+        auto& pos=worker->rootPos;
+        if(MoveList<LEGAL>(pos).size()==0) continue;
+        for(int depth : {1,4,8,12,16}) for(int mode=0;mode<3;++mode) {
+            if(depth==12 && index!=0 && index!=6) continue;
+            if(depth==16 && index!=35) continue;
+            worker->clear();
+            std::memset(tt.table,0,tt.clusterCount*sizeof(Cluster)); tt.generation8=0;
+            std::istringstream setting(mode==0?"name MultiPV value 1":"name MultiPV value 3"); options.setoption(setting);
+            for(bool warm : {false,true}) {
+                worker->rootMoves.clear();
+                int candidate=0;
+                for(Move m:MoveList<LEGAL>(pos)) { if(mode!=2 || candidate++%2==0) worker->rootMoves.emplace_back(m); }
+                if(mode==2) std::reverse(worker->rootMoves.begin(),worker->rootMoves.end());
+                worker->nodes=0; worker->selDepth=0; worker->nmpMinPly=0; worker->rootDepth=0;
+                worker->bestMoveChanges=0; worker->accumulatorStack.reset();
+                worker->limits={}; worker->limits.depth=depth; worker->limits.startTime=now();
+                worker->tbConfig={};
+                auto manager=worker->main_manager();
+                manager->callsCnt=0; manager->ponder=false; manager->stopOnPonderhit=false;
+                manager->bestPreviousScore=VALUE_INFINITE; manager->bestPreviousAverageScore=VALUE_INFINITE;
+                manager->previousTimeReduction=1.0; manager->originalTimeAdjust=-1.0;
+                manager->tm.clear(); manager->tm.init(worker->limits,pos.side_to_move(),pos.game_ply(),options,manager->originalTimeAdjust);
+                tt.new_search(); threads.stop=false; threads.increaseDepth=true;
+                worker->iterative_deepening();
+                std::printf(".{ .root=%zu,.depth=%d,.mode=%d,.warm=%s,.nodes=%llu,.sel_depth=%d,.tt_checksum=%llu,.tt_history=%d,.records=&.{",index,depth,mode,warm?"true":"false",(unsigned long long)uint64_t(worker->nodes),worker->selDepth,(unsigned long long)hashBytes(tt.table,tt.clusterCount*sizeof(Cluster)),int(worker->ttMoveHistory));
+                for(const auto& rm:worker->rootMoves) {
+                    std::printf(".{ .effort=%llu,.score=%d,.average=%d,.squared=%d,.uci=%d,.lower=%s,.upper=%s,.sel_depth=%d,.pv=&.{",(unsigned long long)rm.effort,rm.score,rm.averageScore,rm.meanSquaredScore,rm.uciScore,rm.inexactLower?"true":"false",rm.inexactUpper?"true":"false",rm.selDepth);
+                    for(Move move:rm.pv) std::printf("%u,",unsigned(move.raw()));
+                    std::printf("} },");
+                }
+                std::printf("},.previous_scores=&.{");
+                for(const auto& rm:worker->rootMoves) std::printf("%d,",rm.previousScore);
+                std::printf("},.previous_exact=&.{");
+                for(const auto& rm:worker->rootMoves) std::printf("%s,",rm.previousScoreExact?"true":"false");
+                std::printf("},.previous_pvs=&.{");
+                for(const auto& rm:worker->rootMoves) {
+                    std::printf("&.{");
+                    for(Move m:rm.previousPV) std::printf("%u,",unsigned(m.raw()));
+                    std::printf("},");
+                }
+                std::puts("} },");
+            }
+        }
+    }
+    std::puts("};");
 
 }
