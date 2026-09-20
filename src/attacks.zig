@@ -46,6 +46,77 @@ pub const pseudo = blk: {
     break :blk table;
 };
 
+const cpu = @import("builtin").cpu;
+const dual_hq = cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);
+const scalar_hq = cpu.arch == .aarch64 or cpu.arch == .loongarch64;
+const use_hq = @import("backend").hq_attacks and (dual_hq or scalar_hq);
+fn lineMask(s: t.Square, directions: [2]i16) u64 {
+    var mask: u64 = 0;
+    for (directions) |direction| {
+        var cursor = s;
+        while (true) {
+            const dest = safeDestination(cursor, direction);
+            if (dest == 0) break;
+            mask |= dest;
+            cursor = bb.lsb(dest);
+        }
+    }
+    return mask;
+}
+const hq_masks = blk: {
+    @setEvalBranchQuota(100000);
+    var masks: [64][4]u64 = undefined;
+    for (&masks, 0..) |*mask, square| {
+        const sq: t.Square = @enumFromInt(square);
+        mask.* = .{ lineMask(sq, .{ 8, -8 }), lineMask(sq, .{ 9, -9 }), lineMask(sq, .{ 1, -1 }), lineMask(sq, .{ 7, -7 }) };
+    }
+    break :blk masks;
+};
+const rank_attacks = blk: {
+    @setEvalBranchQuota(100000);
+    var table: [8][64]u8 = undefined;
+    for (&table, 0..) |*row, file| for (row, 0..) |*entry, occupied| {
+        entry.* = @truncate(slidingAttack(.rook, @enumFromInt(file), occupied << 1));
+    };
+    break :blk table;
+};
+fn hyperbola(s: t.Square, occupied: u64, mask: u64) u64 {
+    const o = occupied & mask;
+    return ((o -% bb.square(s)) ^ @bitReverse(@bitReverse(o) -% @bitReverse(bb.square(s)))) & mask;
+}
+fn hqAttacks(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
+    const masks = hq_masks[@intFromEnum(s)];
+    if (scalar_hq) {
+        const bishop = hyperbola(s, occupied, masks[1]) | hyperbola(s, occupied, masks[3]);
+        const rook = hyperbola(s, occupied, masks[0]) | hyperbola(s, occupied, masks[2]);
+        return switch (pt) {
+            .bishop => bishop,
+            .rook => rook,
+            .queen => bishop | rook,
+            else => unreachable,
+        };
+    }
+    // Reference dual HQ: reverse bytes within each 128-bit half, exchanging
+    // the two 64-bit lanes as well as reversing their bytes.
+    const Vec = @Vector(4, u64);
+    const mask: Vec = .{ masks[0], masks[1], 0, masks[3] };
+    const o = mask & @as(Vec, @splat(occupied));
+    const reversed = @shuffle(u64, @byteSwap(o), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
+    const rev = reversed -% @as(Vec, @splat(@bitReverse(bb.square(s)) *% 2));
+    const restored = @shuffle(u64, @byteSwap(rev), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
+    const result = ((o -% @as(Vec, @splat(bb.square(s) *% 2))) ^ restored) & mask;
+    const shift: u6 = @as(u6, s.rank()) * 8;
+    const rank = @as(u64, rank_attacks[s.file()][(occupied >> shift >> 1) & 63]) << shift;
+    const bishop = result[1] | result[3];
+    const rook = result[0] | rank;
+    return switch (pt) {
+        .bishop => bishop,
+        .rook => rook,
+        .queen => bishop | rook,
+        else => unreachable,
+    };
+}
+
 const Prng = @import("prng.zig").Prng;
 pub const Magic = struct {
     mask: u64,
@@ -59,7 +130,7 @@ pub const Magic = struct {
 
 /// Initialize in final storage before sharing with workers. Do not move or copy
 /// after init: magic pointers refer into this object's fixed backing tables.
-/// This ports upstream's generic 64-bit magic path, not AVX2/ARM HQ paths.
+/// Target-specific HQ paths retain the generic magic fallback.
 pub const Tables = struct {
     magics: [64][2]Magic align(64),
     rook: [0x19000]u64,
@@ -91,6 +162,7 @@ pub const Tables = struct {
     }
     pub fn attacks(self: *const Tables, pt: t.PieceType, s: t.Square, occupied: u64) u64 {
         std.debug.assert(s.valid() and pt != .pawn and pt != .none);
+        if (use_hq and (pt == .bishop or pt == .rook or pt == .queen)) return hqAttacks(pt, s, occupied);
         return switch (pt) {
             .bishop, .rook => blk: {
                 const m = self.magics[@intFromEnum(s)][@intFromEnum(pt) - 3];
@@ -146,3 +218,19 @@ pub const Tables = struct {
         std.debug.assert(offset == backing.len);
     }
 };
+
+test "hyperbola attacks match rays for every relevant occupancy" {
+    for (0..64) |square| {
+        const sq: t.Square = @enumFromInt(square);
+        inline for (.{ t.PieceType.bishop, t.PieceType.rook }) |pt| {
+            const mask = slidingAttack(pt, sq, 0);
+            var occupied: u64 = 0;
+            while (true) {
+                try std.testing.expectEqual(slidingAttack(pt, sq, occupied), hqAttacks(pt, sq, occupied));
+                try std.testing.expectEqual(slidingAttack(pt, sq, occupied | bb.square(sq)), hqAttacks(pt, sq, occupied | bb.square(sq)));
+                occupied = (occupied -% mask) & mask;
+                if (occupied == 0) break;
+            }
+        }
+    }
+}

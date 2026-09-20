@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
     backend.addOption(Kernel, "nnue_backend", kernel);
     backend.addOption(bool, "simd", kernel != .scalar);
     backend.addOption(bool, "nnue_sparse", b.option(bool, "nnue-sparse", "Use the reference block-sparse first NNUE layer with x86 auto dispatch") orelse true);
+    backend.addOption(bool, "hq_attacks", b.option(bool, "hq-attacks", "Use reference AVX2/ARM/LoongArch hyperbola attacks where available") orelse true);
     backend.addOption(bool, "prefetch", b.option(bool, "prefetch", "Issue the reference TT/history prefetch hints") orelse true);
     mod.addOptions("backend", backend);
     if (kernel == .auto) addDispatchObject(b, mod, target, optimize);
