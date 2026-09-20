@@ -1,5 +1,5 @@
 // Derived from Stockfish Search::Worker::search; GPL-3.0-or-later.
-// Non-root PV/NonPV kernel: fixed-depth, one worker, tablebases disabled.
+// Root/PV/NonPV kernels: fixed-depth, one worker, tablebases disabled.
 const std = @import("std");
 const t = @import("types.zig");
 const s = @import("search_support.zig");
@@ -41,6 +41,8 @@ const Searched = struct {
         return self.moves[0..self.len];
     }
 };
+pub const RootMove = @import("root_move.zig").RootMove;
+const NodeType = enum { root, pv, non_pv };
 pub const Worker = struct {
     base: *QWorker,
     reductions: s.Reductions,
@@ -48,6 +50,10 @@ pub const Worker = struct {
     root_depth: i32 = 0,
     root_delta: i32 = 1,
     root_score: i32 = 0,
+    root_moves: []RootMove = &.{},
+    pv_idx: usize = 0,
+    pv_last: usize = 0,
+    best_move_changes: usize = 0,
     nmp_min_ply: i32 = 0,
     last_iteration_pv: s.PV = .{},
     pub fn init(base: *QWorker) Worker {
@@ -68,16 +74,27 @@ pub const Worker = struct {
         return move.from() == self.base.frames[frame - 2].current_move.to() and self.base.frames[frame - 2].current_move.from() == self.base.frames[frame - 4].current_move.to();
     }
     pub fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, initial_beta: i32, initial_depth: i32, cut_node: bool) i32 {
+        return self.searchNode(if (pv_node) .pv else .non_pv, pos, frame, initial_alpha, initial_beta, initial_depth, cut_node);
+    }
+    /// Search the selected root range. Frames and root records must be initialized.
+    pub fn searchRoot(self: *Worker, pos: *p.Position, alpha: i32, beta: i32, depth: i32) i32 {
+        std.debug.assert(self.pv_idx < self.pv_last and self.pv_last <= self.root_moves.len);
+        self.root_delta = beta - alpha;
+        return self.searchNode(.root, pos, 7, alpha, beta, depth, false);
+    }
+    fn searchNode(self: *Worker, comptime node_type: NodeType, pos: *p.Position, frame: usize, initial_alpha: i32, initial_beta: i32, initial_depth: i32, cut_node: bool) i32 {
+        const pv_node = node_type != .non_pv;
+        const root_node = node_type == .root;
         const w = self.base;
         const ss = &w.frames[frame];
         const prev = &w.frames[frame - 1];
         const all_node = !(pv_node or cut_node);
-        const seek_mate = self.root_depth >= 16 and @abs(self.root_score) >= 2000;
+        const seek_mate = self.root_depth >= 16 and @abs(if (self.root_moves.len != 0) self.root_moves[self.pv_idx].score else self.root_score) >= 2000;
         if (initial_depth <= 0) return w.search(pv_node, pos, frame, initial_alpha, initial_beta);
         var depth = @min(initial_depth, t.max_ply - 1);
         var alpha = initial_alpha;
         var beta = initial_beta;
-        if (alpha < 0 and pos.upcomingRepetition(ss.ply)) {
+        if (!root_node and alpha < 0 and pos.upcomingRepetition(ss.ply)) {
             alpha = s.drawValue(@intCast(w.nodes));
             if (alpha >= beta) return alpha;
         }
@@ -93,12 +110,14 @@ pub const Worker = struct {
         const us = @intFromEnum(pos.side);
         ss.move_count = 0;
         var best_value: i32 = -t.value_infinite;
-        ss.follow_pv = prev.follow_pv and ss.ply > 0 and @as(usize, @intCast(ss.ply - 1)) < self.last_iteration_pv.len and prev.current_move.data == self.last_iteration_pv.moves[@intCast(ss.ply - 1)].data;
+        ss.follow_pv = root_node or (prev.follow_pv and ss.ply > 0 and @as(usize, @intCast(ss.ply - 1)) < self.last_iteration_pv.len and prev.current_move.data == self.last_iteration_pv.moves[@intCast(ss.ply - 1)].data);
         if (pv_node and w.sel_depth < ss.ply + 1) w.sel_depth = ss.ply + 1;
-        if (pos.isDraw(ss.ply) or ss.ply >= t.max_ply) return if (ss.ply >= t.max_ply and !ss.in_check) w.evaluate(pos) else s.drawValue(@intCast(w.nodes));
-        alpha = @max(-t.value_mate + ss.ply, alpha);
-        beta = @min(t.value_mate - ss.ply - 1, beta);
-        if (alpha >= beta) return alpha;
+        if (!root_node) {
+            if (pos.isDraw(ss.ply) or ss.ply >= t.max_ply) return if (ss.ply >= t.max_ply and !ss.in_check) w.evaluate(pos) else s.drawValue(@intCast(w.nodes));
+            alpha = @max(-t.value_mate + ss.ply, alpha);
+            beta = @min(t.value_mate - ss.ply - 1, beta);
+            if (alpha >= beta) return alpha;
+        }
         const prev_sq: t.Square = if (prev.current_move.valid()) prev.current_move.to() else .none;
         var best_move: t.Move = .none;
         const prior_reduction = prev.reduction;
@@ -113,7 +132,7 @@ pub const Worker = struct {
         const probe = w.table.probe(key);
         var data = probe.data;
         ss.tt_hit = probe.found;
-        data.move = if (probe.found) data.move else .none;
+        data.move = if (root_node) self.root_moves[self.pv_idx].pv.moves[0] else if (probe.found) data.move else .none;
         data.value = if (probe.found) s.valueFromTT(data.value, ss.ply, pos.st.rule50) else t.value_none;
         ss.tt_pv = if (excluded.data != 0) ss.tt_pv else pv_node or (probe.found and data.is_pv);
         const tt_capture = data.move.data != 0 and pos.captureStage(data.move);
@@ -217,6 +236,16 @@ pub const Worker = struct {
             const move = picker.next();
             if (move.data == 0) break;
             if (move.data == excluded.data or !pos.legal(move)) continue;
+            if (root_node) {
+                var included = false;
+                for (self.root_moves[self.pv_idx..self.pv_last]) |*rm| {
+                    if (rm.pv.moves[0].data == move.data) {
+                        included = true;
+                        break;
+                    }
+                }
+                if (!included) continue;
+            }
             move_count += 1;
             ss.move_count = move_count;
             if (pv_node) w.frames[frame + 1].pv = null;
@@ -229,7 +258,7 @@ pub const Worker = struct {
             var new_depth = depth - 1;
             var r = self.reductions.reduction(improving, @intCast(depth), @intCast(move_count), beta - alpha, self.root_delta);
             if (ss.tt_pv) r += 929;
-            if (pos.st.non_pawn_material[us] != 0 and !loss(best_value)) {
+            if (!root_node and pos.st.non_pawn_material[us] != 0 and !loss(best_value)) {
                 if (move_count >= div(3 + depth * depth, 2 - b(improving))) picker.skipQuietMoves();
                 var lmr_depth = new_depth - div(r, 1024);
                 if (capture or check) {
@@ -252,7 +281,7 @@ pub const Worker = struct {
                     if (!pos.seeGe(move, -23 * lmr_depth * lmr_depth)) continue;
                 }
             }
-            if (move.data == data.move.data and excluded.data == 0 and depth >= 6 + b(ss.tt_pv) and data.value != t.value_none and !decisive(data.value) and bound(data.bound, true) and data.depth >= depth - 3 and !self.shuffling(move, frame, pos) and !seek_mate) {
+            if (!root_node and move.data == data.move.data and excluded.data == 0 and depth >= 6 + b(ss.tt_pv) and data.value != t.value_none and !decisive(data.value) and bound(data.bound, true) and data.depth >= depth - 3 and !self.shuffling(move, frame, pos) and !seek_mate) {
                 const singular_beta = data.value - div((59 + 66 * b(ss.tt_pv and !pv_node)) * depth, 63);
                 const singular_depth = div(new_depth, 2);
                 ss.excluded_move = move;
@@ -270,6 +299,7 @@ pub const Worker = struct {
                     return value;
                 } else if (data.value >= beta or cut_node) extension = -3;
             }
+            const node_count = if (root_node) w.nodes else 0;
             w.doMove(pos, move, &state, frame);
             new_depth += extension;
             if (ss.tt_pv) r -= 3023 + 1004 * b(pv_node) + 885 * b(data.value > alpha) + b(data.depth >= depth) * (816 + 940 * b(cut_node));
@@ -305,12 +335,20 @@ pub const Worker = struct {
             }
             w.undoMove(pos, move);
             std.debug.assert(value > -t.value_infinite and value < t.value_infinite);
+            if (root_node) {
+                for (self.root_moves) |*rm| {
+                    if (rm.pv.moves[0].data != move.data) continue;
+                    rm.record(value, alpha, beta, move_count, w.sel_depth, w.nodes - node_count, w.frames[frame + 1].pv);
+                    if ((move_count == 1 or value > alpha) and move_count > 1 and self.pv_idx == 0) self.best_move_changes += 1;
+                    break;
+                }
+            }
             const inc = b(value == best_value and ss.ply + 2 >= self.root_depth and w.nodes & 14 == 0 and !win(@as(i32, @intCast(@abs(value))) + 1));
             if (value + inc > best_value) {
                 best_value = value;
                 if (value + inc > alpha) {
                     best_move = move;
-                    if (pv_node) ss.pv.?.update(move, w.frames[frame + 1].pv);
+                    if (pv_node and !root_node) ss.pv.?.update(move, w.frames[frame + 1].pv);
                     if (value >= beta) {
                         ss.cutoff_count += b(extension < 2 or pv_node);
                         break;
@@ -336,7 +374,7 @@ pub const Worker = struct {
             if (pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)].update(div(bonus * 324, 8192));
         } else if (prior_capture and prev_sq != .none) w.capture_history[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)][@intFromEnum(pos.st.captured_piece.pieceType())].update(892);
         if (best_value <= alpha) ss.tt_pv = ss.tt_pv or prev.tt_pv;
-        if (excluded.data == 0) w.save(probe.writer, key, s.valueToTT(best_value, ss.ply), ss.tt_pv, if (best_value >= beta) .lower else if (pv_node and best_move.data != 0) .exact else .upper, if (move_count != 0) depth else @min(t.max_ply - 1, depth + 6), best_move, unadjusted);
+        if (excluded.data == 0 and !(root_node and self.pv_idx != 0)) w.save(probe.writer, key, s.valueToTT(best_value, ss.ply), ss.tt_pv, if (best_value >= beta) .lower else if (pv_node and best_move.data != 0) .exact else .upper, if (move_count != 0) depth else @min(t.max_ply - 1, depth + 6), best_move, unadjusted);
         if (!ss.in_check and !(best_move.data != 0 and pos.capture(best_move)) and (best_value > ss.static_eval) == (best_move.data != 0)) histories.updateCorrection(pos, frame, div(1061 * std.math.clamp(div((best_value - ss.static_eval) * depth * @as(i32, if (best_move.data != 0) 12 else 18), 128), -256, 256), 1024));
         std.debug.assert(best_value > -t.value_infinite and best_value < t.value_infinite);
         return best_value;

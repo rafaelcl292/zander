@@ -206,5 +206,44 @@ int main(int argc, char** argv) {
         }
     }
     std::puts("};");
+    std::puts("pub const RootRecord = struct { effort: u64, score: i32, average: i32, squared: i32, uci: i32, lower: bool, upper: bool, sel_depth: i32, pv: []const u16 };\npub const RootCase = struct { root: usize, depth: i32, mode: usize, warm: bool, score: i32, nodes: u64, sel_depth: i32, changes: usize, tt_checksum: u64, records: []const RootRecord };\npub const root_cases = [_]RootCase{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    while(std::getline(inputs,line)) {
+        size_t index=root++; Position pos; StateInfo st;
+        if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
+        if(MoveList<LEGAL>(pos).size()==0) continue;
+        for(int depth : {1,4,8}) for(int mode=0;mode<3;++mode) {
+            worker->clear(); worker->lowPlyHistory.fill(102);
+            worker->rootMoves.clear();
+            for(Move m:MoveList<LEGAL>(pos)) worker->rootMoves.emplace_back(m);
+            worker->pvIdx=mode==2 && worker->rootMoves.size()>1?1:0;
+            worker->pvLast=worker->rootMoves.size();
+            if(mode==2) worker->pvLast=std::min(worker->pvLast,worker->pvIdx+3);
+            std::memset(tt.table,0,tt.clusterCount*sizeof(Cluster)); tt.generation8=0; tt.new_search();
+            for(bool warm : {false,true}) {
+                worker->nodes=0; worker->selDepth=0; worker->nmpMinPly=0; worker->rootDepth=depth;
+                worker->bestMoveChanges=0; worker->lastIterationIdxPV.clear();
+                int alpha=mode==0?-32001:mode==1?99:-101, beta=mode==0?32001:mode==1?100:-100;
+                worker->rootDelta=beta-alpha; worker->accumulatorStack.reset();
+                Search::Stack frames[MAX_PLY+10]{}; auto ss=frames+7;
+                for(int i=1;i<=7;++i) {
+                    (ss-i)->continuationHistory=&worker->continuationHistory[0][0][NO_PIECE][0];
+                    (ss-i)->continuationCorrectionHistory=&worker->continuationCorrectionHistory[NO_PIECE][0];
+                    (ss-i)->staticEval=VALUE_NONE;
+                }
+                for(int i=0;i<=MAX_PLY+2;++i) (ss+i)->ply=i;
+                Search::PVMoves pv; ss->pv=&pv;
+                int score=worker->search<Root>(pos,ss,alpha,beta,depth,false);
+                std::printf(".{ .root=%zu,.depth=%d,.mode=%d,.warm=%s,.score=%d,.nodes=%llu,.sel_depth=%d,.changes=%zu,.tt_checksum=%llu,.records=&.{",index,depth,mode,warm?"true":"false",score,(unsigned long long)uint64_t(worker->nodes),worker->selDepth,size_t(worker->bestMoveChanges),(unsigned long long)hashBytes(tt.table,tt.clusterCount*sizeof(Cluster)));
+                for(const auto& rm:worker->rootMoves) {
+                    std::printf(".{ .effort=%llu,.score=%d,.average=%d,.squared=%d,.uci=%d,.lower=%s,.upper=%s,.sel_depth=%d,.pv=&.{",(unsigned long long)rm.effort,rm.score,rm.averageScore,rm.meanSquaredScore,rm.uciScore,rm.inexactLower?"true":"false",rm.inexactUpper?"true":"false",rm.selDepth);
+                    for(Move move:rm.pv) std::printf("%u,",unsigned(move.raw()));
+                    std::printf("} },");
+                }
+                std::puts("} },");
+            }
+        }
+    }
+    std::puts("};");
 
 }

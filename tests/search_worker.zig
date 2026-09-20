@@ -196,4 +196,60 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expect(pos.st == &state);
         try std.testing.expectEqual(@as(usize, 1), accumulators.size);
     }
+    const roots = try allocator.alloc(z.search.RootMove, z.types.max_moves);
+    defer allocator.free(roots);
+    for (@import("reference").root_cases, 0..) |case, case_index| {
+        errdefer std.debug.print("Root search case {d}, root {d}, depth {d}, mode {d}, warm {any}\n", .{ case_index, case.root, case.depth, case.mode, case.warm });
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(lines[case.root][2..], lines[case.root][0] == '1', &state, tables, keys);
+        const key = pos.key();
+        if (!case.warm) {
+            z.history.fill(main, -5);
+            z.history.fill(low, 102);
+            z.history.fill(capture, -742);
+            z.history.fill(continuation_correction, 5);
+            shared.clearRange(0, 1);
+            search.tt_move_history.set(0);
+            caches.clear(&network.transformer);
+            table.clear();
+            table.newSearch();
+            var moves: z.movegen.MoveList = .{};
+            z.movegen.generate(.legal, &pos, &moves);
+            search.root_moves = roots[0..moves.len];
+            for (moves.slice(), search.root_moves) |move, *rm| rm.* = z.search.RootMove.init(move);
+            search.pv_idx = if (case.mode == 2 and moves.len > 1) 1 else 0;
+            search.pv_last = if (case.mode == 2) @min(moves.len, search.pv_idx + 3) else moves.len;
+        }
+        var pv: z.search_support.PV = .{};
+        worker.prepare(&pv);
+        search.root_depth = case.depth;
+        search.nmp_min_ply = 0;
+        search.best_move_changes = 0;
+        search.last_iteration_pv.clear();
+        const score = search.searchRoot(&pos, if (case.mode == 0) -32001 else if (case.mode == 1) 99 else -101, if (case.mode == 0) 32001 else if (case.mode == 1) 100 else -100, case.depth);
+        try std.testing.expectEqual(case.score, score);
+        try std.testing.expectEqual(case.nodes, worker.nodes);
+        try std.testing.expectEqual(case.sel_depth, worker.sel_depth);
+        try std.testing.expectEqual(case.changes, search.best_move_changes);
+        for (case.records, search.root_moves, 0..) |expected, actual, index| {
+            errdefer std.debug.print("Root record {d}\n", .{index});
+            try std.testing.expectEqual(expected.effort, actual.effort);
+            try std.testing.expectEqual(expected.score, actual.score);
+            try std.testing.expectEqual(expected.average, actual.average_score);
+            try std.testing.expectEqual(expected.squared, actual.mean_squared_score);
+            try std.testing.expectEqual(expected.uci, actual.uci_score);
+            try std.testing.expectEqual(expected.lower, actual.inexact_lower);
+            try std.testing.expectEqual(expected.upper, actual.inexact_upper);
+            try std.testing.expectEqual(expected.sel_depth, actual.sel_depth);
+            try std.testing.expectEqual(expected.pv.len, actual.pv.len);
+            for (expected.pv, actual.pv.slice()) |a, c| try std.testing.expectEqual(a, c.data);
+        }
+        var checksum: u64 = 14695981039346656037;
+        for (std.mem.sliceAsBytes(clusters)) |byte| checksum = (checksum ^ byte) *% 1099511628211;
+        try std.testing.expectEqual(case.tt_checksum, checksum);
+        try std.testing.expectEqual(key, pos.key());
+        try std.testing.expect(pos.st == &state);
+        try std.testing.expectEqual(@as(usize, 1), accumulators.size);
+    }
 }
