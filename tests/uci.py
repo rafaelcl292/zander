@@ -113,6 +113,17 @@ def main():
         client.send("isready")
         assert all(line in ("", "readyok") for line in client.until("readyok"))
         client.send(f"setoption name EvalFile value {args.network}")
+        with tempfile.TemporaryDirectory(prefix="zander-log-") as directory:
+            log_path = pathlib.Path(directory) / "protocol.log"
+            client.send(f"setoption name Debug Log File value {log_path}")
+            client.send("isready")
+            assert client.until("readyok") == ["readyok"]
+            client.send("setoption name Debug Log File value")
+            client.send("isready")
+            assert client.until("readyok") == ["readyok"]
+            logged = log_path.read_text()
+            assert ">> isready\n" in logged and "<< readyok\n" in logged, logged
+            assert logged.count(">> isready") == 1, logged
         client.send("compiler")
         assert any("Zig " in line for line in client.until("NNUE backend:"))
         client.send("d")

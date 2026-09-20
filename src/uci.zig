@@ -12,7 +12,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, network_path: ?[]const u8) 
     if (network_path) |path| try engine.loadNetwork(path);
     var output_buffer: [16384]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), io, &output_buffer);
-    var session: Session = .{ .engine = engine, .writer = &output.interface };
+    var logger: @import("protocol_log.zig").Log = .{ .destination = &output.interface, .io = io };
+    defer logger.close();
+    var session: Session = .{ .engine = engine, .writer = &logger.interface, .logger = &logger };
     defer session.stopAndJoin();
     engine.worker.progress_context = &session;
     engine.worker.on_progress = Session.progress;
@@ -30,6 +32,11 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, network_path: ?[]const u8) 
             }
             break;
         } orelse break;
+        {
+            session.output_mutex.lockUncancelable(io);
+            defer session.output_mutex.unlock(io);
+            try logger.input(line);
+        }
         var words = std.mem.tokenizeAny(u8, line, " \t\r");
         var count: usize = 0;
         while (words.next()) |word| {
@@ -50,6 +57,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, network_path: ?[]const u8) 
 const Session = struct {
     engine: *e.Engine,
     writer: *std.Io.Writer,
+    logger: *@import("protocol_log.zig").Log,
     thread: ?std.Thread = null,
     output_mutex: std.Io.Mutex = .init,
     wake_mutex: std.Io.Mutex = .init,
@@ -93,6 +101,7 @@ const Session = struct {
         if (std.mem.eql(u8, cmd, "uci")) {
             try self.text("id name Zander\nid author Zander contributors\n" ++
                 "option name Hash type spin default 16 min 1 max 4096\n" ++
+                "option name Debug Log File type string default \n" ++
                 "option name SyzygyPath type string default <empty>\n" ++
                 "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n" ++
                 "option name Syzygy50MoveRule type check default true\n" ++
@@ -324,7 +333,11 @@ const Session = struct {
         defer self.engine.allocator.free(name);
         const value = try std.mem.join(self.engine.allocator, " ", args[if (split < args.len) split + 1 else split..]);
         defer self.engine.allocator.free(value);
-        if (std.ascii.eqlIgnoreCase(name, "SyzygyPath")) {
+        if (std.ascii.eqlIgnoreCase(name, "Debug Log File")) {
+            self.output_mutex.lockUncancelable(self.engine.io);
+            defer self.output_mutex.unlock(self.engine.io);
+            try self.logger.configure(value);
+        } else if (std.ascii.eqlIgnoreCase(name, "SyzygyPath")) {
             try self.engine.loadTablebases(value);
         } else if (std.ascii.eqlIgnoreCase(name, "SyzygyProbeDepth")) {
             self.engine.worker.tb_options.depth = try integer(i32, value, 1, 100);
