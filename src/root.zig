@@ -8,7 +8,9 @@ pub const movegen = @import("movegen.zig");
 pub const perft = @import("perft.zig");
 pub const tt = @import("tt.zig");
 pub const dirty = @import("dirty.zig");
+pub const nnue_features = @import("nnue/features.zig");
 test {
+    _ = nnue_features;
     _ = dirty;
     _ = tt;
     _ = perft;

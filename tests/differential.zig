@@ -167,7 +167,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
             const gives_check = pos.givesCheck(move);
             var dirties: z.dirty.Dirties = undefined;
             pos.doMoveWithDirties(move, &next, &dirties);
-            try expectDirties(child, &dirties);
+            try expectDirties(&pos, child, &dirties);
             try std.testing.expectEqual(gives_check, pos.st.checkers != 0);
             try expectQueries(&pos, child);
             try std.testing.expectEqualSlices(u64, child.data, snapshotPosition(&pos, &snapshot));
@@ -183,7 +183,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         for (expected.walk, 0..) |step, i| {
             var dirties: z.dirty.Dirties = undefined;
             pos.doMoveWithDirties(.{ .data = step.move }, &walk_states[i], &dirties);
-            try expectDirties(step, &dirties);
+            try expectDirties(&pos, step, &dirties);
             try expectQueries(&pos, step);
             try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
             z.movegen.generate(.legal, &pos, &list);
@@ -214,7 +214,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
     for (reference.repetition, 0..) |step, i| {
         var dirties: z.dirty.Dirties = undefined;
         pos.doMoveWithDirties(.{ .data = step.move }, &history[i + 1], &dirties);
-        try expectDirties(step, &dirties);
+        try expectDirties(&pos, step, &dirties);
         try expectQueries(&pos, step);
         var snapshot: [256]u64 = undefined;
         try std.testing.expectEqualSlices(u64, step.data, snapshotPosition(&pos, &snapshot));
@@ -281,6 +281,7 @@ fn expectMoves(expected: []const u16, actual: []const z.types.Move) !void {
 }
 
 fn expectQueries(pos: *const z.position.Position, expected: @import("position_reference").Snapshot) !void {
+    try expectActiveFeatures(pos, expected);
     var list: z.movegen.MoveList = .{};
     z.movegen.generate(.legal, pos, &list);
     try std.testing.expectEqual(expected.queries.len, list.len);
@@ -351,7 +352,8 @@ fn ttData(data: z.tt.Data) [6]i32 {
     return .{ data.move.data, data.value, data.eval, data.depth, @intFromEnum(data.bound), @intFromBool(data.is_pv) };
 }
 
-fn expectDirties(expected: @import("position_reference").Snapshot, actual: *const z.dirty.Dirties) !void {
+fn expectDirties(pos: *const z.position.Position, expected: @import("position_reference").Snapshot, actual: *const z.dirty.Dirties) !void {
+    try expectChangedFeatures(pos, expected, actual);
     const d = actual.piece;
     const piece = [_]u8{ @intFromEnum(d.pc), @intFromEnum(d.from), @intFromEnum(d.to), @intFromEnum(d.remove_sq), @intFromEnum(d.add_sq), @intFromEnum(d.remove_pc), @intFromEnum(d.add_pc) };
     try std.testing.expectEqualSlices(u8, expected.dirty_piece, &piece);
@@ -359,4 +361,74 @@ fn expectDirties(expected: @import("position_reference").Snapshot, actual: *cons
     for (expected.dirty_threats, actual.threats.list[0..actual.threats.len]) |e, threat| try std.testing.expectEqual(e, threat.data);
     const pawns = actual.before ++ actual.after;
     try std.testing.expectEqualSlices(u64, expected.dirty_pawns, &pawns);
+}
+
+fn expectActiveFeatures(pos: *const z.position.Position, expected: @import("position_reference").Snapshot) !void {
+    const features = z.nnue_features;
+    for ([_]z.types.Color{ .white, .black }, expected.features) |c, ref| {
+        var half: features.SmallList = .{};
+        var occupied = pos.pieces();
+        while (occupied != 0) {
+            const square = z.bitboard.popLsb(&occupied);
+            half.append(features.HalfKA.makeIndex(c, square, pos.pieceOn(square), pos.king(c)));
+        }
+        var threats: features.ThreatList = .{};
+        var pawns: features.ThreatList = .{};
+        features.FullThreats.appendActive(c, pos, &threats);
+        features.PawnPairs.appendActive(c, pos, &pawns);
+        try std.testing.expectEqualSlices(u16, ref.half, half.slice());
+        try std.testing.expectEqualSlices(u16, ref.threats, threats.slice());
+        try std.testing.expectEqualSlices(u16, ref.pawns, pawns.slice());
+    }
+}
+fn expectChangedFeatures(pos: *const z.position.Position, expected: @import("position_reference").Snapshot, diff: *const z.dirty.Dirties) !void {
+    const features = z.nnue_features;
+    for ([_]z.types.Color{ .white, .black }, expected.features) |c, ref| {
+        var hr: features.SmallList = .{};
+        var ha: features.SmallList = .{};
+        var tr: features.ThreatList = .{};
+        var ta: features.ThreatList = .{};
+        var pr: features.ThreatList = .{};
+        var pa: features.ThreatList = .{};
+        features.HalfKA.appendChanged(c, pos.king(c), diff.piece, &hr, &ha);
+        features.FullThreats.appendChanged(c, pos.king(c), &diff.threats, &tr, &ta);
+        features.PawnPairs.appendChanged(c, pos.king(c), diff.before, diff.after, &pr, &pa);
+        try std.testing.expectEqualSlices(u16, ref.half_removed, hr.slice());
+        try std.testing.expectEqualSlices(u16, ref.half_added, ha.slice());
+        try std.testing.expectEqualSlices(u16, ref.threats_removed, tr.slice());
+        try std.testing.expectEqualSlices(u16, ref.threats_added, ta.slice());
+        try std.testing.expectEqualSlices(u16, ref.pawns_removed, pr.slice());
+        try std.testing.expectEqualSlices(u16, ref.pawns_added, pa.slice());
+        try std.testing.expectEqual(ref.refresh, features.HalfKA.requiresRefresh(diff.piece, c));
+    }
+}
+
+test "NNUE index spaces match C++ across kings, pieces, threats and pawn pairs" {
+    const f = z.nnue_features;
+    var hashes: [3]u64 = @splat(14695981039346656037);
+    for ([_]z.types.Color{ .white, .black }) |c| {
+        for (0..64) |k| for (0..64) |s| for (z.position_keys.pieces) |pc| {
+            hashes[0] = (hashes[0] ^ f.HalfKA.makeIndex(c, @enumFromInt(s), pc, @enumFromInt(k))) *% 1099511628211;
+        };
+        // FullThreats and PP orientation depends only on king file half.
+        for ([_]u8{ 0, 7 }) |k| {
+            for (z.position_keys.pieces) |pc| for (0..64) |from| {
+                var targets = z.attacks.pseudo[if (pc.pieceType() == .pawn) @intFromEnum(pc.color()) else @intFromEnum(pc.pieceType())][from];
+                while (targets != 0) {
+                    const to = z.bitboard.popLsb(&targets);
+                    for (z.position_keys.pieces) |target| {
+                        hashes[1] = (hashes[1] ^ f.FullThreats.makeIndex(c, pc, @enumFromInt(from), to, target, @enumFromInt(k))) *% 1099511628211;
+                    }
+                }
+            };
+            for (0..96) |first| for (first + 1..96) |second| {
+                const color: z.types.Color = @enumFromInt(first / 48);
+                const paired: z.types.Color = @enumFromInt(second / 48);
+                const from: z.types.Square = @enumFromInt(first % 48 + 8);
+                const to: z.types.Square = @enumFromInt(second % 48 + 8);
+                hashes[2] = (hashes[2] ^ f.PawnPairs.makeIndex(c, color, from, to, paired, @enumFromInt(k))) *% 1099511628211;
+            };
+        }
+    }
+    try std.testing.expectEqualSlices(u64, &@import("position_reference").index_checksums, &hashes);
 }

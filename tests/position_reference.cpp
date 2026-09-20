@@ -3,6 +3,9 @@
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
 #include "../vendor/stockfish/src/movegen.cpp"
+#include "../vendor/stockfish/src/nnue/features/half_ka_v2_hm.cpp"
+#include "../vendor/stockfish/src/nnue/features/full_threats.cpp"
+#include "../vendor/stockfish/src/nnue/features/pp_3wide.cpp"
 #include <cstdio>
 #include <fstream>
 using namespace Stockfish;
@@ -121,6 +124,38 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
             for (auto b : changes->dirtyPawnPairs.before) emit(b);
             for (auto b : changes->dirtyPawnPairs.after) emit(b);
         }
+        std::puts("}, .features = &.{");
+        using namespace Eval::NNUE::Features;
+        const auto list = [](const auto& indices) { for (auto index : indices) std::printf("%u,", unsigned(index)); };
+        for (Color c : {WHITE, BLACK}) {
+            const Square king = pos.square<KING>(c);
+            std::puts(".{ .half = &.{");
+            for (Bitboard b = pos.pieces(); b;) {
+                const Square s = pop_lsb(b);
+                std::printf("%u,", unsigned(HalfKAv2_hm::make_index(c, s, pos.piece_on(s), king)));
+            }
+            std::puts("}, .threats = &.{");
+            FullThreats::IndexList threats;
+            FullThreats::append_active_indices(c, pos, threats); list(threats);
+            std::puts("}, .pawns = &.{");
+            PP_3Wide::IndexList pawns;
+            PP_3Wide::append_active_indices(c, pos, pawns); list(pawns);
+            HalfKAv2_hm::IndexList hr, ha;
+            FullThreats::IndexList tr, ta;
+            PP_3Wide::IndexList pr, pa;
+            if (changes) {
+                HalfKAv2_hm::append_changed_indices(c, king, changes->dirtyPiece, hr, ha);
+                FullThreats::append_changed_indices(c, king, changes->dirtyThreats, tr, ta);
+                PP_3Wide::append_changed_indices(c, king, changes->dirtyPawnPairs, pr, pa);
+            }
+            std::puts("}, .half_removed = &.{"); list(hr);
+            std::puts("}, .half_added = &.{"); list(ha);
+            std::puts("}, .threats_removed = &.{"); list(tr);
+            std::puts("}, .threats_added = &.{"); list(ta);
+            std::puts("}, .pawns_removed = &.{"); list(pr);
+            std::puts("}, .pawns_added = &.{"); list(pa);
+            std::printf("}, .refresh = %s },\n", changes && HalfKAv2_hm::requires_refresh(changes->dirtyPiece, c) ? "true" : "false");
+        }
         std::printf("}, .move = %u, .nodes = %llu },\n", unsigned(incoming), (unsigned long long)(children ? perft(pos, 3) : 0));
 }
 
@@ -128,6 +163,25 @@ int main(int argc, char** argv) {
     using namespace Stockfish;
     Attacks::init();
     Position::init();
+    using namespace Eval::NNUE::Features;
+    uint64_t hashes[3] = {14695981039346656037ULL, 14695981039346656037ULL, 14695981039346656037ULL};
+    const auto mix = [&](int i, uint32_t value) { hashes[i] = (hashes[i] ^ value) * 1099511628211ULL; };
+    for (Color c : {WHITE, BLACK}) {
+        for (int k = 0; k < 64; ++k) for (int s = 0; s < 64; ++s) for (auto pc : Pieces)
+            mix(0, HalfKAv2_hm::make_index(c, Square(s), pc, Square(k)));
+        for (Square k : {SQ_A1, SQ_H1}) {
+            for (auto pc : Pieces) for (int from = 0; from < 64; ++from) {
+                Bitboard targets = type_of(pc) == PAWN ? Attacks::PseudoAttacks[color_of(pc)][from] : Attacks::PseudoAttacks[type_of(pc)][from];
+                while (targets) {
+                    const Square to = pop_lsb(targets);
+                    for (auto target : Pieces) mix(1, FullThreats::make_index(c, pc, Square(from), to, target, k));
+                }
+            }
+            for (int first = 0; first < 96; ++first) for (int second = first + 1; second < 96; ++second)
+                mix(2, PP_3Wide::make_index(c, Color(first / 48), Square(first % 48 + 8), Square(second % 48 + 8), Color(second / 48), k));
+        }
+    }
+    std::printf("pub const index_checksums = [_]u64{%llu,%llu,%llu};\n", (unsigned long long)hashes[0], (unsigned long long)hashes[1], (unsigned long long)hashes[2]);
     std::puts("pub const keys = [_]u64{");
     for (const auto& row : Zobrist::psq)
         for (auto key : row) std::printf("%llu,\n", (unsigned long long)key);
@@ -139,7 +193,8 @@ int main(int argc, char** argv) {
     std::puts("};\npub const cuckoo_moves = [_]u16{");
     for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
     std::puts("};");
-    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
+    std::puts("pub const FeatureSet = struct { half: []const u16, threats: []const u16, pawns: []const u16, half_removed: []const u16, half_added: []const u16, threats_removed: []const u16, threats_added: []const u16, pawns_removed: []const u16, pawns_added: []const u16, refresh: bool }; ");
+    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, features: []const FeatureSet = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
     if (argc != 2) return 1;
     std::ifstream input(argv[1]);
     if (!input) return 1;
