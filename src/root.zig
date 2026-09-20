@@ -1,3 +1,5 @@
+pub const nnue_network = @import("nnue/network.zig");
+pub const nnue_accumulator = @import("nnue/accumulator.zig");
 pub const types = @import("types.zig");
 pub const bitboard = @import("bitboard.zig");
 pub const attacks = @import("attacks.zig");

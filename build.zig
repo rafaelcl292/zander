@@ -27,6 +27,11 @@ pub fn build(b: *std.Build) void {
     tt_cpp.addFileArg(b.path("tests/tt_reference.cpp"));
     const nnue_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT" });
     nnue_cpp.addFileArg(b.path("tests/nnue_reference.cpp"));
+    const network_path = b.option([]const u8, "network", "Path to the pinned NNUE weights for network-test");
+    const network_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-DNNUE_EMBEDDING_OFF", "-ffunction-sections", "-fdata-sections" });
+    network_cpp.addFileArg(b.path("tests/network_reference.cpp"));
+    network_cpp.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
+    network_cpp.addFileArg(b.path("vendor/stockfish/src/tt.cpp"));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
@@ -39,6 +44,7 @@ pub fn build(b: *std.Build) void {
             tt_cpp.addFileInput(input);
             nnue_cpp.addFileInput(input);
             cpp.addFileInput(input);
+            network_cpp.addFileInput(input);
         }
     }
     reference_cpp.addArg("-Wl,--gc-sections");
@@ -60,6 +66,22 @@ pub fn build(b: *std.Build) void {
     const nnue_run = std.Build.Step.Run.create(b, "generate NNUE reference");
     nnue_run.addFileArg(nnue_exe);
     diff_mod.addAnonymousImport("nnue_reference", .{ .root_source_file = nnue_run.captureStdOut(.{ .basename = "nnue_reference.zig" }) });
+    if (network_path) |path| {
+        network_cpp.addArgs(&.{ "-Wl,--gc-sections", "-o" });
+        const network_exe = network_cpp.addOutputFileArg("network-reference");
+        const network_run = std.Build.Step.Run.create(b, "generate real NNUE reference");
+        network_run.addFileArg(network_exe);
+        network_run.addFileArg(.{ .cwd_relative = path });
+        network_run.addFileArg(b.path("tests/positions.txt"));
+        const network_mod = b.createModule(.{ .root_source_file = b.path("tests/network.zig"), .target = b.graph.host, .optimize = optimize });
+        network_mod.addImport("zander", diff_mod.import_table.get("zander").?);
+        network_mod.addAnonymousImport("reference", .{ .root_source_file = network_run.captureStdOut(.{ .basename = "network_reference.zig" }) });
+        const options = b.addOptions();
+        options.addOption([]const u8, "network_path", b.pathFromRoot(path));
+        network_mod.addOptions("options", options);
+        const network_test = b.addTest(.{ .root_module = network_mod });
+        b.step("network-test", "Compare real NNUE weights and incremental evaluation with Stockfish").dependOn(&b.addRunArtifact(network_test).step);
+    }
     const diff = b.addTest(.{ .root_module = diff_mod });
     const diff_step = b.step("differential", "Compare with pinned Stockfish C++ (requires host c++)");
     diff_step.dependOn(&b.addRunArtifact(diff).step);
