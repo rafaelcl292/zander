@@ -93,6 +93,7 @@ const Session = struct {
         if (std.mem.eql(u8, cmd, "uci")) {
             try self.text("id name Zander\nid author Zander contributors\n" ++
                 "option name Hash type spin default 16 min 1 max 4096\n" ++
+                "option name PagePolicy type combo default auto var auto var small var transparent var huge2m var huge1g\n" ++
                 "option name Threads type spin default 1 min 1 max 256\n" ++
                 "option name Skill Level type spin default 20 min 0 max 20\n" ++
                 "option name UCI_LimitStrength type check default false\n" ++
@@ -152,7 +153,15 @@ const Session = struct {
         defer self.engine.allocator.free(name);
         const value = try std.mem.join(self.engine.allocator, " ", args[if (split < args.len) split + 1 else split..]);
         defer self.engine.allocator.free(value);
-        if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, 4096)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
+        if (std.ascii.eqlIgnoreCase(name, "PagePolicy")) {
+            const policy = std.meta.stringToEnum(@import("memory.zig").PagePolicy, value) orelse return error.InvalidPagePolicy;
+            const previous = self.engine.page_policy;
+            self.engine.page_policy = policy;
+            self.engine.resizeHash(self.engine.hash_mb) catch |err| {
+                self.engine.page_policy = previous;
+                return err;
+            };
+        } else if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, 4096)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
             try self.engine.resizeThreads(try integer(usize, value, 1, 256));
         } else if (std.ascii.eqlIgnoreCase(name, "Skill Level")) self.skill_level = try integer(i32, value, 0, 20) else if (std.ascii.eqlIgnoreCase(name, "UCI_LimitStrength")) self.limit_strength = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Elo")) self.elo = try integer(i32, value, 1320, 3190) else if (std.ascii.eqlIgnoreCase(name, "nodestime")) {
             self.engine.node_rate = try integer(i64, value, 0, 10000);

@@ -7,6 +7,7 @@ const search = @import("search.zig");
 const nn = @import("nnue/network.zig");
 const acc = @import("nnue/accumulator.zig");
 const tm = @import("time_management.zig");
+const memory = @import("memory.zig");
 const Helper = @import("search_thread.zig").Helper;
 const notation = @import("notation.zig");
 pub const default_network = "networks/nn-134a887f4c8f.nnue";
@@ -28,6 +29,8 @@ pub const Engine = struct {
     base: *@import("quiescence.zig").Worker,
     worker: search.Worker,
     clusters: []align(64) tt.Cluster,
+    hash_region: memory.Region,
+    page_policy: memory.PagePolicy = .auto,
     table: tt.Table,
     roots: []search.RootMove,
     states: []p.StateInfo,
@@ -73,8 +76,10 @@ pub const Engine = struct {
         self.shared = try h.SharedHistories.init(1, correction, continuation, pawn);
         self.roots = try a.alloc(search.RootMove, t.max_moves);
         self.base = try a.create(@import("quiescence.zig").Worker);
-        self.clusters = try allocator.alignedAlloc(tt.Cluster, .@"64", hash_mb * 1024 * 1024 / @sizeOf(tt.Cluster));
-        errdefer allocator.free(self.clusters);
+        self.page_policy = .auto;
+        self.hash_region = try memory.Region.allocate(allocator, hash_mb * 1024 * 1024, self.page_policy);
+        errdefer self.hash_region.deinit();
+        self.clusters = std.mem.bytesAsSlice(tt.Cluster, self.hash_region.bytes);
         self.table = tt.Table.init(self.clusters);
         self.hash_mb = hash_mb;
         self.states = try allocator.alloc(p.StateInfo, 1);
@@ -103,7 +108,7 @@ pub const Engine = struct {
         if (self.network) |network| allocator.destroy(network);
         if (self.network_path) |path| allocator.free(path);
         allocator.free(self.states);
-        allocator.free(self.clusters);
+        self.hash_region.deinit();
         self.arena.deinit();
         allocator.destroy(self);
     }
@@ -208,10 +213,13 @@ pub const Engine = struct {
     }
     pub fn resizeHash(self: *Engine, mb: usize) !void {
         if (mb < 1 or mb > 4096) return error.InvalidHashSize;
-        const replacement = try self.allocator.alignedAlloc(tt.Cluster, .@"64", mb * 1024 * 1024 / @sizeOf(tt.Cluster));
-        const table = tt.Table.init(replacement);
-        self.allocator.free(self.clusters);
-        self.clusters = replacement;
+        var replacement = try memory.Region.allocate(self.allocator, mb * 1024 * 1024, self.page_policy);
+        errdefer replacement.deinit();
+        const clusters = std.mem.bytesAsSlice(tt.Cluster, replacement.bytes);
+        const table = tt.Table.init(clusters);
+        self.hash_region.deinit();
+        self.hash_region = replacement;
+        self.clusters = clusters;
         self.table = table;
         self.hash_mb = mb;
     }

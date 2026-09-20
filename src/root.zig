@@ -1,3 +1,4 @@
+pub const memory = @import("memory.zig");
 pub const uci = @import("uci.zig");
 pub const engine = @import("engine.zig");
 pub const notation = @import("notation.zig");
@@ -25,6 +26,7 @@ pub const nnue_features = @import("nnue/features.zig");
 pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
+    _ = memory;
     _ = search_control;
     _ = time_management;
     _ = @import("skill.zig");
