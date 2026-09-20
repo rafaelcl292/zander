@@ -1,4 +1,4 @@
-// Derived from Stockfish movegen.cpp (scalar path); GPL-3.0-or-later.
+// Derived from Stockfish movegen.cpp (scalar and AVX512 byte-compression paths); GPL-3.0-or-later.
 const std = @import("std");
 const t = @import("types.zig");
 const bb = @import("bitboard.zig");
@@ -20,11 +20,51 @@ pub const MoveList = struct {
 fn offset(s: t.Square, delta: i16) t.Square {
     return @enumFromInt(@as(i16, @intFromEnum(s)) + delta);
 }
+const cpu = @import("builtin").cpu;
+const vector_splat = cpu.arch == .x86_64 and
+    std.Target.x86.featureSetHasAll(cpu.features, &.{ .avx512f, .avx512bw, .avx512vbmi2 });
+fn compressedSquares(targets: u64) @Vector(64, u8) {
+    return asm ("vpcompressb %[squares], %[result] {%[mask]} {z}"
+        : [result] "=v" (-> @Vector(64, u8)),
+        : [squares] "v" (std.simd.iota(u8, 64)),
+          [mask] "{k1}" (targets),
+    );
+}
+fn vectorSplat(comptime hardware: bool, list: *MoveList, targets: u64, from: t.Square, delta: ?i16) void {
+    const count = @popCount(targets);
+    std.debug.assert(list.len + count <= list.moves.len);
+    const squares = if (hardware) compressedSquares(targets) else blk: {
+        // Portable compression oracle also exercises vector packing and bounds
+        // on machines without AVX512VBMI2.
+        var values: [64]u8 = @splat(0);
+        var bits = targets;
+        var i: usize = 0;
+        while (bits != 0) : (i += 1) values[i] = @intFromEnum(bb.popLsb(&bits));
+        break :blk @as(@Vector(64, u8), values);
+    };
+    if (delta) |offset_delta| {
+        std.debug.assert(count <= 8);
+        const to: @Vector(8, u16) = @intCast(@shuffle(u8, squares, undefined, std.simd.iota(i32, 8)));
+        const origins: @Vector(8, u16) = @bitCast(@as(@Vector(8, i16), @intCast(to)) - @as(@Vector(8, i16), @splat(offset_delta)));
+        const moves: [8]u16 = (origins << @splat(6)) | to;
+        // Copy only the valid prefix; the reference's overstore assumes spare
+        // capacity beyond the logical end of the move list.
+        @memcpy(list.moves[list.len..][0..count], @as(*const [8]t.Move, @ptrCast(&moves))[0..count]);
+    } else {
+        std.debug.assert(count <= 32);
+        const to: @Vector(32, u16) = @intCast(@shuffle(u8, squares, undefined, std.simd.iota(i32, 32)));
+        const moves: [32]u16 = to | @as(@Vector(32, u16), @splat(@as(u16, @intFromEnum(from)) << 6));
+        @memcpy(list.moves[list.len..][0..count], @as(*const [32]t.Move, @ptrCast(&moves))[0..count]);
+    }
+    list.len += count;
+}
 fn splat(list: *MoveList, from: t.Square, targets: u64) void {
+    if (vector_splat) return vectorSplat(true, list, targets, from, null);
     var b = targets;
     while (b != 0) list.append(t.Move.make(.normal, from, bb.popLsb(&b), .knight));
 }
 fn pawnSplat(list: *MoveList, targets: u64, delta: i16) void {
+    if (vector_splat) return vectorSplat(true, list, targets, .none, delta);
     var b = targets;
     while (b != 0) {
         const to = bb.popLsb(&b);
@@ -123,6 +163,38 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
         const shift: u3 = @intCast(@intFromEnum(us) * 2);
         for ([_]u8{ @as(u8, 1) << shift, @as(u8, 2) << shift }) |cr| {
             if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0) list.append(t.Move.make(.castling, k, pos.castling_rook[cr], .knight));
+        }
+    }
+}
+
+test "move splats preserve ascending square order and list boundaries" {
+    var rng = @import("prng.zig").Prng.init(903);
+    for (0..512) |_| {
+        var targets = rng.next();
+        // A single queen has at most 27 destinations.
+        while (@popCount(targets) > 27) targets &= targets - 1;
+        const from: t.Square = @enumFromInt(rng.next() & 63);
+        var list: MoveList = undefined;
+        list.len = @as(usize, t.max_moves) - @popCount(targets);
+        const begin = list.len;
+        vectorSplat(vector_splat, &list, targets, from, null);
+        var b = targets;
+        var index = begin;
+        while (b != 0) : (index += 1) {
+            try std.testing.expectEqual(t.Move.make(.normal, from, bb.popLsb(&b), .knight).data, list.moves[index].data);
+        }
+        try std.testing.expectEqual(@as(usize, t.max_moves), list.len);
+        inline for (.{ @as(i16, 8), @as(i16, -8), @as(i16, 16), @as(i16, -16), @as(i16, 7), @as(i16, -7), @as(i16, 9), @as(i16, -9) }) |delta| {
+            var pawn_targets = targets & 0x0000ffffffff0000;
+            while (@popCount(pawn_targets) > 8) pawn_targets &= pawn_targets - 1;
+            list.len = @as(usize, t.max_moves) - @popCount(pawn_targets);
+            index = list.len;
+            vectorSplat(vector_splat, &list, pawn_targets, .none, delta);
+            while (pawn_targets != 0) : (index += 1) {
+                const to = bb.popLsb(&pawn_targets);
+                try std.testing.expectEqual(t.Move.make(.normal, offset(to, -delta), to, .knight).data, list.moves[index].data);
+            }
+            try std.testing.expectEqual(@as(usize, t.max_moves), list.len);
         }
     }
 }
