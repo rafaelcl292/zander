@@ -2,14 +2,14 @@ const std = @import("std");
 const t = @import("types.zig");
 const p = @import("position.zig");
 const h = @import("history.zig");
-const acc = @import("nnue/accumulator.zig");
+const Storage = @import("worker_memory.zig").Storage;
 const search = @import("search.zig");
 const QWorker = @import("quiescence.zig").Worker;
 
 /// Persistent helper with exclusively owned mutable search storage. The owner
 /// publishes jobs under the mutex and joins a job before inspecting its result.
 pub const Helper = struct {
-    arena: std.heap.ArenaAllocator,
+    storage: *Storage,
     io: std.Io,
     affinity: ?@import("numa.zig").Mask,
     thread: ?std.Thread = null,
@@ -28,18 +28,20 @@ pub const Helper = struct {
     pub fn create(allocator: std.mem.Allocator, io: std.Io, index: usize, shared: *h.SharedHistories, table: *@import("tt.zig").Table, control: *@import("search_control.zig").Control, affinity: ?@import("numa.zig").Mask) !*Helper {
         const self = try allocator.create(Helper);
         errdefer allocator.destroy(self);
-        self.* = .{ .arena = .init(std.heap.page_allocator), .io = io, .affinity = affinity, .base = undefined, .worker = undefined, .roots = undefined };
-        errdefer self.arena.deinit();
-        const a = self.arena.allocator();
-        const base = try a.create(QWorker);
+        // Keep independent OS-backed storage for NUMA first-touch placement.
+        // Its exact capacity is determined by worker_memory.Plan, not arena growth.
+        const storage = try Storage.create(std.heap.page_allocator);
+        errdefer storage.destroy(std.heap.page_allocator);
+        self.* = .{ .storage = storage, .io = io, .affinity = affinity, .base = &storage.base, .worker = undefined, .roots = &storage.roots };
+        const base = &storage.base;
         base.* = .{
             .network = undefined,
-            .accumulators = try a.create(acc.Stack),
-            .caches = try a.create(acc.Caches),
-            .main_history = try a.create(h.ButterflyHistory),
-            .low_ply_history = try a.create(h.LowPlyHistory),
-            .capture_history = try a.create(h.CapturePieceToHistory),
-            .continuation_correction = try a.create(h.ContinuationCorrectionHistory),
+            .accumulators = &storage.accumulators,
+            .caches = &storage.caches,
+            .main_history = &storage.main_history,
+            .low_ply_history = &storage.low_ply_history,
+            .capture_history = &storage.capture_history,
+            .continuation_correction = &storage.continuation_correction,
             .shared = shared,
             .table = table,
             .control = control,
@@ -50,7 +52,6 @@ pub const Helper = struct {
         self.worker = search.Worker.init(base);
         self.worker.thread_index = index;
         self.worker.advance_generation = index == 0;
-        self.roots = try a.alloc(search.RootMove, t.max_moves);
         self.clear(null);
         if (index != 0) self.thread = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, loop, .{self});
         return self;
@@ -100,7 +101,7 @@ pub const Helper = struct {
         self.condition.broadcast(self.io);
         self.mutex.unlock(self.io);
         if (self.thread) |thread| thread.join();
-        self.arena.deinit();
+        self.storage.destroy(std.heap.page_allocator);
         allocator.destroy(self);
     }
     fn runJob(self: *Helper) !void {

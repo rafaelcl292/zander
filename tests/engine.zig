@@ -98,3 +98,28 @@ test "persistent engine retains state and replaces resources transactionally" {
         try std.testing.expectEqual(@as(usize, 0), engine.tablebases.?.cardinality);
     }
 }
+
+test "prepared searches reuse worker payload while the engine allocator is sealed" {
+    var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const engine = try z.engine.Engine.create(allocator.allocator(), std.testing.io, 1);
+    defer engine.destroy();
+    try engine.loadNetwork(@import("options").network_path);
+    const payload = engine.main_storage.storage;
+    for (0..2) |_| {
+        try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
+        const allocations = allocator.allocations;
+        const frees = allocator.deallocations;
+        allocator.fail_index = allocator.alloc_index;
+        allocator.resize_fail_index = allocator.resize_index;
+        const result = try engine.runSearch();
+        try std.testing.expect(result.nodes > 0);
+        try std.testing.expect(!allocator.has_induced_failure);
+        try std.testing.expectEqual(allocations, allocator.allocations);
+        try std.testing.expectEqual(frees, allocator.deallocations);
+        try std.testing.expectEqual(payload, engine.main_storage.storage);
+        try std.testing.expectEqual(&payload.base, engine.base);
+        try std.testing.expectEqual(&payload.accumulators, engine.accumulators);
+        allocator.fail_index = std.math.maxInt(usize);
+        allocator.resize_fail_index = std.math.maxInt(usize);
+    }
+}

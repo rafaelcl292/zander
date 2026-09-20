@@ -1,3 +1,4 @@
+pub const worker_memory = @import("worker_memory.zig");
 pub const syzygy_root = @import("syzygy/root.zig");
 pub const layout = @import("layout.zig");
 pub const syzygy = @import("syzygy/database.zig");
@@ -30,6 +31,7 @@ pub const nnue_features = @import("nnue/features.zig");
 pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
+    _ = worker_memory;
     _ = @import("nnue/transformer.zig");
     _ = nnue_accumulator;
     _ = @import("numa_windows.zig");
