@@ -97,7 +97,7 @@ const Session = struct {
                 "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n" ++
                 "option name Syzygy50MoveRule type check default true\n" ++
                 "option name SyzygyProbeLimit type spin default 7 min 0 max 7\n" ++
-                "option name NumaPolicy type combo default auto var auto var none var system\n" ++
+                "option name NumaPolicy type string default auto\n" ++
                 "option name PagePolicy type combo default auto var auto var small var transparent var huge2m var huge1g\n" ++
                 "option name Threads type spin default 1 min 1 max 256\n" ++
                 "option name Skill Level type spin default 20 min 0 max 20\n" ++
@@ -168,11 +168,16 @@ const Session = struct {
         } else if (std.ascii.eqlIgnoreCase(name, "SyzygyProbeLimit")) {
             self.engine.worker.tb_options.limit = try integer(usize, value, 0, 7);
         } else if (std.ascii.eqlIgnoreCase(name, "NumaPolicy")) {
-            const policy = std.meta.stringToEnum(@import("numa.zig").Policy, value) orelse return error.InvalidNumaPolicy;
+            const numa = @import("numa.zig");
+            const policy = std.meta.stringToEnum(numa.Policy, value) orelse numa.Policy.custom;
+            const topology = if (policy == .custom) try numa.Topology.fromString(value) else numa.Topology.discover(self.engine.io);
             const previous = self.engine.numa_policy;
+            const previous_topology = self.engine.topology;
             self.engine.numa_policy = policy;
+            self.engine.topology = topology;
             self.engine.resizeThreads(self.engine.helpers.len + 1) catch |err| {
                 self.engine.numa_policy = previous;
+                self.engine.topology = previous_topology;
                 return err;
             };
         } else if (std.ascii.eqlIgnoreCase(name, "PagePolicy")) {

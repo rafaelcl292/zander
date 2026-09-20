@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise UCI through real pipes, including concurrent control commands."""
 import argparse
+import os
 import queue
 import re
 import subprocess
@@ -89,6 +90,16 @@ def main():
             assert any(line.startswith(f"option name {option} ") for line in handshake), handshake
         client.send(f"setoption name EvalFile value {args.network}")
         client.send("setoption name Hash value 1")
+        if hasattr(os, "sched_getaffinity"):
+            cpus = sorted(os.sched_getaffinity(0))
+            domains = str(cpus[0]) + (":" + ",".join(str(cpu) for cpu in cpus[1:3]) if len(cpus) > 1 else "")
+            client.send(f"setoption name NumaPolicy value {domains}")
+            client.send("position startpos")
+            assert client.search("go depth 2")[-1].startswith("bestmove ")
+            client.send(f"setoption name NumaPolicy value {cpus[0]}:{cpus[0]}")
+            client.send("isready")
+            assert any("DuplicateCpu" in line for line in client.until("readyok"))
+            assert client.search("go depth 2")[-1].startswith("bestmove ")
         for policy in ("system", "none", "auto"):
             client.send(f"setoption name NumaPolicy value {policy}")
         for policy in ("small", "transparent", "huge2m", "auto"):

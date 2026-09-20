@@ -130,7 +130,7 @@ pub const Engine = struct {
         return std.Io.Clock.awake.now(self.io).toMilliseconds();
     }
     pub fn newGame(self: *Engine) void {
-        const main_guard = numa.Guard.bind(if (self.groups.len != 0 and self.groups[0].mask != null) &self.groups[0].mask.? else null) catch numa.Guard{};
+        const main_guard = numa.Guard.bind(if (self.groups.len != 0 and self.groups[self.worker_nodes[0]].mask != null) &self.groups[self.worker_nodes[0]].mask.? else null) catch numa.Guard{};
         defer main_guard.restore();
         h.fill(self.base.main_history, -5);
         h.fill(self.base.low_ply_history, 102);
@@ -175,11 +175,11 @@ pub const Engine = struct {
         var group_count: usize = 0;
         errdefer for (groups[0..group_count]) |group| group.destroy(self.allocator);
         for (groups, 0..) |*group, node| {
-            group.* = try Group.create(self.allocator, if (bind) self.topology.nodes[node].cpus else null, counts[node], self.network);
+            group.* = try Group.create(self.allocator, if (bind) self.topology.nodes[node].cpus else null, @max(1, counts[node]), self.network);
             group_count += 1;
         }
         const main_storage = block: {
-            const guard = try numa.Guard.bind(if (groups[0].mask) |*mask| mask else null);
+            const guard = try numa.Guard.bind(if (groups[assignment[0]].mask) |*mask| mask else null);
             defer guard.restore();
             break :block try Helper.create(self.allocator, self.io, 0, &self.shared, &self.table, &self.control);
         };
@@ -220,9 +220,9 @@ pub const Engine = struct {
         self.worker.skill_elo = previous_worker.skill_elo;
         self.worker.tablebases = self.tablebases;
         self.worker.tb_options = previous_worker.tb_options;
-        self.shared = groups[0].shared;
+        self.shared = groups[assignment[0]].shared;
         self.base.shared = &self.shared;
-        if (groups[0].network) |network| self.base.network = network;
+        if (groups[assignment[0]].network) |network| self.base.network = network;
         self.helpers = helpers;
         self.hash_region.deinit();
         self.hash_region = region;
@@ -345,7 +345,7 @@ pub const Engine = struct {
         if (self.network_path) |old_path| self.allocator.free(old_path);
         self.network = replacement;
         self.network_path = owned_path;
-        self.base.network = if (self.groups.len != 0) self.groups[0].network.? else replacement;
+        self.base.network = if (self.groups.len != 0) self.groups[self.worker_nodes[0]].network.? else replacement;
         self.newGame();
     }
     pub fn ensureNetwork(self: *Engine) !void {
@@ -389,7 +389,7 @@ pub const Engine = struct {
         }
     }
     pub fn runSearch(self: *Engine) !search.Worker.Result {
-        const guard = try numa.Guard.bind(if (self.groups.len != 0 and self.groups[0].mask != null) &self.groups[0].mask.? else null);
+        const guard = try numa.Guard.bind(if (self.groups.len != 0 and self.groups[self.worker_nodes[0]].mask != null) &self.groups[self.worker_nodes[0]].mask.? else null);
         defer guard.restore();
         if (self.helpers.len != 0) self.table.newSearch();
         for (self.helpers) |helper| helper.start(&self.position, self.search_limits, &self.worker);
