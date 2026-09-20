@@ -11,6 +11,42 @@ pub fn clipped(input: i32, comptime scale: u5) u8 {
 pub fn squared(input: i32, comptime scale: u5) u8 {
     return @intCast(@min(127, (@as(i64, input) * input) >> (2 * scale + 7)));
 }
+/// Reference saturating narrowing and high-half square, with canonical lane
+/// order. Saturation cannot change the final seven-bit clipped result.
+pub fn activatePair(input: *const [32]i32, output: *[64]u8, comptime scale: u5) void {
+    if (!@import("backend").simd) {
+        for (input, 0..) |value, i| {
+            output[i] = squared(value, scale);
+            output[32 + i] = clipped(value, scale);
+        }
+        return;
+    }
+    const cpu = @import("builtin").cpu;
+    const avx2 = comptime cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);
+    const lanes = if (avx2) 16 else 8;
+    const Wide = @Vector(lanes, i32);
+    const Words = @Vector(lanes, i16);
+    var offset: usize = 0;
+    while (offset < 32) : (offset += lanes) {
+        const values: Wide = input[offset..][0..lanes].*;
+        const words: Words = @intCast(@min(@max(values, @as(Wide, @splat(-32768))), @as(Wide, @splat(32767))));
+        const high: Words = if (cpu.arch == .x86_64) if (avx2)
+            asm ("vpmulhw %[input], %[input], %[result]"
+                : [result] "=x" (-> Words),
+                : [input] "x" (words),
+            )
+        else
+            asm ("pmulhw %[input], %[result]"
+                : [result] "=x" (-> Words),
+                : [input] "x" (words),
+                  [previous] "0" (words),
+            ) else @intCast((@as(Wide, words) * @as(Wide, words)) >> @splat(16));
+        output[offset..][0..lanes].* = @as(@Vector(lanes, u8), @intCast(@min(high >> @splat(2 * scale + 7 - 16), @as(Words, @splat(127)))));
+        const linear = @max(words, @as(Words, @splat(0))) >> @splat(scale);
+        output[32 + offset ..][0..lanes].* = @as(@Vector(lanes, u8), @intCast(@min(linear, @as(Words, @splat(127)))));
+    }
+}
+
 pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
     return struct {
         biases: [outputs]i32 align(64),
@@ -154,20 +190,14 @@ pub const Architecture = struct {
                 kernel(input, masks, @ptrCast(&self.sparse_weights), &self.fc0.biases, &buffer.fc0);
             } else self.fc0.propagate(input, &buffer.fc0);
         } else self.fc0.propagate(input, &buffer.fc0);
-        for (buffer.fc0, 0..) |value, i| {
-            buffer.concat[i] = squared(value, 7);
-            buffer.concat[32 + i] = clipped(value, 7);
-        }
+        activatePair(&buffer.fc0, buffer.concat[0..64], 7);
         if (use_sparse) {
             const dispatch = @import("dispatch.zig");
             if (dispatch.hiddenFunction(dispatch.selected())) |kernel| {
                 kernel(&buffer.concat, @ptrCast(&self.hidden_weights), &self.fc1.biases, &buffer.fc1);
             } else self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
         } else self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
-        for (buffer.fc1, 0..) |value, i| {
-            buffer.concat[64 + i] = squared(value, 6);
-            buffer.concat[96 + i] = clipped(value, 6);
-        }
+        activatePair(&buffer.fc1, buffer.concat[64..128], 6);
         if (use_sparse) {
             const dispatch = @import("dispatch.zig");
             if (dispatch.outputFunction(dispatch.selected())) |kernel| {
@@ -263,5 +293,33 @@ test "packed small layers match scalar at activation and weight boundaries" {
         last.propagateScalar(&input, &expected_last);
         final(&input, @ptrCast(&last.weights), &last.biases, &actual_last);
         try std.testing.expectEqualSlices(i32, &expected_last, &actual_last);
+    }
+}
+
+test "paired activations preserve scalar results across saturation boundaries" {
+    var input: [32]i32 = undefined;
+    var output: [64]u8 = undefined;
+    inline for (.{ @as(u5, 6), @as(u5, 7) }) |scale| {
+        // Exhaust the narrowing boundary and all unsaturated output transitions.
+        var start: i32 = -65536;
+        while (start < 65536) : (start += 32) {
+            for (&input, 0..) |*v, i| v.* = start + @as(i32, @intCast(i));
+            activatePair(&input, &output, scale);
+            for (input, 0..) |value, i| {
+                try std.testing.expectEqual(squared(value, scale), output[i]);
+                try std.testing.expectEqual(clipped(value, scale), output[32 + i]);
+            }
+        }
+        var rng = @import("../prng.zig").Prng.init(621);
+        for (0..128) |_| {
+            for (&input) |*v| v.* = @bitCast(@as(u32, @truncate(rng.next())));
+            input[0] = std.math.minInt(i32);
+            input[31] = std.math.maxInt(i32);
+            activatePair(&input, &output, scale);
+            for (input, 0..) |value, i| {
+                try std.testing.expectEqual(squared(value, scale), output[i]);
+                try std.testing.expectEqual(clipped(value, scale), output[32 + i]);
+            }
+        }
     }
 }
