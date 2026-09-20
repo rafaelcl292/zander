@@ -83,8 +83,8 @@ pub const FeatureTransformer = struct {
         while (offset < dimensions) : (offset += lanes * registers) {
             var tile: [registers]@Vector(lanes, i16) = undefined;
             inline for (0..registers) |i| tile[i] = from[offset + i * lanes ..][0..lanes].*;
-            self.applyTile(false, false, lanes, &tile, offset, removed);
-            self.applyTile(true, false, lanes, &tile, offset, added);
+            self.applyIncrementalPsq(false, lanes, &tile, offset, removed);
+            self.applyIncrementalPsq(true, lanes, &tile, offset, added);
             self.applyTile(false, true, lanes, &tile, offset, threats_removed);
             self.applyTile(true, true, lanes, &tile, offset, threats_added);
             inline for (0..registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
@@ -150,6 +150,13 @@ pub const FeatureTransformer = struct {
         for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
         for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
         to_psqt.* = psqt;
+    }
+    inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
+        // Upstream apply_psq_features<sign, true>: every incremental move
+        // removes and adds one or two piece-square features.
+        std.debug.assert(indices.len == 1 or indices.len == 2);
+        self.applyTile(add, false, lanes, tile, offset, indices[0..1]);
+        if (indices.len == 2) self.applyTile(add, false, lanes, tile, offset, indices[1..2]);
     }
     inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
         for (indices) |index| {
