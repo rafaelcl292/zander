@@ -43,6 +43,9 @@ pub fn build(b: *std.Build) void {
     movepick_cpp.addFileArg(b.path("vendor/stockfish/src/memory.cpp"));
     const search_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
     search_cpp.addFileArg(b.path("tests/search_reference.cpp"));
+    const quiescence_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-DNNUE_EMBEDDING_OFF", "-ffunction-sections", "-fdata-sections", "-pthread" });
+    quiescence_cpp.addFileArg(b.path("tests/quiescence_reference.cpp"));
+    for ([_][]const u8{ "uci", "memory", "misc", "thread", "ucioption", "movepick" }) |source| quiescence_cpp.addFileArg(b.path(b.fmt("vendor/stockfish/src/{s}.cpp", .{source})));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
@@ -59,6 +62,7 @@ pub fn build(b: *std.Build) void {
             history_cpp.addFileInput(input);
             movepick_cpp.addFileInput(input);
             search_cpp.addFileInput(input);
+            quiescence_cpp.addFileInput(input);
         }
     }
     reference_cpp.addArg("-Wl,--gc-sections");
@@ -95,6 +99,18 @@ pub fn build(b: *std.Build) void {
         network_mod.addOptions("options", options);
         const network_test = b.addTest(.{ .root_module = network_mod });
         b.step("network-test", "Compare real NNUE weights and incremental evaluation with Stockfish").dependOn(&b.addRunArtifact(network_test).step);
+        quiescence_cpp.addArgs(&.{ "-Wl,--gc-sections", "-o" });
+        const quiescence_exe = quiescence_cpp.addOutputFileArg("quiescence-reference");
+        const quiescence_run = std.Build.Step.Run.create(b, "generate quiescence reference");
+        quiescence_run.addFileArg(quiescence_exe);
+        quiescence_run.addFileArg(.{ .cwd_relative = path });
+        quiescence_run.addFileArg(b.path("tests/positions.txt"));
+        const quiescence_mod = b.createModule(.{ .root_source_file = b.path("tests/quiescence.zig"), .target = b.graph.host, .optimize = optimize });
+        quiescence_mod.addImport("zander", diff_mod.import_table.get("zander").?);
+        quiescence_mod.addOptions("options", options);
+        quiescence_mod.addAnonymousImport("reference", .{ .root_source_file = quiescence_run.captureStdOut(.{ .basename = "quiescence_reference.zig" }) });
+        const quiescence_test = b.addTest(.{ .root_module = quiescence_mod });
+        b.step("quiescence-test", "Compare quiescence scores, nodes, PVs and TT contents with Stockfish").dependOn(&b.addRunArtifact(quiescence_test).step);
     }
     history_cpp.addArg("-o");
     const history_exe = history_cpp.addOutputFileArg("history-reference");

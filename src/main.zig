@@ -9,7 +9,7 @@ const usage =
     \\
     \\The default position is the standard initial position.
     \\Evaluation uses internal units from the side-to-move perspective.
-    \\Search and UCI are not implemented yet.
+    \\Main search and UCI are not implemented yet.
     \\
 ;
 pub fn main(init: std.process.Init) void {
