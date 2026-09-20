@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
     tt_cpp.addFileArg(b.path("tests/tt_reference.cpp"));
     const nnue_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT" });
     nnue_cpp.addFileArg(b.path("tests/nnue_reference.cpp"));
+    const tablebase_path = b.option([]const u8, "tablebases", "Path to the small Syzygy regression tables");
     const network_path = b.option([]const u8, "network", "Path to the pinned NNUE weights for integration tests");
     const network_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-DNNUE_EMBEDDING_OFF", "-ffunction-sections", "-fdata-sections" });
     network_cpp.addFileArg(b.path("tests/network_reference.cpp"));
@@ -56,11 +57,13 @@ pub fn build(b: *std.Build) void {
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
+    var upstream_inputs: std.ArrayList(std.Build.LazyPath) = .empty;
     var walker = upstream.walk(b.allocator) catch @panic("Cannot walk Stockfish sources");
     defer walker.deinit();
     while (walker.next(b.graph.io) catch @panic("Cannot read Stockfish sources")) |entry| {
         if (entry.kind == .file) {
             const input = b.path(b.fmt("vendor/stockfish/src/{s}", .{entry.path}));
+            upstream_inputs.append(b.allocator, input) catch @panic("Out of memory");
             reference_cpp.addFileInput(input);
             tt_cpp.addFileInput(input);
             nnue_cpp.addFileInput(input);
@@ -103,6 +106,7 @@ pub fn build(b: *std.Build) void {
         network_mod.addAnonymousImport("reference", .{ .root_source_file = network_run.captureStdOut(.{ .basename = "network_reference.zig" }) });
         const options = b.addOptions();
         options.addOption([]const u8, "network_path", b.pathFromRoot(path));
+        options.addOption(?[]const u8, "tablebase_path", tablebase_path);
         network_mod.addOptions("options", options);
         const network_test = b.addTest(.{ .root_module = network_mod });
         b.step("network-test", "Compare real NNUE weights and incremental evaluation with Stockfish").dependOn(&b.addRunArtifact(network_test).step);
@@ -114,6 +118,7 @@ pub fn build(b: *std.Build) void {
         uci_run.addFileArg(b.path("tests/uci.py"));
         uci_run.addArtifactArg(exe);
         uci_run.addFileArg(.{ .cwd_relative = path });
+        if (tablebase_path) |tb_path| uci_run.addArgs(&.{ "--tablebases", tb_path });
         b.step("uci-test", "Exercise UCI through real pipes").dependOn(&uci_run.step);
         const engine_test = b.addTest(.{ .root_module = engine_mod });
         b.step("engine-test", "Check persistent engine state and resource replacement").dependOn(&b.addRunArtifact(engine_test).step);
@@ -131,11 +136,12 @@ pub fn build(b: *std.Build) void {
         b.step("search-test", "Compare single-worker search and histories with Stockfish").dependOn(&worker_test_run.step);
         b.step("quiescence-test", "Alias for search-test").dependOn(&worker_test_run.step);
     }
-    if (b.option([]const u8, "tablebases", "Path to the small Syzygy regression tables")) |path| {
+    if (tablebase_path) |path| {
         const positions = b.addSystemCommand(&.{"python3"});
         positions.addFileArg(b.path("tests/syzygy_positions.py"));
         positions.addFileInput(b.path("tests/syzygy_manifest.json"));
         const cpp_tb = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections", "-pthread" });
+        for (upstream_inputs.items) |input| cpp_tb.addFileInput(input);
         cpp_tb.addFileArg(b.path("tests/syzygy_reference.cpp"));
         cpp_tb.addFileArg(b.path("vendor/stockfish/src/syzygy/tbprobe.cpp"));
         cpp_tb.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
@@ -146,6 +152,12 @@ pub fn build(b: *std.Build) void {
         const reference = std.Build.Step.Run.create(b, "generate Syzygy reference");
         reference.addFileArg(oracle);
         reference.addArg(path);
+        var tablebase_dir = std.Io.Dir.cwd().openDir(b.graph.io, path, .{ .iterate = true }) catch @panic("Fetch the Syzygy regression tables first");
+        defer tablebase_dir.close(b.graph.io);
+        var tablebase_files = tablebase_dir.iterate();
+        while (tablebase_files.next(b.graph.io) catch @panic("Cannot enumerate Syzygy regression files")) |file| {
+            if (file.kind == .file) reference.addFileInput(.{ .cwd_relative = std.fs.path.join(b.allocator, &.{ path, file.name }) catch @panic("Out of memory") });
+        }
         reference.addFileArg(positions.captureStdOut(.{ .basename = "syzygy-positions.txt" }));
         const tb_options = b.addOptions();
         tb_options.addOption([]const u8, "tablebase_path", path);

@@ -8,6 +8,7 @@ const mp = @import("movepick.zig");
 const movegen = @import("movegen.zig");
 const h = @import("history.zig");
 const tt = @import("tt.zig");
+const tb = @import("syzygy/root.zig");
 const QWorker = @import("quiescence.zig").Worker;
 fn b(value: bool) i32 {
     return @intFromBool(value);
@@ -46,6 +47,10 @@ pub const RootMove = @import("root_move.zig").RootMove;
 const NodeType = enum { root, pv, non_pv };
 pub const Worker = struct {
     base: *QWorker,
+    tablebases: ?*const @import("syzygy/database.zig").Database = null,
+    tb_options: tb.Options = .{},
+    tb_config: tb.Config = .{},
+    tb_hits: std.atomic.Value(u64) = .init(0),
     thread_index: usize = 0,
     advance_generation: bool = true,
     published_changes: std.atomic.Value(usize) = .init(0),
@@ -112,6 +117,8 @@ pub const Worker = struct {
         if (storage.len < count) return error.InsufficientRootStorage;
         self.root_moves = storage[0..count];
         for (selected[0..count], self.root_moves) |move, *rm| rm.* = RootMove.init(move);
+        self.tb_hits.store(0, .monotonic);
+        self.tb_config = if (self.tablebases) |database| tb.rank(database, pos, self.root_moves, self.tb_options, tb.Abort.fromControl(self.base.control), false) else .{};
         self.root_depth = 0;
         self.completed_depth = 0;
         self.nmp_min_ply = 0;
@@ -344,6 +351,7 @@ pub const Worker = struct {
         const us = @intFromEnum(pos.side);
         ss.move_count = 0;
         var best_value: i32 = -t.value_infinite;
+        var max_value: i32 = t.value_infinite;
         ss.follow_pv = root_node or (prev.follow_pv and ss.ply > 0 and @as(usize, @intCast(ss.ply - 1)) < self.last_iteration_pv.len and prev.current_move.data == self.last_iteration_pv.moves[@intCast(ss.ply - 1)].data);
         if (pv_node and w.sel_depth < ss.ply + 1) w.sel_depth = ss.ply + 1;
         if (!root_node) {
@@ -406,6 +414,32 @@ pub const Worker = struct {
                     } else return data.value;
                 }
             } else if (data.bound != .exact and bound(data.bound, data.value < beta) and depth > 5) probe.writer.penalize(1);
+        }
+        if (!root_node and excluded.data == 0 and self.tb_config.cardinality != 0) {
+            const pieces = @popCount(pos.pieces());
+            if (pieces <= self.tb_config.cardinality and (pieces < self.tb_config.cardinality or depth >= self.tb_config.depth) and pos.st.rule50 == 0 and pos.st.castling_rights == 0) {
+                const outcome = self.tablebases.?.wdl(pos) catch null;
+                if (self.thread_index == 0) {
+                    if (w.control) |control| control.calls = 0;
+                }
+                if (outcome) |result| {
+                    _ = self.tb_hits.fetchAdd(1, .monotonic);
+                    const draw_score: i32 = @intFromBool(self.tb_config.rule50);
+                    const tb_value = s.value_tb - ss.ply;
+                    const value = if (result.value < -draw_score) -tb_value else if (result.value > draw_score) tb_value else 2 * result.value * draw_score;
+                    const result_bound: tt.Bound = if (result.value < -draw_score) .upper else if (result.value > draw_score) .lower else .exact;
+                    if (result_bound == .exact or (if (result_bound == .lower) value >= beta else value <= alpha)) {
+                        w.save(probe.writer, key, s.valueToTT(value, ss.ply), ss.tt_pv, result_bound, @min(t.max_ply - 1, depth + 6), .none, t.value_none);
+                        return value;
+                    }
+                    if (pv_node) {
+                        if (result_bound == .lower) {
+                            best_value = value;
+                            alpha = @max(alpha, value);
+                        } else max_value = value;
+                    }
+                }
+            }
         }
         if (!ss.in_check) {
             if (prev.current_move.valid() and !prev.in_check and !prior_capture) {
@@ -615,6 +649,7 @@ pub const Worker = struct {
             w.main_history[us ^ 1][prev.current_move.data].update(div(bonus * 215, 32768));
             if (pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)].update(div(bonus * 324, 8192));
         } else if (prior_capture and prev_sq != .none) w.capture_history[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)][@intFromEnum(pos.st.captured_piece.pieceType())].update(892);
+        if (pv_node) best_value = @min(best_value, max_value);
         if (best_value <= alpha) ss.tt_pv = ss.tt_pv or prev.tt_pv;
         if (excluded.data == 0 and !(root_node and self.pv_idx != 0)) w.save(probe.writer, key, s.valueToTT(best_value, ss.ply), ss.tt_pv, if (best_value >= beta) .lower else if (pv_node and best_move.data != 0) .exact else .upper, if (move_count != 0) depth else @min(t.max_ply - 1, depth + 6), best_move, unadjusted);
         if (!ss.in_check and !(best_move.data != 0 and pos.capture(best_move)) and (best_value > ss.static_eval) == (best_move.data != 0)) histories.updateCorrection(pos, frame, div(1061 * std.math.clamp(div((best_value - ss.static_eval) * depth * @as(i32, if (best_move.data != 0) 12 else 18), 128), -256, 256), 1024));

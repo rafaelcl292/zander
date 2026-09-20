@@ -128,6 +128,7 @@ def main():
     parser.add_argument("candidate")
     parser.add_argument("reference", help="Pinned Stockfish executable, also used as legality referee")
     parser.add_argument("--network", required=True)
+    parser.add_argument("--tablebases", help="Optional Syzygy path for both engines")
     parser.add_argument("--positions", default="tests/benchmark_positions.txt")
     parser.add_argument("--depth", type=int, default=6)
     parser.add_argument("--repeats", type=int, default=3)
@@ -155,6 +156,9 @@ def main():
     try:
         for path in (args.candidate, args.reference):
             clients.append(Engine(path, args.network, args.threads, args.hash))
+            if args.tablebases:
+                clients[-1].send(f"setoption name SyzygyPath value {pathlib.Path(args.tablebases).resolve()}")
+                clients[-1].ready()
         for chess960, fen in positions:
             samples = [[], []]
             # Alternate execution order to reduce systematic thermal/order bias.

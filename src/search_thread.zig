@@ -79,6 +79,8 @@ pub const Helper = struct {
         self.limits = limits;
         // Only the main worker is bounded by UCI depth; helpers deepen until stop.
         self.limits.depth = t.max_ply - 1;
+        self.worker.tablebases = main.tablebases;
+        self.worker.tb_options = main.tb_options;
         self.worker.skill_level = main.skill_level;
         self.worker.skill_elo = main.skill_elo;
         self.failure = null;

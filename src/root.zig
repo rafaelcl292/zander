@@ -1,3 +1,4 @@
+pub const syzygy_root = @import("syzygy/root.zig");
 pub const syzygy = @import("syzygy/database.zig");
 pub const numa = @import("numa.zig");
 pub const memory = @import("memory.zig");

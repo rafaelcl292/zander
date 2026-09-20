@@ -16,6 +16,7 @@ pub const RootMove = struct {
     previous_score_exact: bool = false,
     sel_depth: i32 = 0,
     tb_rank: i32 = 0,
+    tb_score: i32 = 0,
     pv: s.PV = .{},
     previous_pv: s.PV = .{},
 

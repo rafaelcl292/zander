@@ -93,6 +93,10 @@ const Session = struct {
         if (std.mem.eql(u8, cmd, "uci")) {
             try self.text("id name Zander\nid author Zander contributors\n" ++
                 "option name Hash type spin default 16 min 1 max 4096\n" ++
+                "option name SyzygyPath type string default <empty>\n" ++
+                "option name SyzygyProbeDepth type spin default 1 min 1 max 100\n" ++
+                "option name Syzygy50MoveRule type check default true\n" ++
+                "option name SyzygyProbeLimit type spin default 7 min 0 max 7\n" ++
                 "option name NumaPolicy type combo default auto var auto var none var system\n" ++
                 "option name PagePolicy type combo default auto var auto var small var transparent var huge2m var huge1g\n" ++
                 "option name Threads type spin default 1 min 1 max 256\n" ++
@@ -154,7 +158,16 @@ const Session = struct {
         defer self.engine.allocator.free(name);
         const value = try std.mem.join(self.engine.allocator, " ", args[if (split < args.len) split + 1 else split..]);
         defer self.engine.allocator.free(value);
-        if (std.ascii.eqlIgnoreCase(name, "NumaPolicy")) {
+        if (std.ascii.eqlIgnoreCase(name, "SyzygyPath")) {
+            try self.engine.loadTablebases(value);
+        } else if (std.ascii.eqlIgnoreCase(name, "SyzygyProbeDepth")) {
+            self.engine.worker.tb_options.depth = try integer(i32, value, 1, 100);
+        } else if (std.ascii.eqlIgnoreCase(name, "Syzygy50MoveRule")) {
+            self.engine.worker.tb_options.rule50 = try boolean(value);
+            self.engine.newGame();
+        } else if (std.ascii.eqlIgnoreCase(name, "SyzygyProbeLimit")) {
+            self.engine.worker.tb_options.limit = try integer(usize, value, 0, 7);
+        } else if (std.ascii.eqlIgnoreCase(name, "NumaPolicy")) {
             const policy = std.meta.stringToEnum(@import("numa.zig").Policy, value) orelse return error.InvalidNumaPolicy;
             const previous = self.engine.numa_policy;
             self.engine.numa_policy = policy;
@@ -289,17 +302,25 @@ const Session = struct {
             if (worker.root_depth <= 1 and previous and index > 1) continue;
             var value = if (previous) root.previous_score else root.uci_score;
             if (value == -t.value_infinite) value = 0;
+            const tb_score = worker.tb_config.root_in_tb and @abs(value) < @import("search_support.zig").mate_in_max_ply;
+            if (tb_score) value = root.tb_score;
+            const support = @import("search_support.zig");
+            if (@abs(value) >= support.tb_win_in_max_ply and @abs(value) < support.mate_in_max_ply and !previous and (!root.isInexact() or tb_score)) {
+                if (worker.tablebases) |database| {
+                    if (@import("syzygy/pv.zig").extend(database, worker.tb_options, &self.engine.control, &self.engine.position, root, &value, @min(self.multi_pv, worker.root_moves.len), self.move_overhead)) try self.writer.writeAll("info string Syzygy PV extension reached its time or storage limit\n");
+                }
+            }
             const depth = if (previous) @max(1, worker.root_depth - 1) else worker.root_depth;
             try self.writer.print("info depth {d} seldepth {d} multipv {d} score ", .{ depth, root.sel_depth, index });
             try notation.writeScore(self.writer, value, &self.engine.position);
-            if (!previous) {
+            if (!previous and !tb_score) {
                 if (root.inexact_lower) try self.writer.writeAll(" lowerbound") else if (root.inexact_upper) try self.writer.writeAll(" upperbound");
             }
             if (self.show_wdl) {
                 const wdl = notation.wdl(value, &self.engine.position);
                 try self.writer.print(" wdl {d} {d} {d}", .{ wdl[0], wdl[1], wdl[2] });
             }
-            try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits 0 time {d} pv", .{ self.engine.totalNodes(), self.engine.totalNodes() * 1000 / elapsed, self.engine.table.hashfull(0), elapsed });
+            try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits {d} time {d} pv", .{ self.engine.totalNodes(), self.engine.totalNodes() * 1000 / elapsed, self.engine.table.hashfull(0), self.engine.tablebaseHits(), elapsed });
             const pv = if (previous) &root.previous_pv else &root.pv;
             for (pv.slice()) |move| {
                 var buffer: [6]u8 = undefined;

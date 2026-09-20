@@ -77,4 +77,21 @@ test "persistent engine retains state and replaces resources transactionally" {
     try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
     const single = try engine.runSearch();
     try std.testing.expectEqual(@as(u64, 1475), single.nodes);
+    if (@import("options").tablebase_path) |path| {
+        try engine.loadTablebases(path);
+        const database = engine.tablebases.?;
+        try engine.setPosition("8/8/8/7Q/8/4K3/8/4k3 w - - 0 1", false, &.{});
+        try engine.prepareSearch(.{ .depth = 4 }, .{}, 10, false);
+        _ = try engine.runSearch();
+        try std.testing.expect(engine.worker.tb_config.root_in_tb);
+        try std.testing.expect(engine.tablebaseHits() > 0);
+        engine.loadTablebases("tests/positions.txt") catch {};
+        try std.testing.expectEqual(database, engine.tablebases.?);
+        try engine.resizeThreads(2);
+        try engine.prepareSearch(.{ .depth = 4 }, .{}, 10, false);
+        _ = try engine.runSearch();
+        try std.testing.expect(engine.worker.tb_config.root_in_tb);
+        try engine.loadTablebases("");
+        try std.testing.expectEqual(@as(usize, 0), engine.tablebases.?.cardinality);
+    }
 }

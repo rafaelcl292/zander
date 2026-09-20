@@ -29,6 +29,7 @@ pub const Engine = struct {
     tables: *@import("attacks.zig").Tables,
     keys: *@import("position_keys.zig").PositionKeys,
     network: ?*nn.Network = null,
+    tablebases: ?*@import("syzygy/database.zig").Database,
     network_path: ?[]u8 = null,
     accumulators: *acc.Stack,
     caches: *acc.Caches,
@@ -89,6 +90,7 @@ pub const Engine = struct {
         errdefer allocator.free(self.states);
         try self.position.set(p.start_fen, false, &self.states[0], self.tables, self.keys);
         self.network = null;
+        self.tablebases = null;
         self.network_path = null;
         self.control = .{ .context = self, .clock = clock };
         self.search_limits = .{ .depth = t.max_ply - 1 };
@@ -115,6 +117,7 @@ pub const Engine = struct {
         for (self.groups) |group| group.destroy(allocator);
         allocator.free(self.groups);
         self.shared_arena.deinit();
+        if (self.tablebases) |database| database.destroy();
         if (self.network) |network| allocator.destroy(network);
         if (self.network_path) |path| allocator.free(path);
         allocator.free(self.states);
@@ -215,6 +218,8 @@ pub const Engine = struct {
         self.worker.skill_rng = previous_worker.skill_rng;
         self.worker.skill_level = previous_worker.skill_level;
         self.worker.skill_elo = previous_worker.skill_elo;
+        self.worker.tablebases = self.tablebases;
+        self.worker.tb_options = previous_worker.tb_options;
         self.shared = groups[0].shared;
         self.base.shared = &self.shared;
         if (groups[0].network) |network| self.base.network = network;
@@ -311,6 +316,19 @@ pub const Engine = struct {
         self.hash_mb = mb;
         self.clearHash();
     }
+    pub fn loadTablebases(self: *Engine, path: []const u8) !void {
+        const replacement = try @import("syzygy/database.zig").Database.create(self.allocator, self.io, path, self.keys);
+        if (self.tablebases) |previous| previous.destroy();
+        self.tablebases = replacement;
+        self.worker.tablebases = replacement;
+        self.newGame();
+    }
+    pub fn tablebaseHits(self: *Engine) u64 {
+        var hits = self.worker.tb_hits.load(.monotonic);
+        for (self.helpers) |helper| hits += helper.worker.tb_hits.load(.monotonic);
+        if (self.worker.tb_config.root_in_tb) hits += self.worker.root_moves.len;
+        return hits;
+    }
     pub fn loadNetwork(self: *Engine, path: []const u8) !void {
         const replacement = try self.allocator.create(nn.Network);
         errdefer self.allocator.destroy(replacement);
@@ -362,9 +380,11 @@ pub const Engine = struct {
         self.control.reset(adjusted_limits, budget);
         self.base.published_nodes.store(0, .monotonic);
         self.worker.published_changes.store(0, .monotonic);
+        self.worker.tb_hits.store(0, .monotonic);
         for (self.helpers) |helper| {
             helper.base.published_nodes.store(0, .monotonic);
             helper.worker.published_changes.store(0, .monotonic);
+            helper.worker.tb_hits.store(0, .monotonic);
         }
     }
     pub fn runSearch(self: *Engine) !search.Worker.Result {
@@ -390,6 +410,7 @@ pub const Engine = struct {
             if (best != &self.worker) {
                 @memcpy(self.roots[0..best.root_moves.len], best.root_moves);
                 self.worker.completed_depth = best.completed_depth;
+                self.worker.tb_config = best.tb_config;
                 self.worker.previous_score = best.root_moves[0].score;
                 self.worker.previous_average = best.root_moves[0].average_score;
                 result.best_move = best.root_moves[0].pv.moves[0];

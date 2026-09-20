@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("executable")
     parser.add_argument("network")
+    parser.add_argument("--tablebases")
     args = parser.parse_args()
     client = Client(args.executable)
     try:
@@ -215,6 +216,34 @@ def main():
         client.send("setoption name MultiPV value 3")
         lines = client.search("go depth 4")
         assert any("nodes 1475 " in line for line in lines), lines
+        if args.tablebases:
+            client.send(f"setoption name SyzygyPath value {args.tablebases}")
+            client.send("setoption name MultiPV value 1")
+            fen = "8/8/8/7Q/8/4K3/8/4k3 w - - 0 1"
+            client.send("position fen " + fen)
+            lines = client.search("go depth 4")
+            assert any(re.search(r"tbhits [1-9]", line) for line in lines), lines
+            pv = [line.split(" pv ")[1] for line in lines if " pv " in line][-1]
+            client.send("position fen " + fen + " moves " + pv)
+            assert client.search("go depth 1")[-1] == "bestmove 0000"
+            client.send("position fen " + fen)
+            client.send("setoption name Threads value 2")
+            client.search("go depth 4")
+            client.send("setoption name Syzygy50MoveRule value false")
+            client.search("go depth 4")
+            client.send("setoption name SyzygyProbeLimit value 0")
+            client.send("ucinewgame")
+            lines = client.search("go depth 2")
+            assert not any(re.search(r"tbhits [1-9]", line) for line in lines), lines
+            client.send("setoption name SyzygyProbeLimit value 7")
+            client.send("setoption name SyzygyProbeDepth value 100")
+            client.send("setoption name SyzygyPath value tests/positions.txt")
+            client.until("info string error")
+            lines = client.search("go depth 2")
+            assert any(re.search(r"tbhits [1-9]", line) for line in lines), lines
+            client.send("setoption name SyzygyPath value <empty>")
+            client.search("go depth 2")
+            client.send("position startpos")
         client.send("x" * 70000)
         client.until("info string error")
         client.send("isready")
