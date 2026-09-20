@@ -9,7 +9,10 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 header = (ROOT / "vendor/stockfish/src/evaluate.h").read_text()
-name = re.search(r'#define EvalFileDefaultName "(nn-[0-9a-f]{12}\.nnue)"', header).group(1)
+match = re.search(r'#define EvalFileDefaultName "(nn-[0-9a-f]{12}\.nnue)"', header)
+if match is None:
+    raise ValueError("Could not find the default network name in the pinned Stockfish header")
+name = match.group(1)
 expected = name[3:15]
 destination = ROOT / "networks" / name
 destination.parent.mkdir(exist_ok=True)
