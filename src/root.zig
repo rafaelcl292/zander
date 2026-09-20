@@ -31,6 +31,7 @@ pub const nnue_layers = @import("nnue/layers.zig");
 pub const nnue_reader = @import("nnue/reader.zig");
 test {
     _ = @import("nnue/transformer.zig");
+    _ = nnue_accumulator;
     _ = @import("numa_windows.zig");
     _ = @import("nnue/dispatch.zig");
     _ = @import("nnue/writer.zig");

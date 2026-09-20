@@ -115,11 +115,24 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT
     }
     target.computed[side] = true;
 }
-fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, c: t.Color, king: t.Square, removed: *f.SmallList, added: *f.SmallList) void {
+fn changedPieces(old: *const [64]t.Piece, new: *const [64]t.Piece) u64 {
     var bits: u64 = 0;
-    for (&entry.pieces, pieces, 0..) |old, new, i| if (old != new) {
+    if (@import("backend").simd) {
+        inline for (.{ 0, 32 }) |offset| {
+            const a: @Vector(32, u8) = std.mem.asBytes(old)[offset..][0..32].*;
+            const b: @Vector(32, u8) = std.mem.asBytes(new)[offset..][0..32].*;
+            const mask: u32 = @bitCast(a != b);
+            bits |= @as(u64, mask) << offset;
+        }
+        return bits;
+    }
+    for (old, new, 0..) |a, b, i| if (a != b) {
         bits |= @as(u64, 1) << @as(u6, @intCast(i));
     };
+    return bits;
+}
+fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, c: t.Color, king: t.Square, removed: *f.SmallList, added: *f.SmallList) void {
+    const bits = changedPieces(&entry.pieces, pieces);
     var r = bits & entry.piece_bb;
     while (r != 0) {
         const sq = bb.popLsb(&r);
@@ -196,4 +209,17 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     new_entry.pieces = pos.board;
     new_entry.piece_bb = pos.pieces();
     target.computed[side] = true;
+}
+
+test "cache piece comparison preserves square bits across vector halves" {
+    var old: [64]t.Piece = @splat(.none);
+    var new = old;
+    try std.testing.expectEqual(@as(u64, 0), changedPieces(&old, &new));
+    for (0..64) |square| {
+        new[square] = t.Piece.make(.white, .pawn);
+        try std.testing.expectEqual(@as(u64, 1) << @as(u6, @intCast(square)), changedPieces(&old, &new));
+        old = new;
+    }
+    new = @splat(t.Piece.make(.black, .queen));
+    try std.testing.expectEqual(std.math.maxInt(u64), changedPieces(&old, &new));
 }
