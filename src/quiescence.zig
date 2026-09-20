@@ -30,6 +30,10 @@ pub const Worker = struct {
     /// Start a fresh diagnostic root. TT and history contents are retained;
     /// the owner decides when to clear them or advance the TT generation.
     pub fn run(self: *Worker, comptime pv_node: bool, pos: *p.Position, pv: *s.PV, alpha: i32, beta: i32) i32 {
+        self.prepare(pv);
+        return self.search(pv_node, pos, 7, alpha, beta);
+    }
+    pub fn prepare(self: *Worker, pv: *s.PV) void {
         self.nodes = 0;
         self.sel_depth = 0;
         self.accumulators.reset();
@@ -42,7 +46,6 @@ pub const Worker = struct {
         for (self.frames[7..], 0..) |*frame, ply| frame.ply = @intCast(ply);
         pv.clear();
         self.frames[7].pv = pv;
-        return self.search(pv_node, pos, 7, alpha, beta);
     }
     /// Frames must already have their in-check flag and sentinel histories set.
     pub fn doMove(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, frame: ?usize) void {
@@ -71,7 +74,7 @@ pub const Worker = struct {
     pub fn undoNullMove(_: *Worker, pos: *p.Position) void {
         pos.undoNullMove();
     }
-    fn evaluate(self: *Worker, pos: *const p.Position) i32 {
+    pub fn evaluate(self: *Worker, pos: *const p.Position) i32 {
         return self.network.evaluateAdjusted(pos, self.accumulators, self.caches, self.optimism[@intFromEnum(pos.side)]);
     }
     pub fn histories(self: *Worker) @import("search_history.zig").State {
@@ -83,10 +86,10 @@ pub const Worker = struct {
     fn hasBound(bound: tt.Bound, lower: bool) bool {
         return @intFromEnum(bound) & @intFromEnum(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
     }
-    fn save(self: *Worker, writer: *tt.Entry, key: u64, value: i32, is_pv: bool, bound: tt.Bound, depth: i32, move: t.Move, eval: i32) void {
+    pub fn save(self: *Worker, writer: *tt.Entry, key: u64, value: i32, is_pv: bool, bound: tt.Bound, depth: i32, move: t.Move, eval: i32) void {
         writer.save(key, .{ .move = move, .value = value, .eval = eval, .depth = depth, .bound = bound, .is_pv = is_pv }, self.table.generation);
     }
-    fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, beta: i32) i32 {
+    pub fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, beta: i32) i32 {
         std.debug.assert(initial_alpha >= -t.value_infinite and initial_alpha < beta and beta <= t.value_infinite);
         std.debug.assert(pv_node or initial_alpha == beta - 1);
         const ss = &self.frames[frame];

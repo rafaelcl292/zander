@@ -1,6 +1,6 @@
 const std = @import("std");
 const z = @import("zander");
-test "quiescence scores, nodes, PV and TT writes match pinned Stockfish" {
+test "single-worker search, histories and node state match pinned Stockfish" {
     const allocator = std.testing.allocator;
     const bytes = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, @import("options").network_path, allocator, .limited(200 * 1024 * 1024));
     defer allocator.free(bytes);
@@ -149,6 +149,49 @@ test "quiescence scores, nodes, PV and TT writes match pinned Stockfish" {
         try std.testing.expectEqual(case.continuation, actual_cont);
         try std.testing.expectEqual(case.correction, actual_corr);
         if (is_null) worker.undoNullMove(&pos) else worker.undoMove(&pos, move);
+        try std.testing.expectEqual(key, pos.key());
+        try std.testing.expect(pos.st == &state);
+        try std.testing.expectEqual(@as(usize, 1), accumulators.size);
+    }
+    var search = z.search.Worker.init(worker);
+    for (@import("reference").main_cases, 0..) |case, case_index| {
+        errdefer std.debug.print("Main search case {d}, root {d}, depth {d}, mode {d}, warm {any}\n", .{ case_index, case.root, case.depth, case.mode, case.warm });
+        var pos: z.position.Position = undefined;
+        var state: z.position.StateInfo = undefined;
+        try pos.set(lines[case.root][2..], lines[case.root][0] == '1', &state, tables, keys);
+        const key = pos.key();
+        if (!case.warm) {
+            z.history.fill(main, -5);
+            z.history.fill(low, 102);
+            z.history.fill(capture, -742);
+            z.history.fill(continuation_correction, 5);
+            shared.clearRange(0, 1);
+            search.tt_move_history.set(0);
+            caches.clear(&network.transformer);
+            table.clear();
+            table.newSearch();
+        }
+        var pv: z.search_support.PV = .{};
+        const score = if (case.mode == 0) search.run(true, &pos, &pv, -32001, 32001, case.depth, false) else search.run(false, &pos, &pv, 99, 100, case.depth, case.mode == 1);
+        try std.testing.expectEqual(case.score, score);
+        try std.testing.expectEqual(case.nodes, worker.nodes);
+        try std.testing.expectEqual(case.sel_depth, worker.sel_depth);
+        try std.testing.expectEqual(case.tt_history, search.tt_move_history.get());
+        if (case.history_hashes[0] != 0) {
+            const chunks = [_][]const u8{ std.mem.asBytes(main), std.mem.asBytes(low), std.mem.asBytes(capture), std.mem.asBytes(continuation), std.mem.asBytes(continuation_correction), std.mem.sliceAsBytes(correction), std.mem.asBytes(shared.pawnEntry(&pos)) };
+            for (chunks, case.history_hashes, 0..) |chunk, expected, part| {
+                errdefer std.debug.print("Main search history component {d}\n", .{part});
+                var history_checksum: u64 = 14695981039346656037;
+                for (chunk) |byte| history_checksum = (history_checksum ^ byte) *% 1099511628211;
+                try std.testing.expectEqual(expected, history_checksum);
+            }
+        }
+
+        try std.testing.expectEqual(case.pv.len, pv.len);
+        for (case.pv, pv.slice()) |expected, move| try std.testing.expectEqual(expected, move.data);
+        var checksum: u64 = 14695981039346656037;
+        for (std.mem.sliceAsBytes(clusters)) |byte| checksum = (checksum ^ byte) *% 1099511628211;
+        try std.testing.expectEqual(case.tt_checksum, checksum);
         try std.testing.expectEqual(key, pos.key());
         try std.testing.expect(pos.st == &state);
         try std.testing.expectEqual(@as(usize, 1), accumulators.size);

@@ -167,4 +167,44 @@ int main(int argc, char** argv) {
     }
     std::puts("};");
 
+    std::puts("pub const MainCase = struct { root: usize, depth: i32, mode: usize, warm: bool, score: i32, nodes: u64, sel_depth: i32, tt_checksum: u64, tt_history: i16, history_hashes: [7]u64 = .{0,0,0,0,0,0,0}, pv: []const u16 };\npub const main_cases = [_]MainCase{");
+    inputs.clear(); inputs.seekg(0); root=0;
+    worker->threadIdx=1; threads.stop=false;
+    while(std::getline(inputs,line)) {
+        size_t index=root++; Position pos; StateInfo st;
+        if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
+        for(int depth : {1,2,4,6,8,10}) for(int mode=0;mode<3;++mode) {
+            worker->clear(); worker->lowPlyHistory.fill(102);
+            std::memset(tt.table,0,tt.clusterCount*sizeof(Cluster)); tt.generation8=0; tt.new_search();
+            for(bool warm : {false,true}) {
+                worker->nodes=0; worker->selDepth=0; worker->nmpMinPly=0; worker->rootDepth=depth;
+                worker->rootDelta=mode==0?64002:1; worker->lastIterationIdxPV.clear();
+                worker->accumulatorStack.reset();
+                Search::Stack frames[MAX_PLY+10]{}; auto ss=frames+7;
+                for(int i=1;i<=7;++i) {
+                    (ss-i)->continuationHistory=&worker->continuationHistory[0][0][NO_PIECE][0];
+                    (ss-i)->continuationCorrectionHistory=&worker->continuationCorrectionHistory[NO_PIECE][0];
+                    (ss-i)->staticEval=VALUE_NONE;
+                }
+                for(int i=0;i<=MAX_PLY+2;++i) (ss+i)->ply=i;
+                Search::PVMoves pv; ss->pv=&pv;
+                const int score=mode==0?worker->search<PV>(pos,ss,-32001,32001,depth,false):worker->search<NonPV>(pos,ss,99,100,depth,mode==1);
+                std::printf(".{ .root=%zu,.depth=%d,.mode=%d,.warm=%s,.score=%d,.nodes=%llu,.sel_depth=%d,.tt_checksum=%llu,.tt_history=%d,.pv=&.{",index,depth,mode,warm?"true":"false",score,(unsigned long long)uint64_t(worker->nodes),worker->selDepth,(unsigned long long)hashBytes(tt.table,tt.clusterCount*sizeof(Cluster)),int(worker->ttMoveHistory));
+                for(Move move:pv) std::printf("%u,",unsigned(move.raw()));
+                std::printf("}");
+                if(depth==10 && mode==0 && (index==0 || index==2 || index==6)) {
+                    std::printf(",.history_hashes=.{");
+                    const auto emit=[&](const auto& obj) { std::printf("%llu,",(unsigned long long)hashBytes(&obj,sizeof(obj))); };
+                    emit(worker->mainHistory); emit(worker->lowPlyHistory); emit(worker->captureHistory);
+                    emit(worker->continuationHistory); emit(worker->continuationCorrectionHistory);
+                    std::printf("%llu,",(unsigned long long)hashBytes(&worker->sharedHistory.correctionHistory[0],worker->sharedHistory.correctionHistory.get_size()*sizeof(worker->sharedHistory.correctionHistory[0])));
+                    emit(worker->sharedHistory.pawn_entry(pos));
+                    std::printf("}");
+                }
+                std::puts(" },");
+            }
+        }
+    }
+    std::puts("};");
+
 }
