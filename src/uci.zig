@@ -16,6 +16,8 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, network_path: ?[]const u8) 
     defer session.stopAndJoin();
     engine.worker.progress_context = &session;
     engine.worker.on_progress = Session.progress;
+    engine.wait_context = &session;
+    engine.on_wait = Session.waitForFinish;
     var input_buffer: [65536]u8 = undefined;
     var input = std.Io.File.stdin().readerStreaming(io, &input_buffer);
     var tokens: [16384][]const u8 = undefined;
@@ -91,7 +93,7 @@ const Session = struct {
         if (std.mem.eql(u8, cmd, "uci")) {
             try self.text("id name Zander\nid author Zander contributors\n" ++
                 "option name Hash type spin default 16 min 1 max 4096\n" ++
-                "option name Threads type spin default 1 min 1 max 1\n" ++
+                "option name Threads type spin default 1 min 1 max 256\n" ++
                 "option name Skill Level type spin default 20 min 0 max 20\n" ++
                 "option name UCI_LimitStrength type check default false\n" ++
                 "option name UCI_Elo type spin default 1320 min 1320 max 3190\n" ++
@@ -151,8 +153,7 @@ const Session = struct {
         const value = try std.mem.join(self.engine.allocator, " ", args[if (split < args.len) split + 1 else split..]);
         defer self.engine.allocator.free(value);
         if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, 4096)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
-            _ = try integer(usize, value, 1, 1);
-            self.engine.newGame();
+            try self.engine.resizeThreads(try integer(usize, value, 1, 256));
         } else if (std.ascii.eqlIgnoreCase(name, "Skill Level")) self.skill_level = try integer(i32, value, 0, 20) else if (std.ascii.eqlIgnoreCase(name, "UCI_LimitStrength")) self.limit_strength = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Elo")) self.elo = try integer(i32, value, 1320, 3190) else if (std.ascii.eqlIgnoreCase(name, "nodestime")) {
             self.engine.node_rate = try integer(i64, value, 0, 10000);
             self.engine.node_time = .{};
@@ -229,9 +230,6 @@ const Session = struct {
             self.text("bestmove 0000\n") catch {};
             return;
         };
-        self.wake_mutex.lockUncancelable(self.engine.io);
-        while (result.best_move.data != 0 and !self.engine.control.stopped() and (self.engine.control.ponder.load(.acquire) or self.engine.control.limits.infinite)) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
-        self.wake_mutex.unlock(self.engine.io);
         self.engine.extendPonder();
         self.output_mutex.lockUncancelable(self.engine.io);
         defer self.output_mutex.unlock(self.engine.io);
@@ -241,6 +239,12 @@ const Session = struct {
         if (self.engine.worker.root_moves.len != 0 and self.engine.worker.root_moves[0].pv.len > 1) self.writer.print(" ponder {s}", .{notation.moveText(self.engine.worker.root_moves[0].pv.moves[1], self.engine.position.chess960, &buffer)}) catch {};
         self.writer.writeByte('\n') catch {};
         self.writer.flush() catch {};
+    }
+    fn waitForFinish(context: ?*anyopaque) void {
+        const self: *Session = @ptrCast(@alignCast(context.?));
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        defer self.wake_mutex.unlock(self.engine.io);
+        while (!self.engine.control.stopped() and (self.engine.control.ponder.load(.acquire) or self.engine.control.limits.infinite)) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
     }
     fn progress(context: ?*anyopaque, _: *search.Worker) void {
         const self: *Session = @ptrCast(@alignCast(context.?));
@@ -277,7 +281,7 @@ const Session = struct {
                 const wdl = notation.wdl(value, &self.engine.position);
                 try self.writer.print(" wdl {d} {d} {d}", .{ wdl[0], wdl[1], wdl[2] });
             }
-            try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits 0 time {d} pv", .{ worker.base.nodes, worker.base.nodes * 1000 / elapsed, self.engine.table.hashfull(0), elapsed });
+            try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits 0 time {d} pv", .{ self.engine.totalNodes(), self.engine.totalNodes() * 1000 / elapsed, self.engine.table.hashfull(0), elapsed });
             const pv = if (previous) &root.previous_pv else &root.pv;
             for (pv.slice()) |move| {
                 var buffer: [6]u8 = undefined;

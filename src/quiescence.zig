@@ -26,10 +26,13 @@ pub const Worker = struct {
     frames: [t.max_ply + 10]s.Stack = @splat(.{}),
     control: ?*@import("search_control.zig").Control = null,
     nodes: u64 = 0,
+    publish_nodes: bool = false,
+    helper: bool = false,
+    published_nodes: std.atomic.Value(u64) = .init(0),
     sel_depth: i32 = 0,
     optimism: [2]i32 = @splat(0),
     pub fn stopped(self: *const Worker) bool {
-        return if (self.control) |control| control.stopped() else false;
+        return if (self.control) |control| (control.stopped() or (self.helper and control.helpers_stop.load(.acquire))) else false;
     }
     /// Start a fresh diagnostic root. TT and history contents are retained;
     /// the owner decides when to clear them or advance the TT generation.
@@ -39,6 +42,7 @@ pub const Worker = struct {
     }
     pub fn prepare(self: *Worker, pv: *s.PV) void {
         self.nodes = 0;
+        self.published_nodes.store(0, .monotonic);
         self.sel_depth = 0;
         self.accumulators.reset();
         self.frames = @splat(.{});
@@ -55,6 +59,7 @@ pub const Worker = struct {
     pub fn doMove(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, frame: ?usize) void {
         const capture = pos.captureStage(move);
         self.nodes += 1;
+        if (self.publish_nodes) self.published_nodes.store(self.nodes, .monotonic);
         const dirties = self.accumulators.push();
         pos.doMoveWithDirties(move, state, dirties);
         if (frame) |index| {

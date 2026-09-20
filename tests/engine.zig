@@ -42,4 +42,20 @@ test "persistent engine retains state and replaces resources transactionally" {
     _ = try engine.runSearch();
     try std.testing.expect(engine.control.stopped());
     try std.testing.expectEqual(@as(usize, 1), engine.accumulators.size);
+    try engine.resizeThreads(3);
+    const original_position = engine.position.key();
+    try engine.prepareSearch(.{ .depth = 8 }, .{ .nodes = 4096 }, 10, false);
+    const parallel = try engine.runSearch();
+    try std.testing.expect(parallel.nodes >= 4096);
+    try std.testing.expectEqual(original_position, engine.position.key());
+    for (engine.helpers) |helper| {
+        try std.testing.expect(helper.base.nodes > 0);
+        try std.testing.expectEqual(original_position, helper.position.key());
+        try std.testing.expectEqual(@as(usize, 1), helper.base.accumulators.size);
+    }
+    try engine.resizeThreads(1);
+    try engine.setPosition(z.position.start_fen, false, &.{});
+    try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
+    const single = try engine.runSearch();
+    try std.testing.expectEqual(@as(u64, 1475), single.nodes);
 }
