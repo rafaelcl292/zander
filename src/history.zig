@@ -85,6 +85,14 @@ pub const SharedHistories = struct {
         for (self.pawn[pawn_begin..pawn_end]) |*entry| fill(entry, -1338);
         if (thread_index == 0) fill(self.continuation, -586);
     }
+    pub fn prefetch(self: *const SharedHistories, pos: *const Position, piece: t.Piece, square: t.Square) void {
+        const hints = @import("prefetch.zig");
+        hints.read(&self.pawnEntry(pos)[@intFromEnum(piece)][@intFromEnum(square)]);
+        hints.read(self.pawnCorrectionEntry(pos));
+        hints.read(self.minorCorrectionEntry(pos));
+        hints.read(self.nonPawnCorrectionEntry(pos, .white));
+        hints.read(self.nonPawnCorrectionEntry(pos, .black));
+    }
     pub fn pawnEntry(self: *const SharedHistories, pos: *const Position) *PawnEntry {
         return &self.pawn[pos.st.pawn_key & (self.pawn.len - 1)];
     }

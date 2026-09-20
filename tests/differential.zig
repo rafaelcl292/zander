@@ -285,6 +285,7 @@ fn expectQueries(pos: *const z.position.Position, expected: @import("position_re
     var list: z.movegen.MoveList = .{};
     z.movegen.generate(.legal, pos, &list);
     try std.testing.expectEqual(expected.queries.len, list.len);
+    for (list.slice(), expected.prefetch_keys) |move, key| try std.testing.expectEqual(key, pos.prefetchKey(move));
     for (list.slice(), expected.queries) |move, flags| {
         var actual: u32 = @intFromBool(pos.capture(move));
         actual |= @as(u32, @intFromBool(pos.captureStage(move))) << 1;

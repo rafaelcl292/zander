@@ -57,11 +57,20 @@ pub const Worker = struct {
     }
     /// Frames must already have their in-check flag and sentinel histories set.
     pub fn doMove(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, frame: ?usize) void {
+        self.table.prefetch(pos.prefetchKey(move));
+        if (frame) |index| {
+            const piece = @intFromEnum(pos.pieceOn(move.from()));
+            for ([_]usize{ 1, 3, 5 }) |offset| {
+                if (self.frames[index - offset].continuation_correction_history) |history| @import("prefetch.zig").read(&history[piece][@intFromEnum(move.to())]);
+            }
+        }
         const capture = pos.captureStage(move);
         self.nodes += 1;
         if (self.publish_nodes) self.published_nodes.store(self.nodes, .monotonic);
         const dirties = self.accumulators.push();
         pos.doMoveWithDirties(move, state, dirties);
+        self.table.prefetch(pos.key());
+        self.shared.prefetch(pos, dirties.piece.pc, if (dirties.piece.to == .none) move.to() else dirties.piece.to);
         if (frame) |index| {
             const ss = &self.frames[index];
             ss.current_move = move;

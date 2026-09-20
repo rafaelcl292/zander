@@ -75,6 +75,9 @@ pub const Table = struct {
         self.generation = 0;
         @memset(std.mem.sliceAsBytes(self.clusters), 0);
     }
+    pub fn prefetch(self: *const Table, key: u64) void {
+        @import("prefetch.zig").read(&self.clusters[self.clusterIndex(key)]);
+    }
     pub fn newSearch(self: *Table) void {
         self.generation = (self.generation + 1) & 31;
     }

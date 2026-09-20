@@ -54,6 +54,8 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
         if (!pos.checkers()) for (auto m : MoveList<CAPTURES>(pos)) std::printf("%u,", unsigned(m.raw()));
         std::puts("}, .quiets = &.{");
         if (!pos.checkers()) for (auto m : MoveList<QUIETS>(pos)) std::printf("%u,", unsigned(m.raw()));
+        std::puts("}, .prefetch_keys = &.{");
+        for (auto move : MoveList<LEGAL>(pos)) std::printf("%llu,", (unsigned long long)pos.prefetch_key(move));
         std::puts("}, .queries = &.{");
         for (auto move : MoveList<LEGAL>(pos)) {
             unsigned flags = unsigned(pos.capture(move)) | (unsigned(pos.capture_stage(move)) << 1)
@@ -194,7 +196,7 @@ int main(int argc, char** argv) {
     for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
     std::puts("};");
     std::puts("pub const FeatureSet = struct { half: []const u16, threats: []const u16, pawns: []const u16, half_removed: []const u16, half_added: []const u16, threats_removed: []const u16, threats_added: []const u16, pawns_removed: []const u16, pawns_added: []const u16, refresh: bool }; ");
-    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, features: []const FeatureSet = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
+    std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, pseudo: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, prefetch_keys: []const u64 = &.{}, draw_flags: []const u8 = &.{}, normal_pseudo: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, features: []const FeatureSet = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
     if (argc != 2) return 1;
     std::ifstream input(argv[1]);
     if (!input) return 1;

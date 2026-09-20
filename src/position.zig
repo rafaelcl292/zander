@@ -65,6 +65,17 @@ pub const Position = struct {
     pub fn key(self: *const Position) u64 {
         return if (self.st.rule50 < 14) self.st.key else self.st.key ^ t.makeKey(@intCast(@divTrunc(self.st.rule50 - 14, 8)));
     }
+    /// Speculative post-move key from Position::prefetch_key. Special moves
+    /// intentionally approximate the destination; never use this for probing.
+    pub fn prefetchKey(self: *const Position, move: t.Move) u64 {
+        const from = @intFromEnum(move.from());
+        const to = @intFromEnum(move.to());
+        const piece = self.board[from];
+        const captured = self.board[to];
+        const value = self.st.key ^ self.keys.side ^ self.keys.psq[@intFromEnum(captured)][to] ^ self.keys.psq[@intFromEnum(piece)][to] ^ self.keys.psq[@intFromEnum(piece)][from];
+        if (captured != .none or piece.pieceType() == .pawn or self.st.rule50 < 13) return value;
+        return value ^ t.makeKey(@intCast(@divTrunc(self.st.rule50 - 13, 8)));
+    }
     fn put(self: *Position, pc: Piece, s: Square) void {
         self.putWithThreats(pc, s, null);
     }

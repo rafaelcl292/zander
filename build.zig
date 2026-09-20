@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize });
     const backend = b.addOptions();
     backend.addOption(bool, "simd", b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false);
+    backend.addOption(bool, "prefetch", b.option(bool, "prefetch", "Issue the reference TT/history prefetch hints") orelse true);
     mod.addOptions("backend", backend);
     const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
     exe_mod.addImport("zander", mod);
