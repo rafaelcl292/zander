@@ -10,8 +10,10 @@ pub fn IndexList(comptime capacity: usize) type {
     return struct {
         items: [capacity]u16 = undefined,
         len: usize = 0,
+        prefetch_base: ?[*]const [1024]i8 = null,
         pub fn append(self: *@This(), index: u32) void {
             std.debug.assert(self.len < capacity and index <= std.math.maxInt(u16));
+            if (self.prefetch_base) |base| @import("../prefetch.zig").readLow(&base[index]);
             self.items[self.len] = @intCast(index);
             self.len += 1;
         }
@@ -98,6 +100,26 @@ pub const PawnPairs = struct {
     pub fn appendChanged(perspective: t.Color, king: t.Square, before: [2]u64, after: [2]u64, removed: *ThreatList, added: *ThreatList) void {
         generate(perspective, king, after[0] & ~before[0], after[1] & ~before[1], after[0], after[1], added);
         generate(perspective, king, before[0] & ~after[0], before[1] & ~after[1], before[0], before[1], removed);
+    }
+    pub fn appendChangedBoth(kings: [2]t.Square, before: [2]u64, after: [2]u64, removed: *[2]ThreatList, added: *[2]ThreatList) void {
+        generateBoth(kings, after[0] & ~before[0], after[1] & ~before[1], after[0], after[1], added);
+        generateBoth(kings, before[0] & ~after[0], before[1] & ~after[1], before[0], before[1], removed);
+    }
+    fn generateBoth(kings: [2]t.Square, updated_white: u64, updated_black: u64, white: u64, black: u64, out: *[2]ThreatList) void {
+        const unchanged = (white | black) & ~(updated_white | updated_black);
+        var updated = updated_white | updated_black;
+        while (updated != 0) {
+            const from = bb.popLsb(&updated);
+            const mask = pawnPair(from) & (unchanged | updated);
+            const color: t.Color = if (black & bb.square(from) != 0) .black else .white;
+            inline for (.{ t.Color.black, t.Color.white }) |paired| {
+                var partners = (if (paired == .black) black else white) & mask;
+                while (partners != 0) {
+                    const to = bb.popLsb(&partners);
+                    inline for (0..2) |side| out[side].append(makeIndex(@enumFromInt(side), color, from, to, paired, kings[side]));
+                }
+            }
+        }
     }
 };
 
@@ -190,6 +212,19 @@ pub const FullThreats = struct {
             const raw = entry.data;
             const index = makeIndex(perspective, @enumFromInt((raw >> 20) & 15), @enumFromInt(raw & 255), @enumFromInt((raw >> 8) & 255), @enumFromInt((raw >> 16) & 15), king);
             appendIfValid(if (raw >> 31 != 0) added else removed, index);
+        }
+    }
+    pub fn appendChangedBoth(kings: [2]t.Square, diff: *const dirty.DirtyThreats, removed: *[2]ThreatList, added: *[2]ThreatList) void {
+        for (diff.list[0..diff.len]) |entry| {
+            const raw = entry.data;
+            const attacker: t.Piece = @enumFromInt((raw >> 20) & 15);
+            const from: t.Square = @enumFromInt(raw & 255);
+            const to: t.Square = @enumFromInt((raw >> 8) & 255);
+            const attacked: t.Piece = @enumFromInt((raw >> 16) & 15);
+            inline for (0..2) |side| {
+                const index = makeIndex(@enumFromInt(side), attacker, from, to, attacked, kings[side]);
+                appendIfValid(if (raw >> 31 != 0) &added[side] else &removed[side], index);
+            }
         }
     }
 };
