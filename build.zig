@@ -7,7 +7,9 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("zander", mod);
     const exe = b.addExecutable(.{ .name = "zander", .root_module = exe_mod });
     b.installArtifact(exe);
-    b.step("run", "Show port status").dependOn(&b.addRunArtifact(exe).step);
+    const run = b.addRunArtifact(exe);
+    if (b.args) |args| run.addArgs(args);
+    b.step("run", "Run the diagnostic CLI").dependOn(&run.step);
     const unit = b.addTest(.{ .root_module = mod });
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&b.addRunArtifact(unit).step);
