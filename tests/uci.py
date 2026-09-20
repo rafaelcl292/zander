@@ -82,6 +82,8 @@ def main():
             assert any(line.startswith(f"option name {option} ") for line in handshake), handshake
         client.send(f"setoption name EvalFile value {args.network}")
         client.send("setoption name Hash value 1")
+        for policy in ("system", "none", "auto"):
+            client.send(f"setoption name NumaPolicy value {policy}")
         for policy in ("small", "transparent", "huge2m", "auto"):
             client.send(f"setoption name PagePolicy value {policy}")
         client.send("setoption name MultiPV value 3")

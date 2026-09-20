@@ -93,6 +93,7 @@ const Session = struct {
         if (std.mem.eql(u8, cmd, "uci")) {
             try self.text("id name Zander\nid author Zander contributors\n" ++
                 "option name Hash type spin default 16 min 1 max 4096\n" ++
+                "option name NumaPolicy type combo default auto var auto var none var system\n" ++
                 "option name PagePolicy type combo default auto var auto var small var transparent var huge2m var huge1g\n" ++
                 "option name Threads type spin default 1 min 1 max 256\n" ++
                 "option name Skill Level type spin default 20 min 0 max 20\n" ++
@@ -153,7 +154,15 @@ const Session = struct {
         defer self.engine.allocator.free(name);
         const value = try std.mem.join(self.engine.allocator, " ", args[if (split < args.len) split + 1 else split..]);
         defer self.engine.allocator.free(value);
-        if (std.ascii.eqlIgnoreCase(name, "PagePolicy")) {
+        if (std.ascii.eqlIgnoreCase(name, "NumaPolicy")) {
+            const policy = std.meta.stringToEnum(@import("numa.zig").Policy, value) orelse return error.InvalidNumaPolicy;
+            const previous = self.engine.numa_policy;
+            self.engine.numa_policy = policy;
+            self.engine.resizeThreads(self.engine.helpers.len + 1) catch |err| {
+                self.engine.numa_policy = previous;
+                return err;
+            };
+        } else if (std.ascii.eqlIgnoreCase(name, "PagePolicy")) {
             const policy = std.meta.stringToEnum(@import("memory.zig").PagePolicy, value) orelse return error.InvalidPagePolicy;
             const previous = self.engine.page_policy;
             self.engine.page_policy = policy;

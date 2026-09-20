@@ -27,7 +27,7 @@ pub const Helper = struct {
     pub fn create(allocator: std.mem.Allocator, io: std.Io, index: usize, shared: *h.SharedHistories, table: *@import("tt.zig").Table, control: *@import("search_control.zig").Control) !*Helper {
         const self = try allocator.create(Helper);
         errdefer allocator.destroy(self);
-        self.* = .{ .arena = .init(allocator), .io = io, .base = undefined, .worker = undefined, .roots = undefined };
+        self.* = .{ .arena = .init(std.heap.page_allocator), .io = io, .base = undefined, .worker = undefined, .roots = undefined };
         errdefer self.arena.deinit();
         const a = self.arena.allocator();
         const base = try a.create(QWorker);
@@ -42,16 +42,16 @@ pub const Helper = struct {
             .shared = shared,
             .table = table,
             .control = control,
-            .publish_nodes = true,
-            .helper = true,
+            .publish_nodes = index != 0,
+            .helper = index != 0,
         };
         self.base = base;
         self.worker = search.Worker.init(base);
         self.worker.thread_index = index;
-        self.worker.advance_generation = false;
+        self.worker.advance_generation = index == 0;
         self.roots = try a.alloc(search.RootMove, t.max_moves);
         self.clear(null);
-        self.thread = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, loop, .{self});
+        if (index != 0) self.thread = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, loop, .{self});
         return self;
     }
     pub fn clear(self: *Helper, network: ?*const @import("nnue/network.zig").Network) void {
@@ -96,7 +96,7 @@ pub const Helper = struct {
         self.exiting = true;
         self.condition.broadcast(self.io);
         self.mutex.unlock(self.io);
-        self.thread.?.join();
+        if (self.thread) |thread| thread.join();
         self.arena.deinit();
         allocator.destroy(self);
     }

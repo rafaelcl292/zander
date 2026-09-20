@@ -53,6 +53,25 @@ test "persistent engine retains state and replaces resources transactionally" {
         try std.testing.expectEqual(original_position, helper.position.key());
         try std.testing.expectEqual(@as(usize, 1), helper.base.accumulators.size);
     }
+    if (engine.topology.available) {
+        // Exercise multiple allocation groups on a one-node CI host too.
+        // This tests ownership and routing, not physical remote-node latency.
+        const topology = engine.topology;
+        engine.topology.count = 2;
+        engine.topology.nodes[1] = engine.topology.nodes[0];
+        engine.numa_policy = .system;
+        try engine.resizeThreads(2);
+        try std.testing.expectEqual(@as(usize, 2), engine.groups.len);
+        try std.testing.expect(engine.groups[0].network.? != engine.groups[1].network.?);
+        try std.testing.expect(engine.groups[0].shared.pawn.ptr != engine.groups[1].shared.pawn.ptr);
+        try engine.prepareSearch(.{ .depth = 4 }, .{}, 10, false);
+        _ = try engine.runSearch();
+        try engine.loadNetwork(@import("options").network_path);
+        try engine.prepareSearch(.{ .depth = 2 }, .{}, 10, false);
+        _ = try engine.runSearch();
+        engine.topology = topology;
+        engine.numa_policy = .auto;
+    }
     try engine.resizeThreads(1);
     try engine.setPosition(z.position.start_fen, false, &.{});
     try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
