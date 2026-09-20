@@ -98,11 +98,11 @@ test "extended dispatch requires complete AVX512 state and VNNI leaves" {
     try std.testing.expectEqual(Kernel.avx2, selectFeatures(7, flags, 0xe6, no_dot, 0));
 }
 
-const Sparse = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
-extern fn zander_sparse_avx2([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
-extern fn zander_sparse_avx512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
-extern fn zander_sparse_avxvnni([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
-extern fn zander_sparse_vnni512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
+const Sparse = *const fn ([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
+extern fn zander_sparse_avx2([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_sparse_avx512([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_sparse_avxvnni([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) void;
+extern fn zander_sparse_vnni512([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) void;
 pub fn sparseFunction(kernel: Kernel) ?Sparse {
     return switch (kernel) {
         .sse2 => null,
@@ -117,7 +117,8 @@ extern fn zander_hidden_avx2([*]const u8, [*]const i8, [*]const i32, [*]i32) voi
 extern fn zander_hidden_avx512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
 extern fn zander_hidden_avxvnni([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
 extern fn zander_hidden_vnni512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
-pub fn hiddenFunction(kernel: Kernel) ?Sparse {
+const Small = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
+pub fn hiddenFunction(kernel: Kernel) ?Small {
     return switch (kernel) {
         .sse2 => null,
         .avx2 => &zander_hidden_avx2,
@@ -131,7 +132,7 @@ extern fn zander_output_avx2([*]const u8, [*]const i8, [*]const i32, [*]i32) voi
 extern fn zander_output_avx512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
 extern fn zander_output_avxvnni([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
 extern fn zander_output_vnni512([*]const u8, [*]const i8, [*]const i32, [*]i32) void;
-pub fn outputFunction(kernel: Kernel) ?Sparse {
+pub fn outputFunction(kernel: Kernel) ?Small {
     return switch (kernel) {
         .sse2 => null,
         .avx2 => &zander_output_avx2,

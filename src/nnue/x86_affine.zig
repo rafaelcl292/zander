@@ -46,21 +46,14 @@ fn affine(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output
 comptime {
     @export(&sparse, .{ .name = "zander_sparse_" ++ @tagName(kind) });
 }
-fn sparse(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
+fn sparse(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
     const bytes = if (kind == .avx512 or kind == .vnni512) 64 else 32;
     const width = bytes / 4;
     const Vec = @Vector(width, i32);
     var accumulators: [32 / width]Vec = undefined;
     inline for (0..32 / width) |i| accumulators[i] = biases[i * width ..][0..width].*;
     for (0..4) |group| {
-        // Reference NNZ bitset traversal: branch only for present input blocks.
-        var bits: u64 = 0;
-        inline for (0..8) |chunk| {
-            const start = group * 256 + chunk * 32;
-            const words: @Vector(8, u32) = @bitCast(input[start..][0..32].*);
-            const mask: u8 = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
-            bits |= @as(u64, mask) << (chunk * 8);
-        }
+        var bits = masks[group];
         while (bits != 0) {
             const block = group * 64 + @ctz(bits);
             bits &= bits - 1;

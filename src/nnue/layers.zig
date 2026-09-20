@@ -4,7 +4,7 @@ const Reader = @import("reader.zig").Reader;
 pub const output_scale: i32 = 16;
 pub const weight_scale_bits = 6;
 pub const hidden_one = 128;
-const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and @import("builtin").cpu.arch == .x86_64;
+pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and @import("builtin").cpu.arch == .x86_64;
 pub fn clipped(input: i32, comptime scale: u5) u8 {
     return @intCast(std.math.clamp(input >> scale, 0, 127));
 }
@@ -136,10 +136,22 @@ pub const Architecture = struct {
     };
     /// Both kernels consume the same serialized weight layout.
     pub fn propagate(self: *const Architecture, input: *const [1024]u8, buffer: *Buffer) i32 {
+        const masks = nonzeroMasks(input);
+        return self.propagateMasked(input, &masks, buffer);
+    }
+    pub fn nonzeroMasks(input: *const [1024]u8) [4]u64 {
+        var masks: [4]u64 = @splat(0);
+        for (0..256) |block| {
+            if (std.mem.readInt(u32, input[block * 4 ..][0..4], .little) != 0)
+                masks[block / 64] |= @as(u64, 1) << @as(u6, @intCast(block % 64));
+        }
+        return masks;
+    }
+    pub fn propagateMasked(self: *const Architecture, input: *const [1024]u8, masks: *const [4]u64, buffer: *Buffer) i32 {
         if (use_sparse) {
             const dispatch = @import("dispatch.zig");
             if (dispatch.sparseFunction(dispatch.selected())) |kernel| {
-                kernel(input, @ptrCast(&self.sparse_weights), &self.fc0.biases, &buffer.fc0);
+                kernel(input, masks, @ptrCast(&self.sparse_weights), &self.fc0.biases, &buffer.fc0);
             } else self.fc0.propagate(input, &buffer.fc0);
         } else self.fc0.propagate(input, &buffer.fc0);
         for (buffer.fc0, 0..) |value, i| {
@@ -216,7 +228,8 @@ test "block sparse affine preserves signed extremes, zero blocks and wrapping su
     for (0..16) |pattern| {
         for (&input, 0..) |*value, i| value.* = if (pattern == 0) 0 else if (pattern == 1) 127 else if ((i / 4) % pattern == 0) @truncate(rng.next() & 127) else 0;
         layer.fc0.propagateScalar(&input, &scalar);
-        kernel(&input, @ptrCast(&layer.sparse_weights), &layer.fc0.biases, &sparse);
+        const masks = Architecture.nonzeroMasks(&input);
+        kernel(&input, &masks, @ptrCast(&layer.sparse_weights), &layer.fc0.biases, &sparse);
         try std.testing.expectEqualSlices(i32, &scalar, &sparse);
     }
 }

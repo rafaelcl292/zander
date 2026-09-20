@@ -134,6 +134,15 @@ pub const FeatureTransformer = struct {
         transformScalar(acc, side, output);
     }
     pub fn transformVector(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
+        transformVectorMasked(acc, side, output, null);
+    }
+    pub fn transformMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: *[4]u64) void {
+        if (@import("backend").simd) return transformVectorMasked(acc, side, output, masks);
+        transformScalar(acc, side, output);
+        masks.* = @import("layers.zig").Architecture.nonzeroMasks(output);
+    }
+    fn transformVectorMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: ?*[4]u64) void {
+        if (masks) |bits| bits.* = @splat(0);
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const Signed = @Vector(lanes, i16);
         const Unsigned = @Vector(lanes, u16);
@@ -145,7 +154,14 @@ pub const FeatureTransformer = struct {
                 const first: Unsigned = @intCast(@min(@max(a, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
                 const second: Unsigned = @intCast(@min(@max(b, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
                 // 255 * 255 fits u16; the clipped product fits seven bits.
-                output[p * (dimensions / 2) + j ..][0..lanes].* = @as(@Vector(lanes, u8), @intCast((first * second) >> @splat(9)));
+                const values: @Vector(lanes, u8) = @intCast((first * second) >> @splat(9));
+                const start = p * (dimensions / 2) + j;
+                output[start..][0..lanes].* = values;
+                if (masks) |bits| {
+                    const words: @Vector(lanes / 4, u32) = @bitCast(values);
+                    const mask: std.meta.Int(.unsigned, lanes / 4) = @bitCast(words != @as(@Vector(lanes / 4, u32), @splat(0)));
+                    bits[start / 256] |= @as(u64, mask) << @as(u6, @intCast((start % 256) / 4));
+                }
             }
         }
     }
@@ -174,6 +190,10 @@ test "vector feature transformation matches scalar clipping and lane order" {
             FeatureTransformer.transformScalar(&acc, side, &scalar);
             FeatureTransformer.transformVector(&acc, side, &vector);
             try std.testing.expectEqualSlices(u8, &scalar, &vector);
+            var masks: [4]u64 = undefined;
+            FeatureTransformer.transformMasked(&acc, side, &vector, &masks);
+            try std.testing.expectEqualSlices(u8, &scalar, &vector);
+            try std.testing.expectEqual(@import("layers.zig").Architecture.nonzeroMasks(&scalar), masks);
         }
     }
 }
