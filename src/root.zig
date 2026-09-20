@@ -1,3 +1,4 @@
+pub const search_support = @import("search_support.zig");
 pub const movepick = @import("movepick.zig");
 pub const history = @import("history.zig");
 pub const nnue_network = @import("nnue/network.zig");

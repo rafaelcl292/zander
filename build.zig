@@ -41,6 +41,8 @@ pub fn build(b: *std.Build) void {
     movepick_cpp.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
     movepick_cpp.addFileArg(b.path("vendor/stockfish/src/tt.cpp"));
     movepick_cpp.addFileArg(b.path("vendor/stockfish/src/memory.cpp"));
+    const search_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections" });
+    search_cpp.addFileArg(b.path("tests/search_reference.cpp"));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
@@ -56,6 +58,7 @@ pub fn build(b: *std.Build) void {
             network_cpp.addFileInput(input);
             history_cpp.addFileInput(input);
             movepick_cpp.addFileInput(input);
+            search_cpp.addFileInput(input);
         }
     }
     reference_cpp.addArg("-Wl,--gc-sections");
@@ -104,6 +107,11 @@ pub fn build(b: *std.Build) void {
     movepick_run.addFileArg(movepick_exe);
     movepick_run.addFileArg(b.path("tests/positions.txt"));
     diff_mod.addAnonymousImport("movepick_reference", .{ .root_source_file = movepick_run.captureStdOut(.{ .basename = "movepick_reference.zig" }) });
+    search_cpp.addArgs(&.{ "-Wl,--gc-sections", "-o" });
+    const search_exe = search_cpp.addOutputFileArg("search-reference");
+    const search_run = std.Build.Step.Run.create(b, "generate search helper reference");
+    search_run.addFileArg(search_exe);
+    diff_mod.addAnonymousImport("search_reference", .{ .root_source_file = search_run.captureStdOut(.{ .basename = "search_reference.zig" }) });
     const diff = b.addTest(.{ .root_module = diff_mod });
     const diff_step = b.step("differential", "Compare with pinned Stockfish C++ (requires host c++)");
     diff_step.dependOn(&b.addRunArtifact(diff).step);

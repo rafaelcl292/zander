@@ -577,3 +577,43 @@ test "staged move ordering matches Stockfish with varied histories and TT moves"
         try std.testing.expectEqual(@as(u16, 0), picker.next().data);
     }
 }
+
+test "search score conversion, continuation bonuses and PVs match Stockfish" {
+    const reference = @import("search_reference");
+    const search = z.search_support;
+    for (reference.scores) |case| {
+        if (case.score != z.types.value_none) try std.testing.expectEqual(case.stored, search.valueToTT(case.score, case.ply));
+        try std.testing.expectEqual(case.restored, search.valueFromTT(case.score, case.ply, case.rule50));
+    }
+    for (reference.corrections) |case| try std.testing.expectEqual(case.result, search.correctedStaticEval(case.value, case.correction));
+    for (reference.divisors, 0..) |expected, depth| try std.testing.expectEqual(expected, search.lmrDivisor(@intCast(depth)));
+    const tables = try std.testing.allocator.create([6]z.history.PieceToHistory);
+    defer std.testing.allocator.destroy(tables);
+    var frames: [7]search.Stack = @splat(.{});
+    for (reference.continuations) |case| {
+        frames[6].in_check = case.in_check;
+        for (tables, case.initial, 0..) |*table, initial, i| {
+            table[2][18].set(initial);
+            frames[5 - i].continuation_history = table;
+            frames[5 - i].current_move = if (case.valid & (@as(u8, 1) << @as(u3, @intCast(i))) != 0) .{ .data = (8 << 6) + 16 } else .null_move;
+        }
+        search.updateContinuationHistories(&frames, 6, .white_knight, @enumFromInt(18), case.bonus);
+        for (tables, case.result) |*table, expected| try std.testing.expectEqual(expected, table[2][18].get());
+    }
+    var child: search.PV = .{};
+    var pv: search.PV = .{};
+    for (0..z.types.max_ply) |i| child.append(.{ .data = @intCast(i + 100) });
+    pv.update(.{ .data = 400 }, &child);
+    for (reference.pv, pv.slice()) |expected, move| try std.testing.expectEqual(expected, move.data);
+    child.assignRoot(pv.slice());
+    try std.testing.expectEqual(z.types.max_ply, child.len);
+    try std.testing.expectEqual(@as(u16, 400), child.moves[0].data);
+    pv.resize(1);
+    try std.testing.expectEqual(@as(usize, 1), pv.len);
+    pv.clear();
+    try std.testing.expectEqual(@as(usize, 0), pv.len);
+    pv.update(.{ .data = 123 }, null);
+    try std.testing.expectEqual(@as(usize, 1), pv.len);
+    try std.testing.expectEqual(@as(u16, 123), pv.moves[0].data);
+    for (0..100) |nodes| try std.testing.expectEqual(@as(i32, if (nodes % 4 < 2) -1 else 1), search.drawValue(nodes));
+}
