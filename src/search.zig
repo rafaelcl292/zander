@@ -1,5 +1,5 @@
 // Derived from Stockfish Search::Worker::search; GPL-3.0-or-later.
-// Root/PV/NonPV kernels: fixed-depth, one worker, tablebases disabled.
+// Root/PV/NonPV kernels with optional time control and tablebase bounds.
 const std = @import("std");
 const t = @import("types.zig");
 const s = @import("search_support.zig");
@@ -90,7 +90,7 @@ pub const Worker = struct {
         depth: i32,
         nodes: u64,
     };
-    /// Fixed-depth, full-strength, single-worker driver. Storage must remain
+    /// Iterative driver for one worker in an optional shared pool. Storage must remain
     /// valid while inspecting root_moves. Retain histories and TT across calls.
     pub fn iterativeDeepening(self: *Worker, pos: *p.Position, storage: []RootMove, limits: Limits) !Result {
         if (limits.depth < 1 or limits.depth >= t.max_ply) return error.InvalidDepth;

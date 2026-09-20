@@ -11,7 +11,7 @@ const usage =
     \\
     \\The default position is the standard initial position.
     \\Scores use internal units from the side-to-move perspective.
-    \\No arguments starts UCI. Search uses one worker.
+    \\No arguments starts UCI. Diagnostic search uses one worker.
     \\
 ;
 pub fn main(init: std.process.Init) void {

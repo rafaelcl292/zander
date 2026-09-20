@@ -3,7 +3,7 @@ const std = @import("std");
 const t = @import("types.zig");
 const s = @import("search_support.zig");
 
-/// Root PV storage is bounded for searches without tablebase PV extension.
+/// Root PVs and tablebase extensions share bounded storage.
 pub const RootMove = struct {
     effort: u64 = 0,
     score: i32 = -t.value_infinite,
