@@ -12,6 +12,7 @@ pub const Control = struct {
     limits: tm.Limits = .{},
     budget: tm.Budget = .{},
     calls: i32 = 0,
+    use_nodes_time: bool = false,
     stop_on_ponderhit: bool = false,
     increase_depth: std.atomic.Value(bool) = .init(true),
     node_context: ?*anyopaque = null,
@@ -26,6 +27,7 @@ pub const Control = struct {
         self.budget = budget;
         self.start = self.clock(self.context);
         self.calls = 0;
+        self.use_nodes_time = limits.npmsec != 0;
         self.stop_on_ponderhit = false;
         self.increase_depth.store(true, .monotonic);
         self.helpers_stop.store(false, .release);
@@ -45,7 +47,7 @@ pub const Control = struct {
         return @max(0, self.clock(self.context) - self.start);
     }
     pub fn searchElapsed(self: *const Control, nodes: u64) i64 {
-        return if (self.limits.npmsec != 0) @intCast(nodes) else self.elapsed();
+        return if (self.use_nodes_time) @intCast(nodes) else self.elapsed();
     }
     pub fn poll(self: *Control, local_nodes: u64) void {
         self.calls -= 1;
@@ -84,6 +86,14 @@ test "clock and node limits honor ponder and stop" {
     control.stop_on_ponderhit = true;
     control.ponderHit();
     control.poll(0);
+    try std.testing.expect(control.stopped());
+    control.reset(.{ .move_time = 1000 }, .{});
+    control.use_nodes_time = true;
+    now += 100000;
+    control.poll(999);
+    try std.testing.expect(!control.stopped());
+    control.calls = 0;
+    control.poll(1000);
     try std.testing.expect(control.stopped());
     control.reset(.{}, .{});
     control.requestStop();

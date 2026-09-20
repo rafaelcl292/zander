@@ -57,9 +57,9 @@ pub const NodeTime = struct {
     pub fn prepare(self: *NodeTime, original: Limits, us: usize, rate: i64, overhead: *i64) Limits {
         var limits = original;
         if (rate == 0) return limits;
-        limits.npmsec = rate;
         limits.move_time *= rate;
         if (limits.time[us] == 0) return limits;
+        limits.npmsec = rate;
         if (self.available == -1) {
             self.available = rate * limits.time[us];
             self.cyclic_budget = rate * (limits.time[us] - limits.increment[us]);
@@ -91,4 +91,14 @@ test "node time retains game budget and replenishes cyclic controls" {
     try std.testing.expectEqual(@as(i64, 19000), next_cycle.time[0]);
     state.advance(100000, 0);
     try std.testing.expectEqual(@as(i64, 0), state.available);
+}
+
+test "movetime node mode does not initialize a persistent game budget" {
+    var state: NodeTime = .{};
+    var overhead: i64 = 10;
+    const limits = state.prepare(.{ .time = .{ 0, 1000 }, .move_time = 100 }, 0, 10, &overhead);
+    try std.testing.expectEqual(@as(i64, 1000), limits.move_time);
+    try std.testing.expectEqual(@as(i64, 0), limits.npmsec);
+    try std.testing.expectEqual(@as(i64, -1), state.available);
+    try std.testing.expectEqual(@as(i64, 10), overhead);
 }
