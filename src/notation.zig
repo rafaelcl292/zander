@@ -35,6 +35,9 @@ fn parameters(pos: *const p.Position) struct { a: f64, b: f64 } {
     const m = @as(f64, @floatFromInt(std.math.clamp(material, 17, 78))) / 58.0;
     return .{ .a = (((-142.72052667 * m + 372.35176398) * m - 340.71073572) * m) + 415.23490212, .b = (((5.93832785 * m + 15.61267078) * m - 30.57816876) * m) + 69.63866711 };
 }
+pub fn centipawns(value: i32, pos: *const p.Position) i32 {
+    return @intFromFloat(@round(100.0 * @as(f64, @floatFromInt(value)) / parameters(pos).a));
+}
 pub fn writeScore(writer: *std.Io.Writer, value: i32, pos: *const p.Position) !void {
     const absolute: @TypeOf(value) = @intCast(@abs(value));
     if (absolute > s.value_tb) {
@@ -43,7 +46,7 @@ pub fn writeScore(writer: *std.Io.Writer, value: i32, pos: *const p.Position) !v
     } else if (absolute >= s.tb_win_in_max_ply) {
         const plies = (s.value_tb - absolute) * @as(i32, if (value > 0) 1 else -1);
         try writer.print("cp {d}", .{@as(i32, if (value > 0) 20000 else -20000) - plies});
-    } else try writer.print("cp {d}", .{@as(i32, @intFromFloat(@round(100.0 * @as(f64, @floatFromInt(value)) / parameters(pos).a)))});
+    } else try writer.print("cp {d}", .{centipawns(value, pos)});
 }
 pub fn wdl(value: i32, pos: *const p.Position) [3]i32 {
     const params = parameters(pos);

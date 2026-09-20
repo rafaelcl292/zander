@@ -264,11 +264,34 @@ const Session = struct {
             try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{ builtin.zig_version_string, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), @tagName(builtin.mode), @tagName(@import("backend").nnue_backend) });
         } else if (std.mem.eql(u8, cmd, "eval")) {
             try self.engine.ensureNetwork();
-            self.engine.accumulators.reset();
-            const network = self.engine.network.?;
-            const result = network.evaluate(pos, self.engine.accumulators, self.engine.caches);
-            try self.writer.print("psqt {d}\npositional {d}\nraw {d}\n", .{ result.psqt, result.positional, result.psqt + result.positional });
-            if (pos.st.checkers == 0) try self.writer.print("adjusted {d}\n", .{network.evaluateAdjusted(pos, self.engine.accumulators, self.engine.caches, 0)}) else try self.writer.writeAll("adjusted unavailable (in check)\n");
+            if (pos.st.checkers != 0) {
+                try self.writer.writeAll("Final evaluation: none (in check)\n");
+            } else {
+                self.engine.accumulators.reset();
+                const network = self.engine.network.?;
+                const trace = network.trace(pos, self.engine.accumulators, self.engine.caches);
+                const bucket = (@popCount(pos.pieces()) - 1) / 4;
+                const border = "+------------+------------+------------+------------+\n";
+                try self.writer.print("NNUE network contributions (Normalized, {s} to move)\n{s}", .{ if (pos.side == .white) "White" else "Black", border });
+                try self.writer.writeAll("|   Bucket   |  Material  | Positional |   Total    |\n|            |   (PSQT)   |  (Layers)  |            |\n");
+                try self.writer.writeAll(border);
+                for (trace, 0..) |out, index| {
+                    try self.writer.print("|  {d}         |  ", .{index});
+                    for ([_]i32{ out.psqt, out.positional, out.psqt + out.positional }) |value| {
+                        try self.writer.print("{c}{d:6.2}   |  ", .{ @as(u8, if (value < 0) '-' else if (value > 0) '+' else ' '), @as(f64, @floatFromInt(@abs(notation.centipawns(value, pos)))) / 100.0 });
+                    }
+                    if (index == bucket) try self.writer.writeAll("<-- this bucket is used");
+                    try self.writer.writeByte('\n');
+                }
+                try self.writer.writeAll(border);
+                const raw = trace[bucket].psqt + trace[bucket].positional;
+                try self.writer.print("NNUE evaluation          {s}{d} (side to move, internal units)\n", .{ if (raw >= 0) "+" else "", raw });
+                const sign: i32 = if (pos.side == .white) 1 else -1;
+                const values = [_]i32{ notation.centipawns(raw * sign, pos), notation.centipawns(network.evaluateAdjusted(pos, self.engine.accumulators, self.engine.caches, 0) * sign, pos) };
+                for (values, [_][]const u8{ "NNUE evaluation", "Final evaluation" }) |value, label| {
+                    try self.writer.print("{s}      {s}{d:.2} (white side)\n", .{ label, if (value >= 0) "+" else "", @as(f64, @floatFromInt(value)) / 100.0 });
+                }
+            }
         } else if (std.mem.eql(u8, cmd, "export_net")) {
             if (args.len > 2) return error.UnexpectedArgument;
             try self.engine.ensureNetwork();

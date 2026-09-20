@@ -75,6 +75,20 @@ pub const Network = struct {
         const positional = self.layers[bucket].propagate(&transformed, &buffer);
         return .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(positional, 16) };
     }
+    pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [8]Output {
+        stack.evaluate(pos, &self.transformer, cache);
+        const state = stack.latest();
+        const side = @intFromEnum(pos.side);
+        var transformed: [1024]u8 align(64) = undefined;
+        FeatureTransformer.transform(&state.accumulation, side, &transformed);
+        var result: [8]Output = undefined;
+        for (&self.layers, &result, 0..) |*layer, *out, bucket| {
+            var buffer: Architecture.Buffer = undefined;
+            const psqt = @divTrunc(state.psqt[side][bucket] - state.psqt[side ^ 1][bucket], 2);
+            out.* = .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(layer.propagate(&transformed, &buffer), 16) };
+        }
+        return result;
+    }
     pub fn evaluateAdjusted(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches, initial_optimism: i32) i32 {
         std.debug.assert(pos.st.checkers == 0);
         const out = self.evaluate(pos, stack, cache);

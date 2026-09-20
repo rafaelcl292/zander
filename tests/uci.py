@@ -122,7 +122,9 @@ def main():
         assert "Fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1" in client.until("Checkers:")
         client.send("flip")
         client.send("eval")
-        assert any(line.startswith("raw ") for line in client.until("adjusted "))
+        trace = client.until("Final evaluation")
+        assert sum(bool(re.match(r"^\|  [0-7] ", line)) for line in trace) == 8, trace
+        assert sum("this bucket is used" in line for line in trace) == 1, trace
         with tempfile.TemporaryDirectory(prefix="zander-export-") as directory:
             exported = pathlib.Path(directory) / "export.nnue"
             client.send(f"export_net {exported}")
