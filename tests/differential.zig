@@ -459,3 +459,64 @@ test "NNUE scalar layers and compressed parameters match C++" {
     reader = .{ .bytes = reference.parameters[0 .. reference.parameters.len - 1] };
     try std.testing.expectError(error.Truncated, network.read(&reader));
 }
+
+test "history saturation, atomic entries and storage sizes match Stockfish" {
+    const reference = @import("history_reference");
+    inline for (.{ .{ 7183, false }, .{ 10692, false }, .{ 30000, true }, .{ 8192, true }, .{ 8192, false }, .{ 1024, true }, .{ 1024, false } }) |spec| {
+        var value: z.history.StatsEntry(spec[0], spec[1]) = undefined;
+        for (reference.cases) |case| {
+            if (case.limit != spec[0] or case.shared != spec[1]) continue;
+            if (case.bonus == std.math.minInt(i32)) value.set(case.initial);
+            value.update(case.bonus);
+            try std.testing.expectEqual(case.result, value.get());
+        }
+    }
+    inline for (.{ z.history.ButterflyHistory, z.history.LowPlyHistory, z.history.CapturePieceToHistory, z.history.PieceToHistory, z.history.ContinuationHistoryBlock, z.history.CorrectionBundle, z.history.PieceToCorrectionHistory, z.history.ContinuationCorrectionHistory }, 0..) |T, i| {
+        try std.testing.expectEqual(reference.sizes[i], @sizeOf(T));
+    }
+}
+
+test "shared history storage partitions and key masks preserve capacities" {
+    const h = z.history;
+    const allocator = std.testing.allocator;
+    const correction = try allocator.alloc(h.CorrectionEntry, h.correction_history_base_size * 2);
+    defer allocator.free(correction);
+    const pawn = try allocator.alloc(h.PawnEntry, h.pawn_history_base_size * 2);
+    defer allocator.free(pawn);
+    const continuation = try allocator.create(h.ContinuationHistoryBlock);
+    defer allocator.destroy(continuation);
+    try std.testing.expectError(error.InvalidThreadCount, h.SharedHistories.init(0, correction, continuation, pawn));
+    try std.testing.expectError(error.InvalidThreadCount, h.SharedHistories.init(3, correction, continuation, pawn));
+    try std.testing.expectError(error.InvalidStorageSize, h.SharedHistories.init(1, correction, continuation, pawn));
+    var shared = try h.SharedHistories.init(2, correction, continuation, pawn);
+    for (correction) |*entry| h.fill(entry, 123);
+    for (pawn) |*entry| h.fill(entry, 456);
+    // A non-divisor worker count exercises integer partition boundaries.
+    shared.clearRange(1, 3);
+    for (correction, 0..) |*entry, i| for (entry) |*bundle| {
+        const expected: i16 = if (i >= correction.len / 3 and i < correction.len * 2 / 3) -5 else 123;
+        try std.testing.expectEqual(expected, bundle.pawn.get());
+        try std.testing.expectEqual(expected, bundle.minor.get());
+        try std.testing.expectEqual(expected, bundle.non_pawn_white.get());
+        try std.testing.expectEqual(expected, bundle.non_pawn_black.get());
+    };
+    for (pawn, 0..) |*entry, i| for (entry) |*piece| for (piece) |*value| {
+        try std.testing.expectEqual(@as(i16, if (i >= pawn.len / 3 and i < pawn.len * 2 / 3) -1338 else 456), value.get());
+    };
+    shared.clearRange(0, 3);
+    shared.clearRange(2, 3);
+    try std.testing.expectEqual(@as(i16, -586), continuation[1][1][15][63][15][63].get());
+    var state: z.position.StateInfo = undefined;
+    var pos: z.position.Position = undefined;
+    pos.st = &state;
+    for ([_]u64{ 0, 8191, 8192, 16383, 65535, 65536, 131071, std.math.maxInt(u64) }) |key| {
+        state.pawn_key = key;
+        state.minor_piece_key = key ^ 42;
+        state.non_pawn_key = .{ key ^ 65536, key ^ 12345 };
+        try std.testing.expect(shared.pawnEntry(&pos) == &pawn[key & 16383]);
+        try std.testing.expect(shared.pawnCorrectionEntry(&pos) == &correction[key & 131071]);
+        try std.testing.expect(shared.minorCorrectionEntry(&pos) == &correction[(key ^ 42) & 131071]);
+        try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .white) == &correction[(key ^ 65536) & 131071]);
+        try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .black) == &correction[(key ^ 12345) & 131071]);
+    }
+}

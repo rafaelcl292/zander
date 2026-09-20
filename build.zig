@@ -32,6 +32,8 @@ pub fn build(b: *std.Build) void {
     network_cpp.addFileArg(b.path("tests/network_reference.cpp"));
     network_cpp.addFileArg(b.path("vendor/stockfish/src/uci.cpp"));
     network_cpp.addFileArg(b.path("vendor/stockfish/src/tt.cpp"));
+    const history_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT" });
+    history_cpp.addFileArg(b.path("tests/history_reference.cpp"));
     // Track the pinned source directory, including transitive header includes.
     var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
     defer upstream.close(b.graph.io);
@@ -45,6 +47,7 @@ pub fn build(b: *std.Build) void {
             nnue_cpp.addFileInput(input);
             cpp.addFileInput(input);
             network_cpp.addFileInput(input);
+            history_cpp.addFileInput(input);
         }
     }
     reference_cpp.addArg("-Wl,--gc-sections");
@@ -82,6 +85,11 @@ pub fn build(b: *std.Build) void {
         const network_test = b.addTest(.{ .root_module = network_mod });
         b.step("network-test", "Compare real NNUE weights and incremental evaluation with Stockfish").dependOn(&b.addRunArtifact(network_test).step);
     }
+    history_cpp.addArg("-o");
+    const history_exe = history_cpp.addOutputFileArg("history-reference");
+    const history_run = std.Build.Step.Run.create(b, "generate history reference");
+    history_run.addFileArg(history_exe);
+    diff_mod.addAnonymousImport("history_reference", .{ .root_source_file = history_run.captureStdOut(.{ .basename = "history_reference.zig" }) });
     const diff = b.addTest(.{ .root_module = diff_mod });
     const diff_step = b.step("differential", "Compare with pinned Stockfish C++ (requires host c++)");
     diff_step.dependOn(&b.addRunArtifact(diff).step);
