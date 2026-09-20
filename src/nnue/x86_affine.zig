@@ -52,31 +52,42 @@ fn sparse(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output
     const Vec = @Vector(width, i32);
     var accumulators: [32 / width]Vec = undefined;
     inline for (0..32 / width) |i| accumulators[i] = biases[i * width ..][0..width].*;
-    for (0..256) |block| {
-        const input_word = @import("std").mem.readInt(u32, input[block * 4 ..][0..4], .little);
-        if (input_word == 0) continue;
-        const x: @Vector(bytes, u8) = @bitCast(@as(@Vector(width, u32), @splat(input_word)));
-        inline for (0..32 / width) |i| {
-            const w: @Vector(bytes, i8) = weights[block * 128 + i * bytes ..][0..bytes].*;
-            if (dot_product) {
-                accumulators[i] = asm ("vpdpbusd %[weights], %[input], %[result]"
-                    : [result] "=x" (-> Vec),
-                    : [input] "x" (x),
-                      [weights] "x" (w),
-                      [previous] "0" (accumulators[i]),
-                );
-            } else {
-                const pairs = asm ("vpmaddubsw %[weights], %[input], %[result]"
-                    : [result] "=x" (-> @Vector(bytes / 2, i16)),
-                    : [input] "x" (x),
-                      [weights] "x" (w),
-                );
-                const products = asm ("vpmaddwd %[ones], %[pairs], %[result]"
-                    : [result] "=x" (-> Vec),
-                    : [pairs] "x" (pairs),
-                      [ones] "x" (@as(@Vector(bytes / 2, i16), @splat(1))),
-                );
-                accumulators[i] +%= products;
+    for (0..4) |group| {
+        // Reference NNZ bitset traversal: branch only for present input blocks.
+        var bits: u64 = 0;
+        inline for (0..8) |chunk| {
+            const start = group * 256 + chunk * 32;
+            const words: @Vector(8, u32) = @bitCast(input[start..][0..32].*);
+            const mask: u8 = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
+            bits |= @as(u64, mask) << (chunk * 8);
+        }
+        while (bits != 0) {
+            const block = group * 64 + @ctz(bits);
+            bits &= bits - 1;
+            const input_word = @import("std").mem.readInt(u32, input[block * 4 ..][0..4], .little);
+            const x: @Vector(bytes, u8) = @bitCast(@as(@Vector(width, u32), @splat(input_word)));
+            inline for (0..32 / width) |i| {
+                const w: @Vector(bytes, i8) = weights[block * 128 + i * bytes ..][0..bytes].*;
+                if (dot_product) {
+                    accumulators[i] = asm ("vpdpbusd %[weights], %[input], %[result]"
+                        : [result] "=x" (-> Vec),
+                        : [input] "x" (x),
+                          [weights] "x" (w),
+                          [previous] "0" (accumulators[i]),
+                    );
+                } else {
+                    const pairs = asm ("vpmaddubsw %[weights], %[input], %[result]"
+                        : [result] "=x" (-> @Vector(bytes / 2, i16)),
+                        : [input] "x" (x),
+                          [weights] "x" (w),
+                    );
+                    const products = asm ("vpmaddwd %[ones], %[pairs], %[result]"
+                        : [result] "=x" (-> Vec),
+                        : [pairs] "x" (pairs),
+                          [ones] "x" (@as(@Vector(bytes / 2, i16), @splat(1))),
+                    );
+                    accumulators[i] +%= products;
+                }
             }
         }
     }
