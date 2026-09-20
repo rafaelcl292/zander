@@ -8,6 +8,7 @@ const usage =
     \\  zander search <network.nnue> <depth: 1..245> [--multipv=N] [--chess960] ["FEN"]
     \\  zander uci [network.nnue]
     \\  zander help
+    \\  zander layout
     \\
     \\The default position is the standard initial position.
     \\Scores use internal units from the side-to-move perspective.
@@ -30,6 +31,11 @@ fn run(init: std.process.Init) !void {
     var buffer: [4096]u8 = undefined;
     var output = std.Io.File.Writer.init(.stdout(), init.io, &buffer);
     const writer = &output.interface;
+    if (args.len == 2 and std.mem.eql(u8, args[1], "layout")) {
+        try z.layout.write(writer);
+        try writer.flush();
+        return;
+    }
     if (args.len == 2 and (std.mem.eql(u8, args[1], "help") or std.mem.eql(u8, args[1], "--help"))) {
         try writer.writeAll(usage);
         try writer.flush();
