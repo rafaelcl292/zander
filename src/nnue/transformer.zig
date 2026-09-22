@@ -82,13 +82,15 @@ pub const FeatureTransformer = struct {
         const registers = 8;
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * registers) {
-            var tile: [registers]@Vector(lanes, i16) = undefined;
-            inline for (0..registers) |i| tile[i] = from[offset + i * lanes ..][0..lanes].*;
+            // A contiguous tile view avoids independent offset calculations for
+            // every vector. Accumulators only need their existing i16 alignment.
+            const Tile = [registers]@Vector(lanes, i16);
+            var tile = @as(*align(@alignOf(i16)) const Tile, @ptrCast(&from[offset])).*;
             self.applyIncrementalPsq(false, lanes, &tile, offset, removed);
             self.applyIncrementalPsq(true, lanes, &tile, offset, added);
             self.applyTile(false, true, lanes, &tile, offset, threats_removed);
             self.applyTile(true, true, lanes, &tile, offset, threats_added);
-            inline for (0..registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
+            @as(*align(@alignOf(i16)) Tile, @ptrCast(&to[offset])).* = tile;
         }
         var psqt: @Vector(buckets, i32) = from_psqt.*;
         for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
@@ -161,12 +163,13 @@ pub const FeatureTransformer = struct {
     }
     inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
         for (indices) |index| {
+            const row = if (threats) self.threat_weights[index][offset..][0 .. 8 * lanes] else self.weights[index][offset..][0 .. 8 * lanes];
             inline for (0..8) |i| {
-                const start = offset + i * lanes;
+                const start = i * lanes;
                 const weight: @Vector(lanes, i16) = if (threats)
-                    @as(@Vector(lanes, i8), self.threat_weights[index][start..][0..lanes].*)
+                    @as(@Vector(lanes, i8), row[start..][0..lanes].*)
                 else
-                    self.weights[index][start..][0..lanes].*;
+                    row[start..][0..lanes].*;
                 if (add) tile[i] +%= weight else tile[i] -%= weight;
             }
         }

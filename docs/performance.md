@@ -4,11 +4,16 @@
 
 **Search outputs match in the measured single-thread suites. Thread throughput
 increases, but this shallow suite does not establish long-search scaling.
-Playing strength remains unestablished.** The current measurements use Zander
+Playing strength remains unestablished.** The historical measurements below use Zander
 built from clean commit `ddaa58c88e5c5e4f22cbe3889a34746a844cc35f` with Zig
 0.16.0, ReleaseFast, and the automatic NNUE backend. The reference is the retained
 GCC/BMI2/LTO Stockfish binary for pinned commit
 `17a6c8f1eb0da45c2ca405321919519bf4e211ba`. Neither engine uses PGO.
+
+The [three-version comparison](#controlled-comparison-of-three-zander-versions)
+tests the historical, pre-huge-page and huge-page versions together. The
+[latest NNUE tile comparison](#contiguous-nnue-accumulator-tiles--2026-09-22)
+measures the retained optimization against that same Stockfish binary.
 
 ## Search equivalence — did the searches produce the same results?
 
@@ -231,3 +236,131 @@ Local artifacts: [initial comparison](../artifacts/nnue-incremental/controlled-h
 [full-corpus confirmation](../artifacts/nnue-incremental/validation-huge-network-4-d18-all.json),
 [actual page mappings](../artifacts/nnue-incremental/network-pages.json), and
 [investigation notes](../artifacts/nnue-incremental/REPORT.md).
+
+## Controlled comparison of three Zander versions
+
+Measured on 2026-09-22 with all three Zander commits rebuilt using the same
+Zig 0.16.0 ReleaseFast/auto configuration. The pinned Stockfish executable is
+the same GCC/BMI2/LTO reference identified above. This comparison replaces
+estimates obtained by combining results from different workloads.
+
+All engines searched the same 27 positions at depth 20, one thread, 64 MiB hash,
+NumaPolicy=none. Two sessions used fresh processes, each with one discarded
+full-corpus warmup and five measured rounds. Engine order was randomized and
+balanced: each engine occupied every execution rank once per position/session.
+Engines ran on CPU 2 and the harness on CPU 0, with no concurrent builds. A
+second process using the identical pre-huge-page binary provided an A/A control.
+The ten measured rounds were fixed before timing began.
+
+| Zander version | Commit | More search time than Stockfish | Within-run 95% bootstrap interval |
+| --- | --- | ---: | ---: |
+| Historical report version | `ddaa58c` | 7.20% | 5.31–8.89% |
+| Immediately before huge pages | `9b1b51a` | 3.92% | 2.74–5.06% |
+| Including huge pages | `d2ff957` | 2.30% | 1.15–3.42% |
+
+Ratios use total search wall time, excluding initialization, warmup and hash
+clearing. The immediate-before result averages both identical baseline
+processes. Intervals resample whole paired rounds 20,000 times, retaining all
+positions and engines together; they describe this fixed corpus and execution,
+not other machines or workloads. WSL2 host scheduling and frequency remain
+uncontrolled, and rounds within a session may be correlated.
+
+The isolated huge-page change reduced time by **1.55%** (within-run interval
+1.11–2.06%), with improvements of 1.29% and 1.82% in the two sessions. It was
+also 1.08% faster than the faster of the two baseline processes overall. The
+A/A difference was 0.97% (interval −0.09–2.05%). This supports a modest local
+gain, with more uncertainty than the point estimate alone suggests. The earlier
+depth-18 estimate of about 2.4% should not be treated as universal.
+
+All **1,350 measured searches**, as well as warmups, matched move, score, PV and
+nodes. Every engine searched 144,861,910 measured nodes. The current Zander used
+184.642 seconds versus Stockfish's 180.490 seconds; peak RSS was approximately
+253.2 MiB versus 322.5–322.6 MiB. The current version reduced time by 4.57%
+relative to the historical Zander in this same experiment. No Elo or updated
+multi-thread scaling claim follows from these results.
+
+Local reproducible evidence: [report](../artifacts/reliable-comparison/REPORT.md),
+[raw samples and hashes](../artifacts/reliable-comparison/results.json),
+[summary and intervals](../artifacts/reliable-comparison/summary.json),
+[predeclared protocol](../artifacts/reliable-comparison/protocol.json),
+[host and toolchain](../artifacts/reliable-comparison/environment.json),
+[runner](../artifacts/reliable-comparison/run.py) and
+[analysis](../artifacts/reliable-comparison/analyze.py).
+
+## Cache, layout and compiler experiments — 2026-09-22
+
+Seven candidates were explored after `d2ff957`: history padding, huge-page history
+allocation, outlined MovePicker scoring, packed move returns, a split MovePicker
+fast path, earlier hot metadata, and frame-pointer omission. None was retained.
+
+Frame-pointer omission looked best in the depth-18 pilot (1.94% less time), but
+an independent depth-20 confirmation reduced that estimate to **0.25% less time**,
+with a within-run 95% paired-round bootstrap interval from **1.35% less to 0.89%
+more**. Session one was 0.42% slower and session two 0.92% faster. The identical
+baseline control differed by 0.71%. About 0.94% fewer retired instructions did
+not translate into a reliable elapsed-time improvement.
+
+The confirmation used 27 positions, two fresh-process sessions, four measured
+rounds per session after warmup, one thread and 64 MiB hash, with balanced engine
+order and CPU affinity. All **864 measured searches** matched move, score, PV and
+nodes. The unchanged baseline took 2.55% more time than Stockfish; the rejected
+candidate took 2.29% more. These are local execution-speed results, not evidence
+of parity or playing strength. The fixed-corpus and WSL2 limitations above apply.
+
+The candidate passed Debug unit tests, ReleaseFast unit/differential/network/
+search/engine/UCI tests, formatting and Python checks before being reverted.
+Local evidence: [investigation report](../artifacts/cache-investigation/REPORT.md),
+[confirmation protocol](../artifacts/cache-investigation/confirmation/protocol.json),
+[raw measurements](../artifacts/cache-investigation/confirmation/results.json),
+[summary](../artifacts/cache-investigation/confirmation/summary.json), and
+[rejected patch](../artifacts/cache-investigation/confirmation/candidate.patch).
+
+## Contiguous NNUE accumulator tiles — 2026-09-22
+
+The retained candidate changes accumulator tile loads/stores to contiguous vector
+array views and rebases each weight row before indexing its vectors. Integer
+arithmetic, feature lists and search behavior are unchanged. The array views
+retain the existing i16 alignment requirement. This extends the earlier
+weight-row-only experiment: the generated accumulator stores now also avoid
+seven separate offset calculations, reducing general-register pressure.
+
+A separate confirmation compared `d2ff957`, an identical control, the candidate,
+and the pinned Stockfish executable. It used 27 positions at depth 20, one
+thread, 64 MiB hash, two fresh-process sessions, one warmup and four measured
+rounds per session. Execution ranks were balanced per position/session; engines
+ran on CPU 2 and the harness on CPU 0, with no concurrent builds.
+
+| Comparison | Extra search time | Within-run 95% paired-round bootstrap interval |
+| --- | ---: | ---: |
+| Candidate versus mean baseline | **−1.77%** | −2.67% to −0.91% |
+| Identical baseline control | +0.46% | −1.34% to +2.10% |
+| Baseline versus Stockfish | +2.60% | +1.83% to +3.34% |
+| Candidate versus Stockfish | **+0.79%** | −0.27% to +1.87% |
+
+The candidate improved by 0.84% and 2.69% in the two sessions, and by 1.55%
+relative to the faster baseline process overall. Retired instructions fell
+2.86%. All **864 measured searches**, plus warmups, matched move, score, PV and
+nodes; each engine searched 115,889,528 measured nodes. Candidate search time
+was 145.942 seconds versus Stockfish's 144.802 seconds. Peak RSS was about
+253.2 MiB versus 322.5 MiB.
+
+The more optimistic depth-18 pilot showed 3.55% less time; use the independent
+confirmation above as the final estimate. Larger accumulator tiles and fusion
+of activation generation with the first sparse layer were rejected. The fused
+version passed correctness checks but took 8.49% more search time in its pilot.
+
+Intervals resample whole paired rounds 20,000 times. These results are specific
+to this corpus, i7-10750H and WSL2; session rounds can be correlated and physical
+frequency/scheduling are uncontrolled. The interval versus Stockfish crossing
+zero does not prove performance equivalence. No new multi-thread or playing-
+strength claim follows. Debug and ReleaseFast tests, differential/network/search/
+engine/UCI checks, formatting and Python checks passed. ReleaseFast unit and
+real-network reference tests also passed for `-Dcpu=baseline`.
+
+Local evidence: [investigation report](../artifacts/nnue-tiles/REPORT.md),
+[raw samples and hashes](../artifacts/nnue-tiles/confirmation/results.json),
+[summary](../artifacts/nnue-tiles/confirmation/summary.json),
+[protocol](../artifacts/nnue-tiles/confirmation/protocol.json),
+[runner](../artifacts/nnue-tiles/confirmation/run.py),
+[analysis](../artifacts/nnue-tiles/confirmation/analyze.py), and
+[patch](../artifacts/nnue-tiles/final.patch).
