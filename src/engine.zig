@@ -34,6 +34,7 @@ pub const Engine = struct {
     tables: *@import("attacks.zig").Tables,
     keys: *@import("position_keys.zig").PositionKeys,
     network: ?*nn.Network = null,
+    network_region: ?memory.Region = null,
     tablebases: ?*@import("syzygy/database.zig").Database,
     network_path: ?[]u8 = null,
     accumulators: *acc.Stack,
@@ -98,6 +99,7 @@ pub const Engine = struct {
         errdefer allocator.free(self.states);
         try self.position.set(p.start_fen, false, &self.states[0], self.tables, self.keys);
         self.network = null;
+        self.network_region = null;
         self.tablebases = null;
         self.network_path = null;
         self.control = .{ .context = self, .clock = clock };
@@ -127,7 +129,7 @@ pub const Engine = struct {
         allocator.free(self.groups);
         self.shared_arena.deinit();
         if (self.tablebases) |database| database.destroy();
-        if (self.network) |network| allocator.destroy(network);
+        if (self.network_region) |*region| region.deinit();
         if (self.network_path) |path| allocator.free(path);
         allocator.free(self.states);
         self.hash_region.deinit();
@@ -346,8 +348,12 @@ pub const Engine = struct {
         return hits;
     }
     pub fn loadNetwork(self: *Engine, path: []const u8) !void {
-        const replacement = try self.allocator.create(nn.Network);
-        errdefer self.allocator.destroy(replacement);
+        // Match NUMA replicas: the primary network is also a large, randomly
+        // accessed table. A dedicated mapping permits huge pages without NUMA
+        // binding; Region falls back when the host cannot provide them.
+        var network_region = try memory.Region.allocate(self.allocator, @sizeOf(nn.Network), .transparent);
+        errdefer network_region.deinit();
+        const replacement: *nn.Network = @ptrCast(network_region.bytes.ptr);
         const bytes = try std.Io.Dir.cwd().readFileAlloc(self.io, path, self.allocator, .limited(200 * 1024 * 1024));
         defer self.allocator.free(bytes);
         _ = try replacement.load(bytes);
@@ -357,9 +363,10 @@ pub const Engine = struct {
         errdefer for (&replicas) |*replica| if (replica.*) |*region| region.deinit();
         for (self.groups, 0..) |group, i| replicas[i] = try group.copyNetwork(self.allocator, replacement);
         for (self.groups, 0..) |group, i| group.replaceNetwork(replacement, replicas[i]);
-        if (self.network) |network| self.allocator.destroy(network);
+        if (self.network_region) |*old| old.deinit();
         if (self.network_path) |old_path| self.allocator.free(old_path);
         self.network = replacement;
+        self.network_region = network_region;
         self.network_path = owned_path;
         self.base.network = if (self.groups.len != 0) self.groups[self.worker_nodes[0]].network.? else replacement;
         self.newGame();

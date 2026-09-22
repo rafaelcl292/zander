@@ -189,3 +189,45 @@ taskset -c 2 python3 scripts/compare_engines.py \
 For the depth-16 confirmation, swap the two executable arguments and write to
 `artifacts/report-current/depth-16-reverse.json`. In that JSON, `candidate` is
 Stockfish and `reference` is Zander; the table above maps engines by identity.
+
+## Primary NNUE allocation — 2026-09-22
+
+A separate experiment against `9b1b51a347c8e338682bf793d474008d2bdea1e7`
+changed the UCI engine's primary network allocation to the dedicated, aligned
+`memory.Region` already used for NUMA replicas. It requests transparent huge
+pages before loading the weights and retains normal-page/platform fallback.
+Previously the primary network used the general allocator, including in the
+usual single-thread configuration without NUMA replicas.
+
+Same i7-10750H/WSL2 host, Zig 0.16.0 ReleaseFast, automatic NNUE backend,
+one thread, 16 MiB hash, NumaPolicy=none, depth 18. Engines were pinned to CPU 2
+and the harness to CPU 0. Each run had one excluded warmup round; position and
+engine order were randomized within rounds. A second process running the
+identical baseline binary served as an A/A control. Times below sum all measured
+searches, excluding loading and hash clearing.
+
+| Run | Positions × repeats | Baseline A (s) | Baseline B (s) | Candidate (s) | Less time vs mean baseline |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Initial comparison | 7 × 6 | 17.526 | 17.672 | 17.164 | 2.47% |
+| Full-corpus confirmation | 27 × 4 | 15.872 | 15.829 | 15.476 | 2.36% |
+
+Move, score, PV and node count matched in every measured search. Retired
+instructions were effectively identical. The full-corpus A/A difference was
+0.27%; this remains a local timing result, not a guarantee for other CPUs,
+page configurations, thread counts, or playing strength.
+
+Linux `/proc/<pid>/smaps` confirmed that the candidate network occupied
+112 MiB of transparent huge pages; the baseline network had none. Mapping
+rounding cost approximately 2 MiB of additional resident memory on this host.
+NUMA replicas already requested huge pages, so this result does not establish
+an additional gain when searching those replicas.
+
+Unit tests in Debug and ReleaseFast, ReleaseFast differential tests, engine
+lifecycle tests in both modes, UCI integration, formatting and Python checks
+passed. A failure-injection regression also verifies that an unsuccessful
+network replacement leaves the previous network usable for search.
+
+Local artifacts: [initial comparison](../artifacts/nnue-incremental/controlled-huge-network-6.json),
+[full-corpus confirmation](../artifacts/nnue-incremental/validation-huge-network-4-d18-all.json),
+[actual page mappings](../artifacts/nnue-incremental/network-pages.json), and
+[investigation notes](../artifacts/nnue-incremental/REPORT.md).

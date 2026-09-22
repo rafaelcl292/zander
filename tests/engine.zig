@@ -99,6 +99,23 @@ test "persistent engine retains state and replaces resources transactionally" {
     }
 }
 
+test "failed network replacement leaves the previous network usable" {
+    var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const engine = try z.engine.Engine.create(allocator.allocator(), std.testing.io, 1);
+    defer engine.destroy();
+    try engine.loadNetwork(@import("options").network_path);
+    const network = engine.network.?;
+    allocator.fail_index = allocator.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, engine.loadNetwork(@import("options").network_path));
+    allocator.fail_index = std.math.maxInt(usize);
+    try std.testing.expectEqual(network, engine.network.?);
+    try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
+    const result = try engine.runSearch();
+    try std.testing.expectEqual(@as(u64, 1475), result.nodes);
+    var text: [6]u8 = undefined;
+    try std.testing.expectEqualStrings("d2d4", z.notation.moveText(result.best_move, false, &text));
+}
+
 test "prepared searches reuse worker payload while the engine allocator is sealed" {
     var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     const engine = try z.engine.Engine.create(allocator.allocator(), std.testing.io, 1);
