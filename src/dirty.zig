@@ -31,6 +31,13 @@ pub const Dirties = struct {
     threats: DirtyThreats = .{},
     before: [2]u64 = @splat(0),
     after: [2]u64 = @splat(0),
+    /// Reset logical state without copying the unused threat-list storage.
+    pub fn reset(self: *Dirties) void {
+        self.piece = .{};
+        self.threats.len = 0;
+        self.before = @splat(0);
+        self.after = @splat(0);
+    }
 };
 comptime {
     std.debug.assert(@sizeOf(DirtyThreat) == 4);

@@ -31,7 +31,7 @@ pub const Stack = struct {
     size: usize = 1,
     pub fn reset(self: *Stack) void {
         self.size = 1;
-        self.accumulators[0].dirties = .{};
+        self.accumulators[0].dirties.reset();
         self.accumulators[0].computed = @splat(false);
     }
     pub fn latest(self: *Stack) *Accumulator {
@@ -41,7 +41,7 @@ pub const Stack = struct {
         std.debug.assert(self.size < self.accumulators.len);
         const state = &self.accumulators[self.size];
         state.computed = @splat(false);
-        state.dirties = .{};
+        state.dirties.reset();
         self.size += 1;
         return &state.dirties;
     }

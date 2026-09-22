@@ -511,7 +511,7 @@ pub const Position = struct {
     pub fn doMoveWithDirties(self: *Position, m: t.Move, next: *StateInfo, dirties: ?*dirty.Dirties) void {
         const dts: ?*dirty.DirtyThreats = if (dirties) |d| &d.threats else null;
         if (dirties) |d| {
-            d.* = .{};
+            d.reset();
             d.before = .{ self.piecesOf(.white, .pawn), self.piecesOf(.black, .pawn) };
         }
         std.debug.assert(next != self.st);

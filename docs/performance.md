@@ -364,3 +364,99 @@ Local evidence: [investigation report](../artifacts/nnue-tiles/REPORT.md),
 [runner](../artifacts/nnue-tiles/confirmation/run.py),
 [analysis](../artifacts/nnue-tiles/confirmation/analyze.py), and
 [patch](../artifacts/nnue-tiles/final.patch).
+
+## Follow-up on block access and initialization — 2026-09-22
+
+Two candidates were tested against `1b37302`: contiguous tile views in the NNUE
+refresh/hybrid paths, and resetting only the metadata of `Dirties`. The latter
+removed two 432-byte constant-object copies in the normal move path: one from
+NNUE stack push and another from position update. Threat storage outside the
+logical list length is unspecified; appended entries are written before use.
+
+The pilots favored both candidates, but an independent depth-20 confirmation
+remained inconclusive. It used 27 positions, one thread, 64 MiB hash, two fresh-
+process sessions, one warmup and four measured rounds per session. Two identical
+baseline processes controlled for timing variation; execution ranks were balanced
+and no builds ran concurrently.
+
+| Candidate | Less search time than mean baseline | Within-run 95% interval for time change | Retired-instruction change |
+| --- | ---: | ---: | ---: |
+| Metadata-only reset | 0.83% | -2.42% to +0.69% | -1.79% |
+| Contiguous refresh/hybrid tiles | 0.70% | -2.30% to +0.79% | -0.17% |
+
+Negative interval endpoints mean faster execution. Metadata reset improved by
+1.14% and 0.52% in the two sessions; refresh/hybrid by 0.70% and 0.71%. The
+identical baseline control differed by 0.57%. Both intervals still include a
+small regression, so neither candidate was retained at this stage. This does not establish
+that they have no benefit; it does not establish a reliable speed gain either.
+
+All **864 measured searches**, plus warmups, matched move, score, PV and nodes;
+each engine searched 115,889,528 measured nodes. Metadata reset passed Debug
+unit tests and ReleaseFast unit/differential/network/search/engine/UCI tests,
+formatting and Python checks. The refresh/hybrid candidate passed the real-
+network reference test. Both candidates were initially reverted; the metadata
+reset was subsequently accepted as described below.
+
+The intervals resample paired whole rounds 20,000 times and apply only to this
+fixed corpus and i7-10750H/WSL2 execution. Session rounds can be correlated;
+physical CPU frequency and scheduling remain uncontrolled. Stockfish was not
+part of this run, so the ratios must not be combined with earlier experiments
+to claim an updated Stockfish gap.
+
+Local evidence: [report](../artifacts/contiguous-followup/REPORT.md),
+[raw measurements](../artifacts/contiguous-followup/confirmation/results.json),
+[summary](../artifacts/contiguous-followup/confirmation/summary.json),
+[protocol](../artifacts/contiguous-followup/confirmation/protocol.json),
+[metadata reset patch](../artifacts/contiguous-followup/dirty-reset.patch), and
+[refresh/hybrid patch](../artifacts/contiguous-followup/refresh.patch).
+
+## Metadata reset: precision follow-up — 2026-09-22
+
+A more controlled test revisited only the metadata-reset candidate against
+`1b37302`. Ten fresh-process sessions used two copies of each binary, eight
+FEN-only positions from the pinned Stockfish benchmark and one million requested
+nodes per search. ABBA/BAAB blocks were balanced per position and session, with
+randomized position and process order. Engines ran on guest CPU 2, harness on
+CPU 0, with no concurrent builds. The primary metric and decision rule were
+fixed before timing; all samples were retained.
+
+| Metric, candidate versus baseline | Change | Within-run 95% session-bootstrap interval |
+| --- | ---: | ---: |
+| Search wall time (primary) | -0.74% | -1.60% to +0.24% |
+| Scheduled task CPU time | -0.74% | -1.60% to +0.24% |
+| CPU cycles (secondary) | -0.88% | -1.30% to -0.45% |
+| Retired instructions | -1.77% | Essentially invariant across sessions |
+
+The candidate improved wall time in 7 of 10 sessions. The identical baseline
+copies differed by +0.07% (interval -0.87% to +0.98%); the identical candidate
+copies differed by -0.71% (interval -1.93% to +0.57%). All **320 measured searches**
+and 40 warmups matched move, score, PV, nodes and depth. The measured total was
+320,131,200 nodes; slight node-limit overshoots were identical across binaries.
+
+The narrower wall-time interval is still **inconclusive** under the predeclared
+rule. Lower measured cycle cost strengthens the evidence of CPU efficiency,
+but this secondary result does not replace the wall-time criterion. The corpus
+and bootstrap unit differ from the preceding fixed-depth test, so the results
+should not be naively pooled.
+
+The metadata-only reset is retained because it removes unnecessary copies,
+explicitly resets all logical state, and preserves the validated behavior. The
+instruction and cycle reductions support the implementation choice; the measured
+0.74% wall-time reduction is not claimed as a proven speedup. The separate
+refresh/hybrid tile experiment remains excluded. This acceptance does not change
+the statistical test's inconclusive result.
+
+Intervals resample ten complete sessions 50,000 times. WSL2 host scheduling and
+physical frequency remain uncontrolled; cpufreq is unavailable. Kernel-inclusive
+perf counters were denied, and filtered software context-switch counts were
+omitted after an instrumentation check. That interrupted diagnostic and the
+zero-sample denied attempt are archived separately and excluded from inference.
+Available counters ran without multiplexing. Guest task-clock and CPU activity
+do not establish host physical-core isolation or identify all interference.
+
+Local evidence: [report](../artifacts/dirty-precision/REPORT.md),
+[protocol](../artifacts/dirty-precision/protocol.json),
+[raw samples](../artifacts/dirty-precision/results.json),
+[summary](../artifacts/dirty-precision/summary.json),
+[runner](../artifacts/dirty-precision/run.py), and
+[analysis](../artifacts/dirty-precision/analyze.py).
