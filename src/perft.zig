@@ -5,7 +5,8 @@ const movegen = @import("movegen.zig");
 /// Callers must bound depth before accepting untrusted input.
 pub fn count(pos: *Position, depth: u8) u64 {
     if (depth == 0) return 1;
-    var moves: movegen.MoveList = .{};
+    // generate initializes the length and every move in the returned slice.
+    var moves: movegen.MoveList = undefined;
     movegen.generate(.legal, pos, &moves);
     if (depth == 1) return moves.len;
     var nodes: u64 = 0;
