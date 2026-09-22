@@ -82,6 +82,9 @@ zig build python-check
 
 ## Compare engines
 
+See the [performance report](performance.md) for measured time, nodes, memory,
+and thread scaling, with search equivalence and playing strength kept separate.
+
 The [comparison harness](../scripts/compare_engines.py) runs repeated fixed-depth
 UCI searches and can run paired games. Prepare the submodule and network first,
 then build a scalar reference and candidate:
@@ -105,6 +108,11 @@ samples, median elapsed times, and optional game results. A
 `reference_over_candidate` ratio above 1 means the candidate took less time.
 The reference build helper produces a scalar executable; account for backend
 and compiler differences when interpreting timing comparisons.
+
+It also records the positions file hash and `benchmark_peak_rss_bytes` for each
+engine: Linux process high-water RSS through the benchmarks, including
+initialization and excluding subsequent games. On unsupported platforms this
+value is `null`. Hash size and worker payload budgets are not total process RSS.
 
 Add `--games 20 --game-nodes 10000` to run 20 games with colors swapped in pairs.
 Games reaching the ply limit remain unfinished. These checks do not establish

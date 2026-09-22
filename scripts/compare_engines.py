@@ -123,6 +123,16 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def peak_rss_bytes(engine):
+    """Linux process high-water RSS through the benchmarks; unavailable elsewhere."""
+    try:
+        status = pathlib.Path(f"/proc/{engine.process.pid}/status").read_text()
+    except OSError:
+        return None
+    match = re.search(r"^VmHWM:\s+(\d+) kB$", status, re.MULTILINE)
+    return int(match.group(1)) * 1024 if match else None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("candidate")
@@ -149,6 +159,7 @@ def main():
     # Corpus entries contain a Chess960 flag; ordinary FEN-only files also work.
     positions = [(line.startswith("1|"), line.split("|", 1)[-1].strip()) for line in positions]
     report = {"platform": platform.platform(), "network_sha256": digest(args.network),
+              "positions_sha256": digest(args.positions),
               "executables": {"candidate": digest(args.candidate), "reference": digest(args.reference)},
               "configuration": {key: str(value) if isinstance(value, pathlib.Path) else value
                                 for key, value in vars(args).items()}, "benchmarks": [], "games": []}
@@ -175,6 +186,8 @@ def main():
             report["benchmarks"].append({"fen": fen, "chess960": chess960, "samples": samples, "identical": equivalent,
                                           "median_elapsed_ns": timing, "reference_over_candidate": timing[1] / timing[0]})
             print(f"Benchmark {len(report['benchmarks'])}/{len(positions)} identical={equivalent}", flush=True)
+        report["benchmark_peak_rss_bytes"] = dict(zip(
+            ("candidate", "reference"), (peak_rss_bytes(engine) for engine in clients)))
         if args.games:
             referee = Engine(args.reference, args.network, 1, 1)
             clients.append(referee)
