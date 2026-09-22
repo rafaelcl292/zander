@@ -13,5 +13,6 @@
         "LICENSE",
         "AUTHORS.stockfish",
         "README.md",
+        "docs",
     },
 }
