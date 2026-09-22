@@ -21,7 +21,7 @@ pub const Budget = struct {
         if (limits.time[us] == 0) return .{};
         const scaled = @max(1, @divTrunc(limits.time[us], if (limits.npmsec != 0) limits.npmsec else 1));
         var mtg: i64 = if (limits.moves_to_go != 0) @min(limits.moves_to_go, 50) else 50;
-        if (scaled < 1000 and limits.moves_to_go == 0) mtg = @intFromFloat(@as(f64, @floatFromInt(scaled)) * 0.05);
+        if (scaled < 1000 and limits.moves_to_go == 0) mtg = @trunc(@as(f64, @floatFromInt(scaled)) * 0.05);
         const left = @as(f64, @floatFromInt(@max(1, limits.time[us] + limits.increment[us] * (mtg - 1) - overhead * (2 + mtg))));
         const time: f64 = @floatFromInt(limits.time[us]);
         const game_ply: f64 = @floatFromInt(ply);
@@ -42,8 +42,8 @@ pub const Budget = struct {
             const advantage = @as(f64, @floatFromInt(limits.time[us] - limits.time[us ^ 1])) / @as(f64, @floatFromInt(1 + limits.time[us] + limits.time[us ^ 1]));
             opt_scale *= 1 + 0.9 * @min(advantage, 0);
         }
-        var result: Budget = .{ .optimum = @intFromFloat(@max(1, opt_scale * left)) };
-        result.maximum = @intFromFloat(@max(@as(f64, @floatFromInt(result.optimum)), @min(0.8097 * time - @as(f64, @floatFromInt(overhead)), max_scale * @as(f64, @floatFromInt(result.optimum)))));
+        var result: Budget = .{ .optimum = @trunc(@max(1, opt_scale * left)) };
+        result.maximum = @trunc(@max(@as(f64, @floatFromInt(result.optimum)), @min(0.8097 * time - @as(f64, @floatFromInt(overhead)), max_scale * @as(f64, @floatFromInt(result.optimum)))));
         if (ponder_option) result.optimum += @divTrunc(result.optimum, 4);
         return result;
     }

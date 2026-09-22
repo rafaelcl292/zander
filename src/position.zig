@@ -200,7 +200,7 @@ pub const Position = struct {
                 file = 0;
             } else {
                 if (file >= 8) return error.InvalidFen;
-                const pi = std.mem.indexOfScalar(u8, piece_chars, ch) orelse return error.InvalidFen;
+                const pi = std.mem.findScalar(u8, piece_chars, ch) orelse return error.InvalidFen;
                 if (pi == 0 or pi == 7 or pi == 8) return error.InvalidFen;
                 count += 1;
                 if (count > 32) return error.UnsupportedPosition;

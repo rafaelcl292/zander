@@ -108,7 +108,7 @@ pub fn updateContinuationHistories(frames: []Stack, current: usize, pc: t.Piece,
 pub const Reductions = struct {
     values: [t.max_moves]i32 = @splat(0),
     pub fn init(self: *Reductions) void {
-        for (self.values[1..], 1..) |*value, i| value.* = @intFromFloat((2872.0 / 128.0) * @log(@as(f64, @floatFromInt(i))));
+        for (self.values[1..], 1..) |*value, i| value.* = @trunc((2872.0 / 128.0) * @log(@as(f64, @floatFromInt(i))));
     }
     pub fn reduction(self: *const Reductions, improving: bool, depth: usize, move_number: usize, delta: i32, root_delta: i32) i32 {
         std.debug.assert(depth > 0 and depth < self.values.len and move_number > 0 and move_number < self.values.len and root_delta > 0);

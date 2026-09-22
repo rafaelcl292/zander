@@ -95,7 +95,7 @@ pub const Material = struct {
                 color = 8;
                 continue;
             }
-            const kind = std.mem.indexOfScalar(u8, " PNBRQK", char) orelse return error.InvalidTablebaseName;
+            const kind = std.mem.findScalar(u8, " PNBRQK", char) orelse return error.InvalidTablebaseName;
             if (kind == 0 or self.piece_count >= 7) return error.InvalidTablebaseName;
             self.counts[color + kind] += 1;
             self.piece_count += 1;

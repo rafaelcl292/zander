@@ -201,7 +201,7 @@ const Session = struct {
         self.engine.newGame();
         var warmup = std.mem.tokenizeScalar(u8, games.next().?, '\n');
         for (1..4) |ply| {
-            _ = try self.speedSearch(warmup.next().?, @intFromFloat(50000.0 / @as(f64, @floatFromInt(ply + 15)) * scale));
+            _ = try self.speedSearch(warmup.next().?, @trunc(50000.0 / @as(f64, @floatFromInt(ply + 15)) * scale));
         }
         games.reset();
         var nodes: u64 = 0;
@@ -215,7 +215,7 @@ const Session = struct {
             var ply: usize = 1;
             while (lines.next()) |fen| : (ply += 1) {
                 const start = std.Io.Clock.awake.now(self.engine.io).toMilliseconds();
-                nodes += try self.speedSearch(fen, @intFromFloat(50000.0 / @as(f64, @floatFromInt(ply + 15)) * scale));
+                nodes += try self.speedSearch(fen, @trunc(50000.0 / @as(f64, @floatFromInt(ply + 15)) * scale));
                 elapsed += std.Io.Clock.awake.now(self.engine.io).toMilliseconds() - start;
                 for ([_]i32{ 0, 999 }, 0..) |age, i| {
                     const reading = self.engine.table.hashfull(age);
@@ -266,7 +266,7 @@ const Session = struct {
                 try self.setOption(tokens[0..n]);
                 continue;
             }
-            const split = std.mem.indexOf(u8, line, " moves ") orelse line.len;
+            const split = std.mem.find(u8, line, " moves ") orelse line.len;
             var moves: [16384][]const u8 = undefined;
             var count: usize = 0;
             if (split < line.len) {

@@ -29,7 +29,7 @@ pub const Database = struct {
             while (try iterator.next(io)) |file| {
                 if (!std.mem.endsWith(u8, file.name, ".rtbw") and !std.mem.endsWith(u8, file.name, ".rtbz")) continue;
                 if (files.contains(file.name)) continue;
-                try files.put(a, try a.dupe(u8, file.name), try std.fs.path.join(a, &.{ path, file.name }));
+                try files.put(a, try a.dupe(u8, file.name), try std.Io.Dir.path.join(a, &.{ path, file.name }));
             }
         }
         var iterator = files.iterator();

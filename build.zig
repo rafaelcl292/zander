@@ -172,7 +172,7 @@ pub fn build(b: *std.Build) void {
         defer tablebase_dir.close(b.graph.io);
         var tablebase_files = tablebase_dir.iterate();
         while (tablebase_files.next(b.graph.io) catch @panic("Cannot enumerate Syzygy regression files")) |file| {
-            if (file.kind == .file) reference.addFileInput(.{ .cwd_relative = std.fs.path.join(b.allocator, &.{ path, file.name }) catch @panic("Out of memory") });
+            if (file.kind == .file) reference.addFileInput(.{ .cwd_relative = std.Io.Dir.path.join(b.allocator, &.{ path, file.name }) catch @panic("Out of memory") });
         }
         reference.addFileArg(positions.captureStdOut(.{ .basename = "syzygy-positions.txt" }));
         const tb_options = b.addOptions();

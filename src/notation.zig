@@ -36,7 +36,7 @@ fn parameters(pos: *const p.Position) struct { a: f64, b: f64 } {
     return .{ .a = (((-142.72052667 * m + 372.35176398) * m - 340.71073572) * m) + 415.23490212, .b = (((5.93832785 * m + 15.61267078) * m - 30.57816876) * m) + 69.63866711 };
 }
 pub fn centipawns(value: i32, pos: *const p.Position) i32 {
-    return @intFromFloat(@round(100.0 * @as(f64, @floatFromInt(value)) / parameters(pos).a));
+    return @trunc(@as(f64, @round(100.0 * @as(f64, @floatFromInt(value)) / parameters(pos).a)));
 }
 pub fn writeScore(writer: *std.Io.Writer, value: i32, pos: *const p.Position) !void {
     const absolute: @TypeOf(value) = @intCast(@abs(value));
@@ -51,7 +51,7 @@ pub fn writeScore(writer: *std.Io.Writer, value: i32, pos: *const p.Position) !v
 pub fn wdl(value: i32, pos: *const p.Position) [3]i32 {
     const params = parameters(pos);
     const v: @TypeOf(params.a) = @floatFromInt(value);
-    const wins: i32 = @intFromFloat(0.5 + 1000 / (1 + @exp((params.a - v) / params.b)));
-    const losses: i32 = @intFromFloat(0.5 + 1000 / (1 + @exp((params.a + v) / params.b)));
+    const wins: i32 = @trunc(0.5 + 1000 / (1 + @exp((params.a - v) / params.b)));
+    const losses: i32 = @trunc(0.5 + 1000 / (1 + @exp((params.a + v) / params.b)));
     return .{ wins, 1000 - wins - losses, losses };
 }

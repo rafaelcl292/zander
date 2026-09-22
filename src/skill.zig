@@ -15,7 +15,7 @@ pub const Skill = struct {
         return self.level < 20;
     }
     pub fn timeToPick(self: Skill, depth: i32) bool {
-        return depth == 1 + @as(i32, @intFromFloat(self.level));
+        return depth == 1 + @as(i32, @trunc(self.level));
     }
     pub fn pick(self: *Skill, roots: []const RootMove, rng: *Prng) t.Move {
         std.debug.assert(roots.len != 0);
@@ -30,8 +30,8 @@ pub const Skill = struct {
         const weakness = 120 - 2 * self.level;
         for (roots) |root| {
             const random: u32 = @truncate(rng.next());
-            const noise: i32 = @intCast(random % @as(u32, @intFromFloat(weakness)));
-            const push = @divTrunc(@as(i32, @intFromFloat(weakness * @as(f64, @floatFromInt(top - root.score)) + @as(f64, @floatFromInt(delta * noise)))), 128);
+            const noise: i32 = @intCast(random % @as(u32, @trunc(weakness)));
+            const push = @divTrunc(@as(i32, @trunc(weakness * @as(f64, @floatFromInt(top - root.score)) + @as(f64, @floatFromInt(delta * noise)))), 128);
             if (root.score + push >= maximum) {
                 maximum = root.score + push;
                 self.best = root.pv.moves[0];

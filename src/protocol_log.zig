@@ -27,7 +27,7 @@ pub const Log = struct {
         var offset: usize = 0;
         while (offset < text.len) {
             if (self.line_start) try file.interface.writeAll(prefix);
-            const end = if (std.mem.indexOfScalar(u8, text[offset..], '\n')) |index| offset + index + 1 else text.len;
+            const end = if (std.mem.findScalar(u8, text[offset..], '\n')) |index| offset + index + 1 else text.len;
             try file.interface.writeAll(text[offset..end]);
             self.line_start = text[end - 1] == '\n';
             offset = end;
