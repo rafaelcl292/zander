@@ -64,25 +64,30 @@ pub fn build(b: *std.Build) void {
     const worker_cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-DNNUE_EMBEDDING_OFF", "-ffunction-sections", "-fdata-sections", "-pthread" });
     worker_cpp.addFileArg(b.path("tests/search_worker_reference.cpp"));
     for ([_][]const u8{ "uci", "memory", "misc", "thread", "ucioption", "movepick", "timeman", "syzygy/tbprobe", "score" }) |source| worker_cpp.addFileArg(b.path(b.fmt("vendor/stockfish/src/{s}.cpp", .{source})));
-    // Track the pinned source directory, including transitive header includes.
-    var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch @panic("Initialize the Stockfish submodule first");
-    defer upstream.close(b.graph.io);
+    // Track transitive headers when available. Missing reference sources must only
+    // fail steps that actually compile a C++ oracle, not native builds or tests.
     var upstream_inputs: std.ArrayList(std.Build.LazyPath) = .empty;
-    var walker = upstream.walk(b.allocator) catch @panic("Cannot walk Stockfish sources");
-    defer walker.deinit();
-    while (walker.next(b.graph.io) catch @panic("Cannot read Stockfish sources")) |entry| {
-        if (entry.kind == .file) {
-            const input = b.path(b.fmt("vendor/stockfish/src/{s}", .{entry.path}));
-            upstream_inputs.append(b.allocator, input) catch @panic("Out of memory");
-            reference_cpp.addFileInput(input);
-            tt_cpp.addFileInput(input);
-            nnue_cpp.addFileInput(input);
-            cpp.addFileInput(input);
-            network_cpp.addFileInput(input);
-            history_cpp.addFileInput(input);
-            movepick_cpp.addFileInput(input);
-            search_cpp.addFileInput(input);
-            worker_cpp.addFileInput(input);
+    const reference_commands = [_]*std.Build.Step.Run{ cpp, reference_cpp, tt_cpp, nnue_cpp, network_cpp, history_cpp, movepick_cpp, search_cpp, worker_cpp };
+    var reference_unavailable: ?*std.Build.Step.Fail = null;
+    var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch |err| blk: {
+        const missing_reference = b.addFail(b.fmt(
+            "Cannot open Stockfish reference sources ({s}). Run `git submodule update --init` before reference tests.",
+            .{@errorName(err)},
+        ));
+        reference_unavailable = missing_reference;
+        for (reference_commands) |command| command.step.dependOn(&missing_reference.step);
+        break :blk null;
+    };
+    if (upstream) |*directory| {
+        defer directory.close(b.graph.io);
+        var walker = directory.walk(b.allocator) catch @panic("Cannot walk Stockfish sources");
+        defer walker.deinit();
+        while (walker.next(b.graph.io) catch @panic("Cannot read Stockfish sources")) |entry| {
+            if (entry.kind == .file) {
+                const input = b.path(b.fmt("vendor/stockfish/src/{s}", .{entry.path}));
+                upstream_inputs.append(b.allocator, input) catch @panic("Out of memory");
+                for (reference_commands) |command| command.addFileInput(input);
+            }
         }
     }
     reference_cpp.addArg("-Wl,--gc-sections");
@@ -151,6 +156,7 @@ pub fn build(b: *std.Build) void {
         positions.addFileArg(b.path("tests/syzygy_positions.py"));
         positions.addFileInput(b.path("tests/syzygy_manifest.json"));
         const cpp_tb = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-ffunction-sections", "-fdata-sections", "-pthread" });
+        if (reference_unavailable) |failure| cpp_tb.step.dependOn(&failure.step);
         for (upstream_inputs.items) |input| cpp_tb.addFileInput(input);
         cpp_tb.addFileArg(b.path("tests/syzygy_reference.cpp"));
         cpp_tb.addFileArg(b.path("vendor/stockfish/src/syzygy/tbprobe.cpp"));
