@@ -71,9 +71,9 @@ pub const Network = struct {
         const psqt = @divTrunc(state.psqt[side][bucket] - state.psqt[side ^ 1][bucket], 2);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
-        if (@import("layers.zig").use_sparse) FeatureTransformer.transformMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
+        if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
         var buffer: Architecture.Buffer = undefined;
-        const positional = self.layers[bucket].propagateMasked(&transformed, &masks, &buffer);
+        const positional = self.layers[bucket].propagatePreparedMasked(&transformed, &masks, &buffer);
         return .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(positional, 16) };
     }
     pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [8]Output {
@@ -82,12 +82,12 @@ pub const Network = struct {
         const side = @intFromEnum(pos.side);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
-        if (@import("layers.zig").use_sparse) FeatureTransformer.transformMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
+        if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
         var result: [8]Output = undefined;
         for (&self.layers, &result, 0..) |*layer, *out, bucket| {
             var buffer: Architecture.Buffer = undefined;
             const psqt = @divTrunc(state.psqt[side][bucket] - state.psqt[side ^ 1][bucket], 2);
-            out.* = .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(layer.propagateMasked(&transformed, &masks, &buffer), 16) };
+            out.* = .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(layer.propagatePreparedMasked(&transformed, &masks, &buffer), 16) };
         }
         return result;
     }

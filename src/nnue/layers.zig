@@ -1,5 +1,6 @@
 // Derived from Stockfish nnue/layers and nnue_architecture.h; GPL-3.0-or-later.
 const std = @import("std");
+const layout = @import("layout.zig");
 const Reader = @import("reader.zig").Reader;
 pub const output_scale: i32 = 16;
 pub const weight_scale_bits = 6;
@@ -161,7 +162,7 @@ pub const Architecture = struct {
     }
     pub fn prepareSparse(self: *Architecture) void {
         if (use_sparse) for (0..1024) |input| {
-            for (0..32) |output| self.sparse_weights[input / 4][output][input % 4] = self.fc0.weights[output][input];
+            for (0..32) |output| self.sparse_weights[input / 4][output][input % 4] = self.fc0.weights[output][layout.canonical(input)];
         };
     }
     pub const Buffer = struct {
@@ -170,7 +171,7 @@ pub const Architecture = struct {
         fc1: [32]i32 align(64),
         fc2: [1]i32 align(64),
     };
-    /// Both kernels consume the same serialized weight layout.
+    /// Canonical-input entry point for callers outside the prepared NNUE path.
     pub fn propagate(self: *const Architecture, input: *const [1024]u8, buffer: *Buffer) i32 {
         const masks = nonzeroMasks(input);
         return self.propagateMasked(input, &masks, buffer);
@@ -184,6 +185,16 @@ pub const Architecture = struct {
         return masks;
     }
     pub fn propagateMasked(self: *const Architecture, input: *const [1024]u8, masks: *const [4]u64, buffer: *Buffer) i32 {
+        if (layout.native_pack) {
+            var prepared: [1024]u8 align(64) = undefined;
+            layout.prepare(input, &prepared);
+            const prepared_masks = nonzeroMasks(&prepared);
+            return self.propagatePreparedMasked(&prepared, &prepared_masks, buffer);
+        }
+        return self.propagatePreparedMasked(input, masks, buffer);
+    }
+    /// Input and masks follow layout.canonical; serialized weights stay canonical.
+    pub fn propagatePreparedMasked(self: *const Architecture, input: *const [1024]u8, masks: *const [4]u64, buffer: *Buffer) i32 {
         if (use_sparse) {
             const dispatch = @import("dispatch.zig");
             if (dispatch.sparseFunction(dispatch.selected())) |kernel| {
@@ -258,8 +269,10 @@ test "block sparse affine preserves signed extremes, zero blocks and wrapping su
     for (0..16) |pattern| {
         for (&input, 0..) |*value, i| value.* = if (pattern == 0) 0 else if (pattern == 1) 127 else if ((i / 4) % pattern == 0) @truncate(rng.next() & 127) else 0;
         layer.fc0.propagateScalar(&input, &scalar);
-        const masks = Architecture.nonzeroMasks(&input);
-        kernel(&input, &masks, @ptrCast(&layer.sparse_weights), &layer.fc0.biases, &sparse);
+        var prepared: [1024]u8 = undefined;
+        layout.prepare(&input, &prepared);
+        const masks = Architecture.nonzeroMasks(&prepared);
+        kernel(&prepared, &masks, @ptrCast(&layer.sparse_weights), &layer.fc0.biases, &sparse);
         try std.testing.expectEqualSlices(i32, &scalar, &sparse);
     }
 }

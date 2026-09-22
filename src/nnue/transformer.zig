@@ -1,5 +1,6 @@
 // Derived from Stockfish nnue_feature_transformer.h; GPL-3.0-or-later.
 const std = @import("std");
+const layout = @import("layout.zig");
 const features = @import("features.zig");
 const Reader = @import("reader.zig").Reader;
 pub const dimensions = 1024;
@@ -182,6 +183,37 @@ pub const FeatureTransformer = struct {
         transformScalar(acc, side, output);
         masks.* = @import("layers.zig").Architecture.nonzeroMasks(output);
     }
+    /// Sparse consumers use the native AVX2 pack order, with matching weights.
+    pub fn transformSparseMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: *[4]u64) void {
+        if (!layout.native_pack) return transformMasked(acc, side, output, masks);
+        const Words = @Vector(16, i16);
+        for (0..2) |p| {
+            var j: usize = 0;
+            while (j < dimensions / 2) : (j += 32) {
+                var products: [2]Words = undefined;
+                inline for (0..2) |i| {
+                    const offset = j + i * 16;
+                    const a: Words = acc[side ^ p][offset..][0..16].*;
+                    const b: Words = acc[side ^ p][offset + dimensions / 2 ..][0..16].*;
+                    const first: @Vector(16, u16) = @intCast(@min(@max(a, @as(Words, @splat(0))), @as(Words, @splat(255))));
+                    const second: @Vector(16, u16) = @intCast(@min(@max(b, @as(Words, @splat(0))), @as(Words, @splat(255))));
+                    products[i] = @intCast((first * second) >> @splat(9));
+                }
+                const values = asm ("vpackuswb %[hi], %[lo], %[result]"
+                    : [result] "=x" (-> @Vector(32, u8)),
+                    : [lo] "x" (products[0]),
+                      [hi] "x" (products[1]),
+                );
+                const start = p * (dimensions / 2) + j;
+                output[start..][0..32].* = values;
+                const words: @Vector(8, u32) = @bitCast(values);
+                const mask: u8 = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
+                // x86 is little-endian: eight four-byte blocks are one mask
+                // byte. Every byte is assigned, so no clearing or RMW is needed.
+                std.mem.asBytes(masks)[start / 32] = mask;
+            }
+        }
+    }
     fn transformVectorMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: ?*[4]u64) void {
         if (masks) |bits| bits.* = @splat(0);
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
@@ -217,6 +249,27 @@ pub const FeatureTransformer = struct {
     }
 };
 
+test "sparse transform exhausts clipped products in both perspective orders" {
+    var acc: [2][dimensions]i16 = undefined;
+    var output: [dimensions]u8 = undefined;
+    var expected: [dimensions]u8 = undefined;
+    var masks: [4]u64 = undefined;
+    for (0..256) |a| {
+        for (&acc, 0..) |*row, p| {
+            for (0..dimensions / 2) |j| {
+                row[j] = @intCast(if (p == 0) a else j % 256);
+                row[j + dimensions / 2] = @intCast(if (p == 0) j % 256 else 255 - a);
+            }
+        }
+        for (0..2) |side| {
+            FeatureTransformer.transformScalar(&acc, side, &expected);
+            FeatureTransformer.transformSparseMasked(&acc, side, &output, &masks);
+            for (output, 0..) |value, i| try std.testing.expectEqual(expected[layout.canonical(i)], value);
+            try std.testing.expectEqual(@import("layers.zig").Architecture.nonzeroMasks(&output), masks);
+        }
+    }
+}
+
 test "vector feature transformation matches scalar clipping and lane order" {
     var rng = @import("../prng.zig").Prng.init(789);
     var acc: [2][dimensions]i16 = undefined;
@@ -235,6 +288,9 @@ test "vector feature transformation matches scalar clipping and lane order" {
             FeatureTransformer.transformMasked(&acc, side, &vector, &masks);
             try std.testing.expectEqualSlices(u8, &scalar, &vector);
             try std.testing.expectEqual(@import("layers.zig").Architecture.nonzeroMasks(&scalar), masks);
+            FeatureTransformer.transformSparseMasked(&acc, side, &vector, &masks);
+            for (vector, 0..) |value, i| try std.testing.expectEqual(scalar[layout.canonical(i)], value);
+            try std.testing.expectEqual(@import("layers.zig").Architecture.nonzeroMasks(&vector), masks);
         }
     }
 }
