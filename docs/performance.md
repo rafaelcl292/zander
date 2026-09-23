@@ -592,3 +592,59 @@ Local evidence: [report](../artifacts/arm-tuning/REPORT.md),
 [runner](../artifacts/arm-tuning/run.py),
 [analysis](../artifacts/arm-tuning/analyze.py), and
 [cleanup confirmation](../artifacts/arm-tuning/cleanup.json).
+
+## Precomputed NNUE threat geometry — 2026-09-23
+
+Threat-feature indexing now folds each square's offset into the geometry lookup
+at compile time. Non-pawn geometry is shared between colors, while the two pawn
+attack directions remain separate. The geometry table remains 64 KiB, the
+separate 4 KiB offsets table disappears, and each index uses two table lookups
+instead of three. Feature indices and network serialization remain unchanged;
+the implementation uses no architecture-specific instructions.
+
+An independent confirmation on the shared Oracle Neoverse-N1 VM compared
+`08e80e2` with the change, using two identical copies of each executable. Both
+were built locally with Zig 0.16.0, ReleaseFast, auto NNUE, aarch64-linux-musl
+and neoverse_n1. The harness used portable Python 3.14.7.
+
+| Comparison | Search-time change | Within-run 95% session-bootstrap interval |
+| --- | ---: | ---: |
+| Candidate versus baseline | **−1.20%** | −1.29% to −1.12% |
+| Identical baseline control | −0.14% | −0.40% to +0.09% |
+| Identical candidate control | +0.11% | −0.16% to +0.34% |
+
+The candidate improved in all sixteen fresh-process sessions. Mean total search
+time per copy fell from 776.780 to 767.454 seconds for identical work. Eight
+positions used two million requested nodes per measured search, one worker,
+64 MiB hash and NUMA policy none. Each process warmed up with 200,000 nodes.
+Engine threads ran on guest CPU 1 and the harness on CPU 0. Cyclic Latin ranks
+balanced execution order over each four-session group; process creation and
+position order were randomized. All 512 measured searches and 64 warmups matched
+move, score, PV, nodes and depth. All samples were retained, and intervals use
+50,000 resamples of complete sessions. Both identical-copy controls include zero,
+meeting the predeclared acceptance criterion alongside the improvement interval.
+A separate 27-position depth-12 comparison also matched; its timings are excluded.
+
+Native Debug and ReleaseFast unit tests, exhaustive C++ feature-index comparison,
+and network/search/engine/UCI checks passed for the candidate. ARM Neoverse-N1
+unit tests passed under QEMU, and real ARM search equivalence is covered above.
+The earlier independent Intel i7-10750H/WSL2 confirmation averaged 0.82% less
+search time, but its interval crossed zero and an identical-copy control failed.
+That x86 result remains inconclusive; it is not pooled with the ARM measurement.
+
+The gain is established for this single-worker ARM configuration. Shared physical
+host interference remains uncontrolled, and the fixed corpus does not establish
+performance on every workload, other CPUs, multiple workers or playing strength.
+Temporary server files, Python, binaries and the benchmark cgroup were removed
+after verified retrieval. CheSSH, Cinema, rqbit and nginx retained their PIDs
+with zero restarts; deployed binary/network hashes and health checks matched the
+initial snapshot. The deployed engine was not changed.
+
+Local evidence: [ARM report](../artifacts/geometry-arm/REPORT.md),
+[protocol](../artifacts/geometry-arm/protocol.json),
+[raw results](../artifacts/geometry-arm/results.json),
+[summary](../artifacts/geometry-arm/summary.json),
+[runner](../artifacts/geometry-arm/run.py),
+[analysis](../artifacts/geometry-arm/analyze.py),
+[cleanup confirmation](../artifacts/geometry-arm/cleanup.json), and
+[x86 investigation](../artifacts/move-processing/REPORT.md).

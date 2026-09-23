@@ -135,9 +135,8 @@ pub const FullThreats = struct {
     const lookup = blk: {
         @setEvalBranchQuota(2000000);
         var result: struct {
-            offsets: [16][64]u32 = @splat(@splat(0)),
             index1: [16][16][2]u32 = @splat(@splat(@splat(0))),
-            index2: [16][64][64]u8 = @splat(@splat(@splat(0))),
+            index2: [8][64][64]u16 = @splat(@splat(@splat(0))),
         } = .{};
         var cumulative: u32 = 0;
         var counts: [16]u32 = @splat(0);
@@ -146,9 +145,10 @@ pub const FullThreats = struct {
             const p = @intFromEnum(pc);
             for (0..64) |from| {
                 const pseudo = attacks.pseudo[if (pc.pieceType() == .pawn) @intFromEnum(pc.color()) else @intFromEnum(pc.pieceType())][from];
-                result.offsets[p][from] = counts[p];
+                const offset = counts[p];
+                const geometry = if (p == 9) 0 else p & 7;
                 if (pc.pieceType() != .pawn or (from >= 8 and from <= 55)) counts[p] += @popCount(pseudo);
-                for (0..64) |to| result.index2[p][from][to] = @intCast(@popCount(((@as(u64, 1) << @as(u6, @intCast(to))) - 1) & pseudo));
+                for (0..64) |to| result.index2[geometry][from][to] = @intCast(offset + @popCount(((@as(u64, 1) << @as(u6, @intCast(to))) - 1) & pseudo));
             }
             bases[p] = cumulative;
             cumulative += valid_targets[p] * counts[p];
@@ -174,7 +174,10 @@ pub const FullThreats = struct {
         const dest = @intFromEnum(to) ^ orient;
         const pc = @intFromEnum(attacker) ^ (8 * @intFromEnum(perspective));
         const target = @intFromEnum(attacked) ^ (8 * @intFromEnum(perspective));
-        return lookup.index1[pc][target][@intFromBool(f < dest)] + lookup.offsets[pc][f] + lookup.index2[pc][f][dest];
+        // Geometry is color-independent except for pawn attack directions.
+        // Fold each square offset into the geometry table at compile time.
+        const geometry = if (pc == 9) 0 else pc & 7;
+        return lookup.index1[pc][target][@intFromBool(f < dest)] + lookup.index2[geometry][f][dest];
     }
     fn appendIfValid(list: *ThreatList, index: u32) void {
         if (index < dimensions) list.append(index);
