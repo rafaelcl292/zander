@@ -65,3 +65,17 @@ pub fn final(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, out
     }
     output[0] = biases[0] +% @reduce(.Add, sums[0] +% sums[1] +% sums[2] +% sums[3]);
 }
+
+/// Clip signed accumulator lanes to bytes before widening multiplication.
+/// SQXTUN performs both lower/upper saturation in one instruction.
+pub fn clippedProduct(a: @Vector(8, i16), b: @Vector(8, i16)) @Vector(8, u8) {
+    const first = asm ("sqxtun %[result].8b, %[input].8h"
+        : [result] "=w" (-> @Vector(8, u8)),
+        : [input] "w" (a),
+    );
+    const second = asm ("sqxtun %[result].8b, %[input].8h"
+        : [result] "=w" (-> @Vector(8, u8)),
+        : [input] "w" (b),
+    );
+    return @intCast((@as(@Vector(8, u16), first) * @as(@Vector(8, u16), second)) >> @splat(9));
+}

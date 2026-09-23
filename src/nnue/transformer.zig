@@ -5,6 +5,9 @@ const features = @import("features.zig");
 const Reader = @import("reader.zig").Reader;
 pub const dimensions = 1024;
 pub const buckets = 8;
+// ARM64 has room for a larger live tile, halving feature-index traversals.
+// Keep the separately tuned eight-vector tile on other architectures.
+const tile_registers = if (@import("builtin").cpu.arch == .aarch64) 16 else 8;
 pub const combined_features = features.FullThreats.dimensions + features.PawnPairs.dimensions;
 pub const FeatureTransformer = struct {
     biases: [dimensions]i16 align(64),
@@ -79,7 +82,7 @@ pub const FeatureTransformer = struct {
     /// feature removals/additions, then write the destination once.
     pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, from_psqt: *const [buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, removed: []const u16, added: []const u16, threats_removed: []const u16, threats_added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
-        const registers = 8;
+        const registers = tile_registers;
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * registers) {
             // A contiguous tile view avoids independent offset calculations for
@@ -104,14 +107,14 @@ pub const FeatureTransformer = struct {
     pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, cache_psqt: *[buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, removed: []const u16, added: []const u16, active: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
-        while (offset < dimensions) : (offset += lanes * 8) {
-            var tile: [8]@Vector(lanes, i16) = undefined;
-            inline for (0..8) |i| tile[i] = cache[offset + i * lanes ..][0..lanes].*;
+        while (offset < dimensions) : (offset += lanes * tile_registers) {
+            var tile: [tile_registers]@Vector(lanes, i16) = undefined;
+            inline for (0..tile_registers) |i| tile[i] = cache[offset + i * lanes ..][0..lanes].*;
             self.applyTile(false, false, lanes, &tile, offset, removed);
             self.applyTile(true, false, lanes, &tile, offset, added);
-            inline for (0..8) |i| cache[offset + i * lanes ..][0..lanes].* = tile[i];
+            inline for (0..tile_registers) |i| cache[offset + i * lanes ..][0..lanes].* = tile[i];
             self.applyTile(true, true, lanes, &tile, offset, active);
-            inline for (0..8) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
+            inline for (0..tile_registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
         }
         var psqt: @Vector(buckets, i32) = cache_psqt.*;
         for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
@@ -125,12 +128,12 @@ pub const FeatureTransformer = struct {
     pub fn applyHybrid(self: *const FeatureTransformer, new_cache: anytype, old_cache: anytype, from: *const [dimensions]i16, from_psqt: *const [buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, new_removed: []const u16, new_added: []const u16, old_removed: []const u16, old_added: []const u16, removed: []const u16, added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
-        while (offset < dimensions) : (offset += lanes * 8) {
-            var tile: [8]@Vector(lanes, i16) = undefined;
-            inline for (0..8) |i| tile[i] = new_cache.accumulation[offset + i * lanes ..][0..lanes].*;
+        while (offset < dimensions) : (offset += lanes * tile_registers) {
+            var tile: [tile_registers]@Vector(lanes, i16) = undefined;
+            inline for (0..tile_registers) |i| tile[i] = new_cache.accumulation[offset + i * lanes ..][0..lanes].*;
             self.applyTile(false, false, lanes, &tile, offset, new_removed);
             self.applyTile(true, false, lanes, &tile, offset, new_added);
-            inline for (0..8) |i| {
+            inline for (0..tile_registers) |i| {
                 const start = offset + i * lanes;
                 new_cache.accumulation[start..][0..lanes].* = tile[i];
                 tile[i] +%= @as(@Vector(lanes, i16), from[start..][0..lanes].*);
@@ -140,7 +143,7 @@ pub const FeatureTransformer = struct {
             self.applyTile(false, false, lanes, &tile, offset, old_added);
             self.applyTile(false, true, lanes, &tile, offset, removed);
             self.applyTile(true, true, lanes, &tile, offset, added);
-            inline for (0..8) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
+            inline for (0..tile_registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
         }
         var psqt: @Vector(buckets, i32) = new_cache.psqt;
         for (new_removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
@@ -154,17 +157,17 @@ pub const FeatureTransformer = struct {
         for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
         to_psqt.* = psqt;
     }
-    inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
+    inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
         // Upstream apply_psq_features<sign, true>: every incremental move
         // removes and adds one or two piece-square features.
         std.debug.assert(indices.len == 1 or indices.len == 2);
         self.applyTile(add, false, lanes, tile, offset, indices[0..1]);
         if (indices.len == 2) self.applyTile(add, false, lanes, tile, offset, indices[1..2]);
     }
-    inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[8]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
+    inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
         for (indices) |index| {
-            const row = if (threats) self.threat_weights[index][offset..][0 .. 8 * lanes] else self.weights[index][offset..][0 .. 8 * lanes];
-            inline for (0..8) |i| {
+            const row = if (threats) self.threat_weights[index][offset..][0 .. tile_registers * lanes] else self.weights[index][offset..][0 .. tile_registers * lanes];
+            inline for (0..tile_registers) |i| {
                 const start = i * lanes;
                 const weight: @Vector(lanes, i16) = if (threats)
                     @as(@Vector(lanes, i8), row[start..][0..lanes].*)
@@ -227,10 +230,14 @@ pub const FeatureTransformer = struct {
             while (j < dimensions / 2) : (j += lanes) {
                 const a: Signed = acc[side ^ p][j..][0..lanes].*;
                 const b: Signed = acc[side ^ p][j + dimensions / 2 ..][0..lanes].*;
-                const first: Unsigned = @intCast(@min(@max(a, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
-                const second: Unsigned = @intCast(@min(@max(b, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
-                // 255 * 255 fits u16; the clipped product fits seven bits.
-                const values: @Vector(lanes, u8) = @intCast((first * second) >> @splat(9));
+                const values: @Vector(lanes, u8) = if (@import("builtin").cpu.arch == .aarch64 and lanes == 8)
+                    @import("arm.zig").clippedProduct(a, b)
+                else blk: {
+                    const first: Unsigned = @intCast(@min(@max(a, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
+                    const second: Unsigned = @intCast(@min(@max(b, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
+                    // 255 * 255 fits u16; the clipped product fits seven bits.
+                    break :blk @intCast((first * second) >> @splat(9));
+                };
                 const start = p * (dimensions / 2) + j;
                 output[start..][0..lanes].* = values;
                 if (masks) |bits| {

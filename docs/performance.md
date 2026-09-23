@@ -527,3 +527,68 @@ Local evidence: [report](../artifacts/arm-improvements/REPORT.md),
 [runner](../artifacts/arm-improvements/run.py),
 [analysis](../artifacts/arm-improvements/analyze.py), and
 [cleanup confirmation](../artifacts/arm-improvements/cleanup.json).
+
+## ARM64 accumulator tiles and activation narrowing — 2026-09-22
+
+The retained follow-up uses 16-vector accumulator tiles on ARM64 and saturates
+signed accumulator lanes directly to bytes with `SQXTUN` before multiplying
+activation pairs. Incremental, refresh and hybrid updates traverse feature indices
+half as often. The other architectures retain their eight-vector tiles and
+portable activation expression. The arithmetic and search remain unchanged;
+these changes also support baseline ARM64 without requiring dot product.
+
+A user-cycle profile placed 41.39% of Zander's samples in `applyCombined`, 14.75%
+in accumulator evaluation, 9.61% in affine propagation and 6.56% in activation
+transformation. Inlined work is attributed to containing symbols. Profiling used
+`perf` with administrative privileges without changing system settings, and was
+separate from timing. No samples were lost.
+
+An initial pilot favored both larger tiles and three independent sparse
+accumulator chains. A separate combination pilot favored tiles plus activation
+narrowing; adding the triple-chain kernel made that combination about 1.82%
+slower. The triple-chain experiment was rejected. Neither pilot is used as the
+final performance estimate.
+
+| Confirmation comparison | Search-time change | Within-run 95% session-bootstrap interval |
+| --- | ---: | ---: |
+| Candidate versus `8332755` | **−3.77%** | −4.11% to −3.40% |
+| Candidate versus Stockfish | **+9.60%** | +9.41% to +9.81% |
+| Identical candidate control | +0.07% | −0.16% to +0.33% |
+
+For 31,863,660 nodes per process, the previous Zander took 92.067 seconds,
+the candidate averaged 88.596 seconds across its two copies, and Stockfish took
+80.838 seconds. In this same run, the previous Zander took 13.89% more time than
+Stockfish. Improvement held in all twelve sessions. Mean peak RSS remained
+about 252.9 MiB for Zander versus 318.9 MiB for Stockfish.
+
+The independent confirmation used twelve fresh-process sessions, eight positions
+at depth 18, one thread, 64 MiB hash, NUMA policy none and the same network.
+Latin-square execution ranks were balanced per position over each four-session
+group. Engines ran on guest CPU 1 and the Python 3.14.7 harness on CPU 0. All
+**384 measured searches** and 48 warmups matched move, score, PV, nodes and depth.
+All samples were retained; intervals use 50,000 resamples of complete sessions.
+Build settings and shared Neoverse-N1 VM limitations are as in the preceding
+ARM comparison. No profiler ran during timing. These results do not establish
+playing strength, multi-thread performance or gains on other ARM processors.
+
+ARM unit tests passed under QEMU for Neoverse-N1 and baseline targets, including
+exhaustive clipped-product and saturation-boundary checks against scalar results.
+Native Debug unit tests, ReleaseFast unit/differential/network/search/engine/UCI
+checks, formatting and Python checks passed. The final candidate matched
+Stockfish on 27 additional depth-12 positions on real ARM. The generated x86
+`.text` section remained byte-identical to the parent binary.
+
+The server was cleaned after verified retrieval of the results: temporary
+binaries, Python, profiles, benchmark files and processes/cgroups were removed.
+Production services retained their PIDs and zero restarts; executable/network
+hashes and application health matched the initial snapshot. No deployment or
+system configuration change was made.
+
+Local evidence: [report](../artifacts/arm-tuning/REPORT.md),
+[profile](../artifacts/arm-tuning/baseline-profile.txt),
+[protocol](../artifacts/arm-tuning/protocol.json),
+[raw results](../artifacts/arm-tuning/results.json),
+[summary](../artifacts/arm-tuning/summary.json),
+[runner](../artifacts/arm-tuning/run.py),
+[analysis](../artifacts/arm-tuning/analyze.py), and
+[cleanup confirmation](../artifacts/arm-tuning/cleanup.json).
