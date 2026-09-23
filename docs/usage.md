@@ -15,8 +15,9 @@ zig build -Doptimize=ReleaseFast -Dnnue-backend=auto
 ```
 
 The executable is written to `zig-out/bin/zander` (`zander.exe` on Windows).
-The default NNUE backend is `scalar`; `auto` enables runtime x86 dispatch and
-portable vectors on other architectures. Explicit backends are `scalar`,
+The default NNUE backend is `scalar`; `auto` enables runtime x86 dispatch,
+specialized sparse ARM64 kernels, and portable vectors on other architectures.
+Explicit backends are `scalar`,
 `vector`, `sse2`, and `avx2`. List build options with `zig build --help`.
 
 Native builds can use instructions specific to the build machine. To build a
@@ -26,6 +27,19 @@ portable x86-64 Linux executable with runtime NNUE dispatch:
 zig build -Doptimize=ReleaseFast -Dnnue-backend=auto \
   -Dtarget=x86_64-linux -Dcpu=baseline
 ```
+
+ARM64 kernels use signed dot-product instructions when the compilation target
+supports them, with a vector fallback for baseline ARM64. ARM feature selection
+is compile-time, so select a CPU supported by the deployment machine. For
+example, to cross-compile for Neoverse-N1:
+
+```sh
+zig build -Doptimize=ReleaseFast -Dnnue-backend=auto \
+  -Dtarget=aarch64-linux-musl -Dcpu=neoverse_n1
+```
+
+Use `-Dcpu=baseline` for a portable ARM64 executable without requiring dot-product
+instructions. The scalar backend remains available as a correctness reference.
 
 ## Prepare the network
 

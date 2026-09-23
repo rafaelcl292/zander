@@ -460,3 +460,70 @@ Local evidence: [report](../artifacts/dirty-precision/REPORT.md),
 [summary](../artifacts/dirty-precision/summary.json),
 [runner](../artifacts/dirty-precision/run.py), and
 [analysis](../artifacts/dirty-precision/analyze.py).
+
+## ARM64 sparse NNUE kernels — 2026-09-22
+
+The ARM64 auto backend now uses packed four-input weights, skips zero activation
+blocks in the first affine layer, and computes all three layers with specialized
+vector kernels. Targets with `dotprod` use signed byte dot-product instructions;
+baseline ARM64 retains a widened vector fallback. Activations are limited to
+0..127, and signed weights, wrapping sums, network serialization and search
+behavior are preserved. ARM CPU feature selection is compile-time; see
+[ARM build options](usage.md#build-the-engine).
+
+A confirmation on the shared Oracle Neoverse-N1 VM compared `65a7508`, two copies
+of the candidate, and pinned Stockfish. Both Zander binaries targeted
+`aarch64-linux-musl` and `neoverse_n1` with Zig 0.16.0, ReleaseFast and auto NNUE.
+Stockfish used Zig's Clang C++ driver, musl, NEON/dotprod, O3 and full LTO without
+PGO. All builds were local. The harness used portable Python 3.14.7 on the server.
+
+| Comparison | Search-time change | Within-run 95% session-bootstrap interval |
+| --- | ---: | ---: |
+| New versus previous Zander | **−52.20%** | −52.31% to −52.09% |
+| New Zander versus Stockfish | **+14.42%** | +14.02% to +14.80% |
+| Identical candidate control | +0.20% | −0.04% to +0.52% |
+
+The previous Zander took 191.869 seconds, the candidate averaged 91.712 seconds
+across its two copies, and Stockfish took 80.157 seconds for the same 31,863,660
+nodes per process. Thus the candidate processed the same work about **2.09x** as
+fast as the previous Zander. In this same run, the previous Zander took 139.37%
+more time than Stockfish. Mean peak RSS was 250.9 MiB before, 252.9 MiB after,
+and 318.9 MiB for Stockfish.
+
+Twelve fresh-process sessions used eight positions at depth 18, one thread,
+64 MiB hash and NUMA policy none. Engine threads ran on guest CPU 1 and the
+harness on CPU 0. Latin-square execution ranks were balanced per position over
+each four-session group, with randomized base orders, positions and process
+creation. All **384 measured searches** and 48 warmups matched move, score, PV,
+nodes and depth. Every sample was retained. Intervals resample twelve complete
+sessions 50,000 times. Improvement held in every session; the identical-copy
+control was compatible with zero.
+
+Both ARM variants passed ReleaseFast unit tests under QEMU, including sparse
+and small-layer comparisons against scalar arithmetic. Both also matched the
+reference on eight depth-18 positions on real ARM. The dot-product candidate
+matched Stockfish on 27 additional depth-12 positions. Native Debug unit tests,
+ReleaseFast unit/differential/network/search/engine/UCI tests, formatting and
+Python checks passed. The generated x86 `.text` section was byte-identical to
+the previous binary.
+
+The portable ARM build also improved in the excluded pilot (16.153 to 10.139
+seconds), but it did not receive the replicated confirmation above. The formal
+speed estimate applies to the Neoverse-N1 dot-product build. It does not establish
+performance on other ARM CPUs, multi-thread performance, playing strength or
+parity with Stockfish. Physical-host interference in the shared VM remains
+uncontrolled, and the Stockfish build is not claimed to be the fastest possible.
+
+Production services stayed active with unchanged PIDs and zero restarts. After
+retrieving and verifying the results, the benchmark's temporary files, portable
+Python, binaries and processes were removed. Production executable/network
+hashes and application health matched the initial snapshot; no deployment or
+system configuration change was made.
+
+Local evidence: [report](../artifacts/arm-improvements/REPORT.md),
+[protocol](../artifacts/arm-improvements/protocol.json),
+[raw samples](../artifacts/arm-improvements/results.json),
+[summary](../artifacts/arm-improvements/summary.json),
+[runner](../artifacts/arm-improvements/run.py),
+[analysis](../artifacts/arm-improvements/analyze.py), and
+[cleanup confirmation](../artifacts/arm-improvements/cleanup.json).

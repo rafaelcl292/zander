@@ -5,7 +5,24 @@ const Reader = @import("reader.zig").Reader;
 pub const output_scale: i32 = 16;
 pub const weight_scale_bits = 6;
 pub const hidden_one = 128;
-pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and @import("builtin").cpu.arch == .x86_64;
+pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and (@import("builtin").cpu.arch == .x86_64 or @import("builtin").cpu.arch == .aarch64);
+const Sparse = *const fn ([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
+const Small = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
+fn sparseKernel() ?Sparse {
+    if (@import("builtin").cpu.arch == .aarch64) return &@import("arm.zig").sparse;
+    const dispatch = @import("dispatch.zig");
+    return dispatch.sparseFunction(dispatch.selected());
+}
+fn hiddenKernel() ?Small {
+    if (@import("builtin").cpu.arch == .aarch64) return &@import("arm.zig").hidden;
+    const dispatch = @import("dispatch.zig");
+    return dispatch.hiddenFunction(dispatch.selected());
+}
+fn outputKernel() ?Small {
+    if (@import("builtin").cpu.arch == .aarch64) return &@import("arm.zig").final;
+    const dispatch = @import("dispatch.zig");
+    return dispatch.outputFunction(dispatch.selected());
+}
 pub fn clipped(input: i32, comptime scale: u5) u8 {
     return @intCast(std.math.clamp(input >> scale, 0, 127));
 }
@@ -196,22 +213,19 @@ pub const Architecture = struct {
     /// Input and masks follow layout.canonical; serialized weights stay canonical.
     pub fn propagatePreparedMasked(self: *const Architecture, input: *const [1024]u8, masks: *const [4]u64, buffer: *Buffer) i32 {
         if (use_sparse) {
-            const dispatch = @import("dispatch.zig");
-            if (dispatch.sparseFunction(dispatch.selected())) |kernel| {
+            if (sparseKernel()) |kernel| {
                 kernel(input, masks, @ptrCast(&self.sparse_weights), &self.fc0.biases, &buffer.fc0);
             } else self.fc0.propagate(input, &buffer.fc0);
         } else self.fc0.propagate(input, &buffer.fc0);
         activatePair(&buffer.fc0, buffer.concat[0..64], 7);
         if (use_sparse) {
-            const dispatch = @import("dispatch.zig");
-            if (dispatch.hiddenFunction(dispatch.selected())) |kernel| {
+            if (hiddenKernel()) |kernel| {
                 kernel(&buffer.concat, @ptrCast(&self.hidden_weights), &self.fc1.biases, &buffer.fc1);
             } else self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
         } else self.fc1.propagate(buffer.concat[0..64], &buffer.fc1);
         activatePair(&buffer.fc1, buffer.concat[64..128], 6);
         if (use_sparse) {
-            const dispatch = @import("dispatch.zig");
-            if (dispatch.outputFunction(dispatch.selected())) |kernel| {
+            if (outputKernel()) |kernel| {
                 kernel(&buffer.concat, @ptrCast(&self.fc2.weights), &self.fc2.biases, &buffer.fc2);
             } else self.fc2.propagate(&buffer.concat, &buffer.fc2);
         } else self.fc2.propagate(&buffer.concat, &buffer.fc2);
@@ -250,8 +264,7 @@ test "vector affine matches scalar with signed weights and wrapping bias" {
 
 test "block sparse affine preserves signed extremes, zero blocks and wrapping sums" {
     if (!use_sparse) return error.SkipZigTest;
-    const dispatch = @import("dispatch.zig");
-    const kernel = dispatch.sparseFunction(dispatch.selected()) orelse return error.SkipZigTest;
+    const kernel = sparseKernel() orelse return error.SkipZigTest;
     var layer: Architecture = undefined;
     var rng = @import("../prng.zig").Prng.init(9876);
     for (&layer.fc0.biases) |*bias| bias.* = @bitCast(@as(u32, @truncate(rng.next())));
@@ -279,9 +292,8 @@ test "block sparse affine preserves signed extremes, zero blocks and wrapping su
 
 test "packed small layers match scalar at activation and weight boundaries" {
     if (!use_sparse) return error.SkipZigTest;
-    const dispatch = @import("dispatch.zig");
-    const hidden = dispatch.hiddenFunction(dispatch.selected()) orelse return error.SkipZigTest;
-    const final = dispatch.outputFunction(dispatch.selected()).?;
+    const hidden = hiddenKernel() orelse return error.SkipZigTest;
+    const final = outputKernel().?;
     var layer: Affine(64, 32) = undefined;
     var last: Affine(128, 1) = undefined;
     var packed_weights: [16][32][4]i8 = undefined;
