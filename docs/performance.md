@@ -648,3 +648,76 @@ Local evidence: [ARM report](../artifacts/geometry-arm/REPORT.md),
 [analysis](../artifacts/geometry-arm/analyze.py),
 [cleanup confirmation](../artifacts/geometry-arm/cleanup.json), and
 [x86 investigation](../artifacts/move-processing/REPORT.md).
+
+## Profile-guided execution follow-up — 2026-09-26
+
+**No validated speed improvement was retained.** A fresh investigation of
+`219b234` used Zig 0.16.0, Python 3.14.7, ReleaseFast/auto and the same
+Intel i7-10750H/WSL2 host. Eight separate three-million-node user-cycle profiles
+placed `applyCombined` at 12.68–31.44% and sparse AVX2 evaluation at
+10.93–13.31% of samples. No profile reported lost samples. Symbol shares include
+inlined work and do not identify recoverable speedup or the underlying stall cause.
+
+Three isolated prototypes were tested. Four-session pilots used two baseline
+and two candidate copies, eight positions, 500,000 requested nodes per search,
+excluded warmups and balanced execution ranks. All 128 measured searches and
+128 warmups in each pilot matched move, score, PV, nodes and depth.
+
+| Prototype | Pilot search-time change | Retired-instruction change | Decision |
+| --- | ---: | ---: | --- |
+| Fold sparse SIMD weight loads into multiply instructions | -0.53% | -2.14% | Independent confirmation below; not retained |
+| Specialize accumulator updates by piece-square change count | +1.14% | -0.51% | Rejected; no benefit established, larger hot function |
+| BMI2 PEXT sliding-attack tables | +0.90% | -2.64% | Rejected; no benefit established |
+
+Pilot point estimates are exploratory. The sparse and specialization timing
+intervals crossed zero. The PEXT candidate-copy control narrowly excluded zero,
+so its pilot is not used to establish a precise regression. Fewer instructions
+did not demonstrate faster complete searches for any prototype.
+
+The independent sparse confirmation used twelve fresh-process sessions, two
+copies each of baseline Zander, the candidate and pinned Stockfish. Eight positions
+used depths 22, 20, 22, 25, 21, 21, 19 and 22, one worker, 64 MiB hash and NUMA
+policy none. Every process warmed up on every position at depth 12. Six cyclic
+Latin ranks balanced execution order per position over each six-session block;
+base orders, positions and process creation order were randomized. Engines ran
+on guest CPU 2 and the harness on CPU 0, with no concurrent builds or profiling.
+All six processes remained resident. Startup, clearing and warmups are excluded.
+
+| Confirmation comparison | Search-time change | Within-run 95% session-bootstrap interval |
+| --- | ---: | ---: |
+| Sparse candidate versus unchanged Zander | **-0.07%** | -1.33% to +1.13% |
+| Unchanged Zander versus pinned Stockfish | **+0.22%** | -0.63% to +1.43% |
+| Sparse candidate versus pinned Stockfish | +0.15% | -0.91% to +1.17% |
+
+Mean total search time per identical copy was 99.340 seconds for baseline,
+99.267 for candidate and 99.123 for Stockfish. All **576 measured searches and
+576 warmups** matched move, score, PV, nodes and depth. The candidate retired
+2.139% fewer instructions, but its cycle-cost interval also crossed zero.
+All three identical-copy timing controls included zero. Counters ran without
+multiplexing; all samples were retained. Intervals resample twelve complete
+sessions 50,000 times. The predeclared elapsed-time acceptance criterion failed.
+These results establish neither a speed advantage nor formal performance parity.
+
+An initial node-limited confirmation stopped during warmup, before any measured
+samples: Stockfish and Zander stopped at slightly different node counts despite
+matching move, score and PV. That attempt is archived separately. The replacement
+fixed-depth protocol required exact node-count agreement as well as matching
+search outputs; no samples from the aborted attempt enter the timing estimate.
+
+Candidate unit and real-network tests passed; PEXT additionally passed the
+exhaustive differential attack and geometry checks. Only the internal magic-
+multiplier assertion was disabled for the experimental PEXT representation.
+All prototype source/test changes were reverted. The tested reference remains
+GCC/BMI2/LTO without PGO at pinned commit
+`17a6c8f1eb0da45c2ca405321919519bf4e211ba`, not current upstream or a claim about
+the fastest possible Stockfish build. Host scheduling/frequency, the fixed corpus
+and single-worker scope limit generalization; no playing-strength claim follows.
+
+Local evidence: [report](../artifacts/profile-followup/REPORT.md),
+[profiles](../artifacts/profile-followup/profile-summary.json),
+[protocol](../artifacts/profile-followup/confirmation-protocol.json),
+[raw results](../artifacts/profile-followup/confirmation.json),
+[summary](../artifacts/profile-followup/confirmation-summary.json),
+[decision](../artifacts/profile-followup/decision.json),
+[runner](../artifacts/profile-followup/confirmation.py), and
+[analysis](../artifacts/profile-followup/analyze.py).

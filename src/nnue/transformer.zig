@@ -225,6 +225,29 @@ pub const FeatureTransformer = struct {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const Signed = @Vector(lanes, i16);
         const Unsigned = @Vector(lanes, u16);
+        if (comptime @import("builtin").cpu.arch == .aarch64 and lanes == 8) {
+            if (masks) |bits| {
+                // Four products fill one mask byte, avoiding a read/modify/write
+                // for each eight-byte activation vector.
+                for (0..2) |p| {
+                    var j: usize = 0;
+                    while (j < dimensions / 2) : (j += 32) {
+                        var values: [4]@Vector(8, u8) = undefined;
+                        inline for (0..4) |i| {
+                            const offset = j + i * 8;
+                            const a: @Vector(8, i16) = acc[side ^ p][offset..][0..8].*;
+                            const b: @Vector(8, i16) = acc[side ^ p][offset + dimensions / 2 ..][0..8].*;
+                            values[i] = @import("arm.zig").clippedProduct(a, b);
+                        }
+                        const start = p * (dimensions / 2) + j;
+                        output[start..][0..32].* = @bitCast(values);
+                        const words: @Vector(8, u32) = @bitCast(values);
+                        std.mem.asBytes(bits)[start / 32] = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
+                    }
+                }
+                return;
+            }
+        }
         for (0..2) |p| {
             var j: usize = 0;
             while (j < dimensions / 2) : (j += lanes) {
