@@ -220,54 +220,52 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    fn transformVectorMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: ?*[4]u64) void {
-        if (masks) |bits| bits.* = @splat(0);
-        const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+    inline fn activationProduct(comptime lanes: usize, a: @Vector(lanes, i16), b: @Vector(lanes, i16)) @Vector(lanes, u8) {
+        if (comptime @import("builtin").cpu.arch == .aarch64 and lanes == 8)
+            return @import("arm.zig").clippedProduct(a, b);
         const Signed = @Vector(lanes, i16);
         const Unsigned = @Vector(lanes, u16);
-        if (comptime @import("builtin").cpu.arch == .aarch64 and lanes == 8) {
-            if (masks) |bits| {
-                // Four products fill one mask byte, avoiding a read/modify/write
-                // for each eight-byte activation vector.
-                for (0..2) |p| {
-                    var j: usize = 0;
-                    while (j < dimensions / 2) : (j += 32) {
-                        var values: [4]@Vector(8, u8) = undefined;
-                        inline for (0..4) |i| {
-                            const offset = j + i * 8;
-                            const a: @Vector(8, i16) = acc[side ^ p][offset..][0..8].*;
-                            const b: @Vector(8, i16) = acc[side ^ p][offset + dimensions / 2 ..][0..8].*;
-                            values[i] = @import("arm.zig").clippedProduct(a, b);
-                        }
-                        const start = p * (dimensions / 2) + j;
-                        output[start..][0..32].* = @bitCast(values);
-                        const words: @Vector(8, u32) = @bitCast(values);
-                        std.mem.asBytes(bits)[start / 32] = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
+        const first: Unsigned = @intCast(@min(@max(a, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
+        const second: Unsigned = @intCast(@min(@max(b, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
+        // 255 * 255 fits u16; the clipped product fits seven bits.
+        return @intCast((first * second) >> @splat(9));
+    }
+    fn transformVectorMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: ?*[4]u64) void {
+        // A power-of-two lane count always partitions one mask chunk.
+        const suggested_lanes = comptime @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+        const lanes = comptime std.math.floorPowerOfTwo(usize, suggested_lanes);
+        const Signed = @Vector(lanes, i16);
+        // One mask byte describes eight four-byte activation blocks.
+        const mask_chunk_bytes = @bitSizeOf(u8) * @sizeOf(u32);
+        comptime std.debug.assert(mask_chunk_bytes % lanes == 0);
+        if (masks) |bits| {
+            const vectors_per_chunk = mask_chunk_bytes / lanes;
+            for (0..2) |p| {
+                var j: usize = 0;
+                while (j < dimensions / 2) : (j += mask_chunk_bytes) {
+                    var values: [vectors_per_chunk]@Vector(lanes, u8) = undefined;
+                    inline for (0..vectors_per_chunk) |i| {
+                        const offset = j + i * lanes;
+                        const a: Signed = acc[side ^ p][offset..][0..lanes].*;
+                        const b: Signed = acc[side ^ p][offset + dimensions / 2 ..][0..lanes].*;
+                        values[i] = activationProduct(lanes, a, b);
                     }
+                    const start = p * (dimensions / 2) + j;
+                    output[start..][0..mask_chunk_bytes].* = @bitCast(values);
+                    const words: @Vector(8, u32) = @bitCast(values);
+                    std.mem.asBytes(bits)[start / mask_chunk_bytes] = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
                 }
-                return;
             }
+            return;
         }
         for (0..2) |p| {
             var j: usize = 0;
             while (j < dimensions / 2) : (j += lanes) {
                 const a: Signed = acc[side ^ p][j..][0..lanes].*;
                 const b: Signed = acc[side ^ p][j + dimensions / 2 ..][0..lanes].*;
-                const values: @Vector(lanes, u8) = if (@import("builtin").cpu.arch == .aarch64 and lanes == 8)
-                    @import("arm.zig").clippedProduct(a, b)
-                else blk: {
-                    const first: Unsigned = @intCast(@min(@max(a, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
-                    const second: Unsigned = @intCast(@min(@max(b, @as(Signed, @splat(0))), @as(Signed, @splat(255))));
-                    // 255 * 255 fits u16; the clipped product fits seven bits.
-                    break :blk @intCast((first * second) >> @splat(9));
-                };
+                const values = activationProduct(lanes, a, b);
                 const start = p * (dimensions / 2) + j;
                 output[start..][0..lanes].* = values;
-                if (masks) |bits| {
-                    const words: @Vector(lanes / 4, u32) = @bitCast(values);
-                    const mask: std.meta.Int(.unsigned, lanes / 4) = @bitCast(words != @as(@Vector(lanes / 4, u32), @splat(0)));
-                    bits[start / 256] |= @as(u64, mask) << @as(u6, @intCast((start % 256) / 4));
-                }
             }
         }
     }
