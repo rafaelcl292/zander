@@ -4,7 +4,6 @@ const layout = @import("layout.zig");
 const features = @import("features.zig");
 const Reader = @import("reader.zig").Reader;
 pub const dimensions = 1024;
-pub const buckets = 8;
 // ARM64 has room for a larger live tile, halving feature-index traversals.
 // Keep the separately tuned eight-vector tile on other architectures.
 const tile_registers = if (@import("builtin").cpu.arch == .aarch64) 16 else 8;
@@ -13,8 +12,6 @@ pub const FeatureTransformer = struct {
     biases: [dimensions]i16 align(64),
     weights: [features.HalfKA.dimensions][dimensions]i16 align(64),
     threat_weights: [combined_features][dimensions]i8 align(64),
-    psqt_weights: [features.HalfKA.dimensions][buckets]i32 align(64),
-    threat_psqt: [combined_features][buckets]i32 align(64),
     pub fn hash() u32 {
         var result: u32 = 0;
         for ([_]u32{ features.FullThreats.hash_value, features.PawnPairs.hash_value, features.HalfKA.hash_value }) |h| result = ((result << 1) | (result >> 31)) ^ h;
@@ -23,43 +20,29 @@ pub const FeatureTransformer = struct {
     pub fn read(self: *FeatureTransformer, reader: *Reader) !void {
         try reader.leb128(i16, &self.biases);
         const threats = features.FullThreats.dimensions;
-        const pairs = features.PawnPairs.dimensions;
         const threat_bytes = std.mem.sliceAsBytes(self.threat_weights[0..threats]);
         @memcpy(threat_bytes, try reader.take(threat_bytes.len));
-        try reader.leb128(i32, @as([*]i32, @ptrCast(&self.threat_psqt))[0 .. threats * buckets]);
         const pair_bytes = std.mem.sliceAsBytes(self.threat_weights[threats..]);
         @memcpy(pair_bytes, try reader.take(pair_bytes.len));
-        try reader.leb128(i32, @as([*]i32, @ptrCast(&self.threat_psqt[threats]))[0 .. pairs * buckets]);
         try reader.leb128(i16, @as([*]i16, @ptrCast(&self.weights))[0 .. features.HalfKA.dimensions * dimensions]);
-        try reader.leb128(i32, @as([*]i32, @ptrCast(&self.psqt_weights))[0 .. features.HalfKA.dimensions * buckets]);
     }
-    pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, psqt: *[buckets]i32, indices: []const u16) void {
-        if (@import("backend").simd) return self.applyVector(add, false, acc, psqt, indices);
+    pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u16) void {
+        if (@import("backend").simd) return self.applyVector(add, false, acc, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
                 if (add) value.* +%= self.weights[index][j] else value.* -%= self.weights[index][j];
             }
         }
-        for (psqt, 0..) |*value, j| {
-            for (indices) |index| {
-                if (add) value.* +%= self.psqt_weights[index][j] else value.* -%= self.psqt_weights[index][j];
-            }
-        }
     }
-    pub fn applyThreats(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, psqt: *[buckets]i32, indices: []const u16) void {
-        if (@import("backend").simd) return self.applyVector(add, true, acc, psqt, indices);
+    pub fn applyThreats(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u16) void {
+        if (@import("backend").simd) return self.applyVector(add, true, acc, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
                 if (add) value.* +%= self.threat_weights[index][j] else value.* -%= self.threat_weights[index][j];
             }
         }
-        for (psqt, 0..) |*value, j| {
-            for (indices) |index| {
-                if (add) value.* +%= self.threat_psqt[index][j] else value.* -%= self.threat_psqt[index][j];
-            }
-        }
     }
-    fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, psqt: *[buckets]i32, indices: []const u16) void {
+    fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, indices: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes) {
@@ -73,14 +56,10 @@ pub const FeatureTransformer = struct {
             }
             acc[offset..][0..lanes].* = value;
         }
-        for (psqt, 0..) |*value, j| for (indices) |index| {
-            const weight = if (threats) self.threat_psqt[index][j] else self.psqt_weights[index][j];
-            if (add) value.* +%= weight else value.* -%= weight;
-        };
     }
     /// Reference apply_combined: retain one tile in registers through all
     /// feature removals/additions, then write the destination once.
-    pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, from_psqt: *const [buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, removed: []const u16, added: []const u16, threats_removed: []const u16, threats_added: []const u16) void {
+    pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, to: *[dimensions]i16, removed: []const u16, added: []const u16, threats_removed: []const u16, threats_added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const registers = tile_registers;
         var offset: usize = 0;
@@ -95,16 +74,10 @@ pub const FeatureTransformer = struct {
             self.applyTile(true, true, lanes, &tile, offset, threats_added);
             @as(*align(@alignOf(i16)) Tile, @ptrCast(&to[offset])).* = tile;
         }
-        var psqt: @Vector(buckets, i32) = from_psqt.*;
-        for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        for (threats_removed) |index| psqt -%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
-        for (threats_added) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
-        to_psqt.* = psqt;
     }
     /// Reference cache refresh: store updated PSQ values to the cache before
     /// adding active threats to the same register tile for the live position.
-    pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, cache_psqt: *[buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, removed: []const u16, added: []const u16, active: []const u16) void {
+    pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, to: *[dimensions]i16, removed: []const u16, added: []const u16, active: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * tile_registers) {
@@ -116,16 +89,10 @@ pub const FeatureTransformer = struct {
             self.applyTile(true, true, lanes, &tile, offset, active);
             inline for (0..tile_registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
         }
-        var psqt: @Vector(buckets, i32) = cache_psqt.*;
-        for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        cache_psqt.* = psqt;
-        for (active) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
-        to_psqt.* = psqt;
     }
     /// Hybrid king refresh: update only the new PSQ cache, then correct the
     /// previous live accumulator in registers before applying threat changes.
-    pub fn applyHybrid(self: *const FeatureTransformer, new_cache: anytype, old_cache: anytype, from: *const [dimensions]i16, from_psqt: *const [buckets]i32, to: *[dimensions]i16, to_psqt: *[buckets]i32, new_removed: []const u16, new_added: []const u16, old_removed: []const u16, old_added: []const u16, removed: []const u16, added: []const u16) void {
+    pub fn applyHybrid(self: *const FeatureTransformer, new_cache: anytype, old_cache: anytype, from: *const [dimensions]i16, to: *[dimensions]i16, new_removed: []const u16, new_added: []const u16, old_removed: []const u16, old_added: []const u16, removed: []const u16, added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * tile_registers) {
@@ -145,17 +112,6 @@ pub const FeatureTransformer = struct {
             self.applyTile(true, true, lanes, &tile, offset, added);
             inline for (0..tile_registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
         }
-        var psqt: @Vector(buckets, i32) = new_cache.psqt;
-        for (new_removed) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        for (new_added) |index| psqt +%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        new_cache.psqt = psqt;
-        psqt +%= @as(@Vector(buckets, i32), from_psqt.*);
-        psqt -%= @as(@Vector(buckets, i32), old_cache.psqt);
-        for (old_removed) |index| psqt +%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        for (old_added) |index| psqt -%= @as(@Vector(buckets, i32), self.psqt_weights[index]);
-        for (removed) |index| psqt -%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
-        for (added) |index| psqt +%= @as(@Vector(buckets, i32), self.threat_psqt[index]);
-        to_psqt.* = psqt;
     }
     inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
         // Upstream apply_psq_features<sign, true>: every incremental move

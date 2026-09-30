@@ -355,20 +355,18 @@ const Session = struct {
                 const network = self.engine.network.?;
                 const trace = network.trace(pos, self.engine.accumulators, self.engine.caches);
                 const bucket = (@popCount(pos.pieces()) - 1) / 4;
-                const border = "+------------+------------+------------+------------+\n";
+                const border = "+------------+------------+\n";
                 try self.writer.print("NNUE network contributions (Normalized, {s} to move)\n{s}", .{ if (pos.side == .white) "White" else "Black", border });
-                try self.writer.writeAll("|   Bucket   |  Material  | Positional |   Total    |\n|            |   (PSQT)   |  (Layers)  |            |\n");
+                try self.writer.writeAll("|   Bucket   | Evaluation |\n");
                 try self.writer.writeAll(border);
-                for (trace, 0..) |out, index| {
+                for (trace, 0..) |value, index| {
                     try self.writer.print("|  {d}         |  ", .{index});
-                    for ([_]i32{ out.psqt, out.positional, out.psqt + out.positional }) |value| {
-                        try self.writer.print("{c}{d:6.2}   |  ", .{ @as(u8, if (value < 0) '-' else if (value > 0) '+' else ' '), @as(f64, @floatFromInt(@abs(notation.centipawns(value, pos)))) / 100.0 });
-                    }
+                    try self.writer.print("{c}{d:6.2}   |  ", .{ @as(u8, if (value < 0) '-' else if (value > 0) '+' else ' '), @as(f64, @floatFromInt(@abs(notation.centipawns(value, pos)))) / 100.0 });
                     if (index == bucket) try self.writer.writeAll("<-- this bucket is used");
                     try self.writer.writeByte('\n');
                 }
                 try self.writer.writeAll(border);
-                const raw = trace[bucket].psqt + trace[bucket].positional;
+                const raw = trace[bucket];
                 try self.writer.print("NNUE evaluation          {s}{d} (side to move, internal units)\n", .{ if (raw >= 0) "+" else "", raw });
                 const sign: i32 = if (pos.side == .white) 1 else -1;
                 const values = [_]i32{ notation.centipawns(raw * sign, pos), notation.centipawns(network.evaluateAdjusted(pos, self.engine.accumulators, self.engine.caches, 0) * sign, pos) };

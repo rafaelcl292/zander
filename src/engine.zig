@@ -12,7 +12,7 @@ const Group = @import("numa_group.zig").Group;
 const memory = @import("memory.zig");
 const Helper = @import("search_thread.zig").Helper;
 const notation = @import("notation.zig");
-pub const default_network = "networks/nn-134a887f4c8f.nnue";
+pub const default_network = "networks/nn-252f33942263.nnue";
 pub const max_hash_mb: usize = if (@sizeOf(usize) == 8) 33554432 else 2048;
 pub fn maxThreads() usize {
     return @max(1024, 4 * (std.Thread.getCpuCount() catch 1));

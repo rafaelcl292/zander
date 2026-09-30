@@ -8,7 +8,7 @@ test "persistent engine retains state and replaces resources transactionally" {
     const original_clusters = engine.clusters.ptr;
     try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
     const result = try engine.runSearch();
-    try std.testing.expectEqual(@as(u64, 1475), result.nodes);
+    try std.testing.expectEqual(@as(u64, 2488), result.nodes);
     var text: [6]u8 = undefined;
     try std.testing.expectEqualStrings("d2d4", z.notation.moveText(result.best_move, false, &text));
     const generation = engine.table.generation;
@@ -79,7 +79,7 @@ test "persistent engine retains state and replaces resources transactionally" {
     try engine.setPosition(z.position.start_fen, false, &.{});
     try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
     const single = try engine.runSearch();
-    try std.testing.expectEqual(@as(u64, 1475), single.nodes);
+    try std.testing.expectEqual(@as(u64, 2488), single.nodes);
     if (@import("options").tablebase_path) |path| {
         try engine.loadTablebases(path);
         const database = engine.tablebases.?;
@@ -111,7 +111,7 @@ test "failed network replacement leaves the previous network usable" {
     try std.testing.expectEqual(network, engine.network.?);
     try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
     const result = try engine.runSearch();
-    try std.testing.expectEqual(@as(u64, 1475), result.nodes);
+    try std.testing.expectEqual(@as(u64, 2488), result.nodes);
     var text: [6]u8 = undefined;
     try std.testing.expectEqualStrings("d2d4", z.notation.moveText(result.best_move, false, &text));
 }

@@ -326,8 +326,10 @@ pub const Worker = struct {
         const ss = &w.frames[frame];
         const prev = &w.frames[frame - 1];
         const all_node = !(pv_node or cut_node);
-        const seek_mate = self.root_depth >= 16 and @abs(if (self.root_moves.len != 0) self.root_moves[self.pv_idx].score else self.root_score) >= 2000;
         if (initial_depth <= 0) return w.search(pv_node, pos, frame, initial_alpha, initial_beta);
+        std.debug.assert(self.root_depth > 0);
+        // Upstream safety threshold; not a playing-strength tuning parameter.
+        const seek_mate = @abs(if (self.root_moves.len != 0) self.root_moves[self.pv_idx].score else self.root_score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
         if (self.thread_index == 0) {
             if (w.control) |control| control.poll(w.nodes);
         }
@@ -485,7 +487,9 @@ pub const Worker = struct {
                     const move = picker.next();
                     if (move.data == 0) break;
                     if (move.data == excluded.data or !pos.legal(move)) continue;
-                    w.doMove(pos, move, &state, frame);
+                    const capture = pos.captureStage(move);
+                    std.debug.assert(capture);
+                    w.doMoveCapture(pos, move, &state, capture, frame);
                     var value = -w.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1);
                     if (value >= prob_beta and prob_depth > 0) value = -self.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1, prob_depth, !cut_node);
                     w.undoMove(pos, move);
@@ -567,12 +571,12 @@ pub const Worker = struct {
                     depth += 1;
                 } else if (value >= beta and !decisive(value)) {
                     self.tt_move_history.update(-421 - 110 * depth);
-                    if (!ss.in_check and value > ss.static_eval) histories.updateCorrection(pos, frame, std.math.clamp(div((value - ss.static_eval) * singular_depth * 177, 1024), -256, 256));
+                    if (!ss.in_check and value > ss.static_eval) histories.updateCorrection(pos, frame, std.math.clamp(div((value - ss.static_eval) * 664, 1024), -256, 256));
                     return value;
                 } else if (data.value >= beta or cut_node) extension = -3;
             }
             const node_count = if (root_node) w.nodes else 0;
-            w.doMove(pos, move, &state, frame);
+            w.doMoveCapture(pos, move, &state, capture, frame);
             new_depth += extension;
             if (ss.tt_pv) r -= 3023 + 1004 * b(pv_node) + 885 * b(data.value > alpha) + b(data.depth >= depth) * (816 + 940 * b(cut_node));
             r += 697;

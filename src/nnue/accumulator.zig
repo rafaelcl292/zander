@@ -8,13 +8,11 @@ const f = @import("features.zig");
 const FT = @import("transformer.zig").FeatureTransformer;
 pub const Accumulator = struct {
     accumulation: [2][1024]i16 align(64),
-    psqt: [2][8]i32 align(64),
     computed: [2]bool = @splat(false),
     dirties: dirty.Dirties = .{},
 };
 pub const CacheEntry = struct {
     accumulation: [1024]i16 align(64),
-    psqt: [8]i32 = @splat(0),
     pieces: [64]t.Piece = @splat(.none),
     piece_bb: u64 = 0,
 };
@@ -108,14 +106,13 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT
     f.FullThreats.appendChanged(c, king, &diff.threats, if (forward) &tr else &ta, if (forward) &ta else &tr);
     f.PawnPairs.appendChanged(c, king, diff.before, diff.after, if (forward) &tr else &ta, if (forward) &ta else &tr);
     if (@import("backend").simd) {
-        ft.applyCombined(&computed.accumulation[side], &computed.psqt[side], &target.accumulation[side], &target.psqt[side], pr.slice(), pa.slice(), tr.slice(), ta.slice());
+        ft.applyCombined(&computed.accumulation[side], &target.accumulation[side], pr.slice(), pa.slice(), tr.slice(), ta.slice());
     } else {
         target.accumulation[side] = computed.accumulation[side];
-        target.psqt[side] = computed.psqt[side];
-        ft.applyPsq(false, &target.accumulation[side], &target.psqt[side], pr.slice());
-        ft.applyPsq(true, &target.accumulation[side], &target.psqt[side], pa.slice());
-        ft.applyThreats(false, &target.accumulation[side], &target.psqt[side], tr.slice());
-        ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], ta.slice());
+        ft.applyPsq(false, &target.accumulation[side], pr.slice());
+        ft.applyPsq(true, &target.accumulation[side], pa.slice());
+        ft.applyThreats(false, &target.accumulation[side], tr.slice());
+        ft.applyThreats(true, &target.accumulation[side], ta.slice());
     }
     target.computed[side] = true;
 }
@@ -144,7 +141,7 @@ fn incrementalBoth(kings: [2]t.Square, ft: *const FT, target: *Accumulator, comp
     f.PawnPairs.appendChangedBoth(kings, diff.before, diff.after, &tr, &ta);
     inline for (0..2) |side| {
         f.HalfKA.appendChanged(@enumFromInt(side), kings[side], diff.piece, &pr[side], &pa[side]);
-        ft.applyCombined(&computed.accumulation[side], &computed.psqt[side], &target.accumulation[side], &target.psqt[side], pr[side].slice(), pa[side].slice(), tr[side].slice(), ta[side].slice());
+        ft.applyCombined(&computed.accumulation[side], &target.accumulation[side], pr[side].slice(), pa[side].slice(), tr[side].slice(), ta[side].slice());
         target.computed[side] = true;
     }
 }
@@ -195,13 +192,12 @@ fn refresh(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator
     f.FullThreats.appendActive(c, pos, &active);
     f.PawnPairs.appendActive(c, pos, &active);
     if (@import("backend").simd) {
-        ft.applyRefresh(&entry.accumulation, &entry.psqt, &target.accumulation[side], &target.psqt[side], removed.slice(), added.slice(), active.slice());
+        ft.applyRefresh(&entry.accumulation, &target.accumulation[side], removed.slice(), added.slice(), active.slice());
     } else {
-        ft.applyPsq(false, &entry.accumulation, &entry.psqt, removed.slice());
-        ft.applyPsq(true, &entry.accumulation, &entry.psqt, added.slice());
+        ft.applyPsq(false, &entry.accumulation, removed.slice());
+        ft.applyPsq(true, &entry.accumulation, added.slice());
         target.accumulation[side] = entry.accumulation;
-        target.psqt[side] = entry.psqt;
-        ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], active.slice());
+        ft.applyThreats(true, &target.accumulation[side], active.slice());
     }
     target.computed[side] = true;
 }
@@ -241,16 +237,15 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     f.FullThreats.appendChanged(c, dp.to, &target.dirties.threats, &removed, &added);
     f.PawnPairs.appendChanged(c, dp.to, target.dirties.before, target.dirties.after, &removed, &added);
     if (@import("backend").simd) {
-        ft.applyHybrid(new_entry, old_entry, &computed.accumulation[side], &computed.psqt[side], &target.accumulation[side], &target.psqt[side], new_removed.slice(), new_added.slice(), old_removed.slice(), old_added.slice(), removed.slice(), added.slice());
+        ft.applyHybrid(new_entry, old_entry, &computed.accumulation[side], &target.accumulation[side], new_removed.slice(), new_added.slice(), old_removed.slice(), old_added.slice(), removed.slice(), added.slice());
     } else {
-        ft.applyPsq(false, &new_entry.accumulation, &new_entry.psqt, new_removed.slice());
-        ft.applyPsq(true, &new_entry.accumulation, &new_entry.psqt, new_added.slice());
+        ft.applyPsq(false, &new_entry.accumulation, new_removed.slice());
+        ft.applyPsq(true, &new_entry.accumulation, new_added.slice());
         for (&target.accumulation[side], new_entry.accumulation, computed.accumulation[side], old_entry.accumulation) |*out, new, from, old| out.* = new +% from -% old;
-        for (&target.psqt[side], new_entry.psqt, computed.psqt[side], old_entry.psqt) |*out, new, from, old| out.* = new +% from -% old;
-        ft.applyPsq(true, &target.accumulation[side], &target.psqt[side], old_removed.slice());
-        ft.applyPsq(false, &target.accumulation[side], &target.psqt[side], old_added.slice());
-        ft.applyThreats(false, &target.accumulation[side], &target.psqt[side], removed.slice());
-        ft.applyThreats(true, &target.accumulation[side], &target.psqt[side], added.slice());
+        ft.applyPsq(true, &target.accumulation[side], old_removed.slice());
+        ft.applyPsq(false, &target.accumulation[side], old_added.slice());
+        ft.applyThreats(false, &target.accumulation[side], removed.slice());
+        ft.applyThreats(true, &target.accumulation[side], added.slice());
     }
     new_entry.pieces = pos.board;
     new_entry.piece_bb = pos.pieces();

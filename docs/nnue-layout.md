@@ -31,7 +31,7 @@ retained locally under `artifacts/nnue-layout/` (Git-ignored). Reproduce with:
 taskset -c 2 python3 scripts/compare_engines.py \
   artifacts/nnue-layout/byte-mask/bin/zander \
   artifacts/nnue-layout/baseline/bin/zander \
-  --network networks/nn-134a887f4c8f.nnue \
+  --network networks/nn-252f33942263.nnue \
   --positions tests/benchmark_positions.txt \
   --depth 16 --repeats 9 --threads 1 --hash 64 --require-identical \
   --output artifacts/nnue-layout/recheck.json

@@ -109,7 +109,7 @@ fn run(init: std.process.Init) !void {
             return;
         }
         const score = network.evaluate(&pos, stack, caches);
-        try writer.print("psqt {d}\npositional {d}\nraw {d}\n", .{ score.psqt, score.positional, score.psqt + score.positional });
+        try writer.print("raw {d}\n", .{score});
         if (pos.st.checkers == 0) {
             try writer.print("adjusted {d}\n", .{network.evaluateAdjusted(&pos, stack, caches, 0)});
         } else try writer.writeAll("adjusted unavailable (in check)\n");

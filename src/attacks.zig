@@ -99,7 +99,7 @@ fn hqAttacks(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
     // Reference dual HQ: reverse bytes within each 128-bit half, exchanging
     // the two 64-bit lanes as well as reversing their bytes.
     const Vec = @Vector(4, u64);
-    const mask: Vec = .{ masks[0], masks[1], 0, masks[3] };
+    const mask: Vec = .{ masks[0], masks[1], masks[3], 0 };
     const o = mask & @as(Vec, @splat(occupied));
     const reversed = @shuffle(u64, @byteSwap(o), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
     // Reversing a one-bit board maps square s to 63 - s. Keep that invariant
@@ -109,7 +109,8 @@ fn hqAttacks(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
     const result = ((o -% @as(Vec, @splat(bb.square(s) *% 2))) ^ restored) & mask;
     const shift: u6 = @as(u6, s.rank()) * 8;
     const rank = @as(u64, rank_attacks[s.file()][(occupied >> shift >> 1) & 63]) << shift;
-    const bishop = result[1] | result[3];
+    const combined = result | @shuffle(u64, result, undefined, @Vector(4, i32){ 0, 2, 1, 3 });
+    const bishop = combined[1];
     const rook = result[0] | rank;
     return switch (pt) {
         .bishop => bishop,

@@ -185,7 +185,7 @@ def main():
         client.send("position startpos")
         lines = client.search("go depth 4")
         assert lines[-1].startswith("bestmove d2d4"), lines
-        assert any("nodes 1475 " in line for line in lines), lines
+        assert any("nodes 2488 " in line for line in lines), lines
         assert any("multipv 3 " in line and " wdl " in line for line in lines), lines
         for line in lines:
             if " wdl " in line:
@@ -193,7 +193,7 @@ def main():
         for reset in ("setoption name Clear Hash", "setoption name Threads value 1"):
             client.send(reset)
             lines = client.search("go depth 4")
-            assert any("nodes 1475 " in line for line in lines), lines
+            assert any("nodes 2488 " in line for line in lines), lines
         client.send("position startpos moves e2e5")
         assert "IllegalMove" in client.until("info string error")[-1]
         lines = client.search("go depth 3 searchmoves e2e4")
@@ -300,7 +300,7 @@ def main():
         client.send("setoption name Threads value 1")
         client.send("setoption name MultiPV value 3")
         lines = client.search("go depth 4")
-        assert any("nodes 1475 " in line for line in lines), lines
+        assert any("nodes 2488 " in line for line in lines), lines
         if args.tablebases:
             client.send(f"setoption name SyzygyPath value {args.tablebases}")
             client.send("setoption name MultiPV value 1")

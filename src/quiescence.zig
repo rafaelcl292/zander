@@ -57,6 +57,9 @@ pub const Worker = struct {
     }
     /// Frames must already have their in-check flag and sentinel histories set.
     pub fn doMove(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, frame: ?usize) void {
+        self.doMoveCapture(pos, move, state, pos.captureStage(move), frame);
+    }
+    pub fn doMoveCapture(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, capture: bool, frame: ?usize) void {
         self.table.prefetch(pos.prefetchKey(move));
         if (frame) |index| {
             const piece = @intFromEnum(pos.pieceOn(move.from()));
@@ -64,7 +67,6 @@ pub const Worker = struct {
                 if (self.frames[index - offset].continuation_correction_history) |history| @import("prefetch.zig").read(&history[piece][@intFromEnum(move.to())]);
             }
         }
-        const capture = pos.captureStage(move);
         self.nodes += 1;
         if (self.publish_nodes) self.published_nodes.store(self.nodes, .monotonic);
         const dirties = self.accumulators.push();
@@ -179,7 +181,7 @@ pub const Worker = struct {
                 if (!capture or !pos.seeGe(move, -74)) continue;
             }
             var state: p.StateInfo = undefined;
-            self.doMove(pos, move, &state, frame);
+            self.doMoveCapture(pos, move, &state, capture, frame);
             const value = -self.search(pv_node, pos, frame + 1, -beta, -alpha);
             self.undoMove(pos, move);
             if (self.stopped()) return 0;

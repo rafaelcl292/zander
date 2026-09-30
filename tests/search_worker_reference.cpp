@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
             worker->nodes=0; worker->accumulatorStack.reset();
             bool null=move==Move::null();
             if(null) worker->do_null_move(pos,next,ss);
-            else worker->do_move(pos,move,next,pos.gives_check(move),withFrame?ss:nullptr);
+            else worker->do_move(pos,move,next,pos.gives_check(move),pos.capture_stage(move),withFrame?ss:nullptr);
             int continuation=ss->continuationHistory?int((reinterpret_cast<char*>(ss->continuationHistory)-reinterpret_cast<char*>(&worker->continuationHistory))/sizeof(PieceToHistory)):-1;
             int correction=ss->continuationCorrectionHistory?int((reinterpret_cast<char*>(ss->continuationCorrectionHistory)-reinterpret_cast<char*>(&worker->continuationCorrectionHistory))/sizeof(CorrectionHistory<PieceTo>)):-1;
             std::printf(".{ .root=%zu,.move=%u,.frame=%s,.key=%llu,.nodes=%llu,.size=%zu,.current=%u,.continuation=%d,.correction=%d },\n",index,unsigned(move.raw()),withFrame?"true":"false",(unsigned long long)pos.key(),(unsigned long long)uint64_t(worker->nodes),worker->accumulatorStack.size,unsigned(ss->currentMove.raw()),continuation,correction);
@@ -170,6 +170,11 @@ int main(int argc, char** argv) {
     std::puts("pub const MainCase = struct { root: usize, depth: i32, mode: usize, warm: bool, score: i32, nodes: u64, sel_depth: i32, tt_checksum: u64, tt_history: i16, history_hashes: [7]u64 = .{0,0,0,0,0,0,0}, pv: []const u16 };\npub const main_cases = [_]MainCase{");
     inputs.clear(); inputs.seekg(0); root=0;
     worker->threadIdx=1; threads.stop=false;
+    // seekMate reads the root score even in diagnostic non-root searches.
+    // Match Zander's neutral root_score when no root move list is supplied.
+    worker->rootMoves.emplace_back(Move::none());
+    worker->rootMoves[0].score=VALUE_ZERO;
+    worker->pvIdx=0;
     while(std::getline(inputs,line)) {
         size_t index=root++; Position pos; StateInfo st;
         if(pos.set(line.substr(2),line[0]=='1',&st)) continue;

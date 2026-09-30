@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     auto stack = std::make_unique<AccumulatorStack>();
     auto cache = std::make_unique<AccumulatorCaches>(*net);
     Attacks::init(); Position::init();
-    std::puts("pub const Event = struct { root: usize, move: u16 = 0, pop: bool = false, evaluate: bool = false, checksum: u64 = 0, psqt: i32 = 0, positional: i32 = 0, adjusted: [3]i32 = .{0,0,0} };\npub const events = [_]Event{");
+    std::puts("pub const Event = struct { root: usize, move: u16 = 0, pop: bool = false, evaluate: bool = false, checksum: u64 = 0, positional: i32 = 0, trace: [8]i32 = .{0,0,0,0,0,0,0,0}, adjusted: [3]i32 = .{0,0,0} };\npub const events = [_]Event{");
     std::ifstream inputs(argv[2]); std::string line; size_t root = 0;
     while (std::getline(inputs, line)) {
         const size_t index = root++;
@@ -35,11 +35,16 @@ int main(int argc, char** argv) {
         auto emit = [&](Move move, bool pop, bool evaluate) {
             std::printf(".{ .root=%zu, .move=%u, .pop=%s, .evaluate=%s", index, unsigned(move.raw()), pop?"true":"false", evaluate?"true":"false");
             if (evaluate) {
-                auto [psqt, positional] = net->evaluate(pos, *stack, *cache);
+                auto positional = net->evaluate(pos, *stack, *cache);
                 uint64_t h = 14695981039346656037ULL;
                 for (auto& perspective : stack->latest().accumulation) for (auto v : perspective) h = (h ^ uint16_t(v)) * 1099511628211ULL;
-                for (auto& perspective : stack->latest().psqtAccumulation) for (auto v : perspective) h = (h ^ uint32_t(v)) * 1099511628211ULL;
-                std::printf(", .checksum=%llu, .psqt=%d, .positional=%d", (unsigned long long)h, psqt, positional);
+                std::printf(", .checksum=%llu, .positional=%d", (unsigned long long)h, positional);
+                if (move == Move::none()) {
+                    const auto trace = net->trace_evaluate(pos, *stack, *cache);
+                    std::printf(", .trace=.{");
+                    for (auto value : trace.positional) std::printf("%d,", value);
+                    std::printf("}");
+                }
                 if (!pos.checkers()) {
                     std::printf(", .adjusted=.{");
                     for (int optimism : {0, 17, -13}) std::printf("%d,", Eval::evaluate(*net,pos,*stack,*cache,optimism));

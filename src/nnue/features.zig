@@ -28,13 +28,24 @@ pub const ThreatList = IndexList(256);
 pub const HalfKA = struct {
     pub const hash_value: u32 = 0x7f234cb8;
     pub const dimensions: u32 = 22528;
+    const offsets align(64) = blk: {
+        @setEvalBranchQuota(30000);
+        var table: [2][64][16]u16 = @splat(@splat(@splat(0)));
+        for (0..2) |side| for (0..64) |square| {
+            const perspective: t.Color = @enumFromInt(side);
+            const king: t.Square = @enumFromInt(square);
+            const relative = king.relative(perspective);
+            const bucket = (7 - @as(u16, relative.rank())) * 4 + @min(@as(u16, relative.file()), 7 - @as(u16, relative.file()));
+            const orient: u16 = @as(u16, if (king.file() < 4) 7 else 0) ^ (56 * @as(u16, @intCast(side)));
+            for (all_pieces) |pc| {
+                const piece_offset: u16 = if (pc.pieceType() == .king) 640 else (@as(u16, @intFromEnum(pc.pieceType())) - 1) * 128 + @as(u16, @intFromBool(pc.color() != perspective)) * 64;
+                table[side][square][@intFromEnum(pc)] = piece_offset + bucket * 704 + orient;
+            }
+        };
+        break :blk table;
+    };
     pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square) u32 {
-        const flip: u32 = 56 * @as(u32, @intFromEnum(perspective));
-        const orient: u32 = if (king.file() < 4) 7 else 0;
-        const relative = king.relative(perspective);
-        const bucket = (7 - @as(u32, relative.rank())) * 4 + @min(@as(u32, relative.file()), 7 - @as(u32, relative.file()));
-        const piece_offset: u32 = if (pc.pieceType() == .king) 640 else (@as(u32, @intFromEnum(pc.pieceType())) - 1) * 128 + @as(u32, @intFromBool(pc.color() != perspective)) * 64;
-        return (@as(u32, @intFromEnum(s)) ^ orient ^ flip) + piece_offset + bucket * 704;
+        return @as(u32, @intFromEnum(s)) ^ offsets[@intFromEnum(perspective)][@intFromEnum(king)][@intFromEnum(pc)];
     }
     pub fn requiresRefresh(diff: dirty.DirtyPiece, perspective: t.Color) bool {
         return diff.pc == t.Piece.make(perspective, .king);

@@ -6,8 +6,8 @@ const Architecture = @import("layers.zig").Architecture;
 const accumulator = @import("accumulator.zig");
 const Position = @import("../position.zig").Position;
 const t = @import("../types.zig");
-pub const default_name = "nn-134a887f4c8f.nnue";
-pub const default_sha256 = "134a887f4c8ff7bf7284177a3b3fc6ff9cef95ba89eb8db3079a8e507f7126af";
+pub const default_name = "nn-252f33942263.nnue";
+pub const default_sha256 = "252f33942263bc8b8f740ba8aec3fed5a159ff148113c47a55c18c33d6627ab3";
 pub const Network = struct {
     transformer: FeatureTransformer,
     layers: [8]Architecture,
@@ -45,13 +45,9 @@ pub const Network = struct {
         const ft = &self.transformer;
         try out.leb128(writer, i16, &ft.biases);
         const threats = features.FullThreats.dimensions;
-        const pairs = features.PawnPairs.dimensions;
         try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[0..threats]));
-        try out.leb128(writer, i32, @as([*]const i32, @ptrCast(&ft.threat_psqt))[0 .. threats * 8]);
         try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[threats..]));
-        try out.leb128(writer, i32, @as([*]const i32, @ptrCast(&ft.threat_psqt[threats]))[0 .. pairs * 8]);
         try out.leb128(writer, i16, @as([*]const i16, @ptrCast(&ft.weights))[0 .. features.HalfKA.dimensions * 1024]);
-        try out.leb128(writer, i32, @as([*]const i32, @ptrCast(&ft.psqt_weights))[0 .. features.HalfKA.dimensions * 8]);
         for (&self.layers) |*layer| {
             try out.int(writer, u32, Architecture.hash());
             inline for (.{ "fc0", "fc1", "fc2" }) |name| {
@@ -61,47 +57,46 @@ pub const Network = struct {
             }
         }
     }
-    pub const Output = struct { psqt: i32, positional: i32 };
-    pub fn evaluate(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) Output {
+    pub fn evaluate(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) i32 {
         std.debug.assert(self.initialized);
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
         const side = @intFromEnum(pos.side);
         const bucket = (@popCount(pos.pieces()) - 1) / 4;
-        const psqt = @divTrunc(state.psqt[side][bucket] - state.psqt[side ^ 1][bucket], 2);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
         if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
         var buffer: Architecture.Buffer = undefined;
         const positional = self.layers[bucket].propagatePreparedMasked(&transformed, &masks, &buffer);
-        return .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(positional, 16) };
+        return @divTrunc(positional, 16);
     }
-    pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [8]Output {
+    pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [8]i32 {
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
         const side = @intFromEnum(pos.side);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
         if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
-        var result: [8]Output = undefined;
-        for (&self.layers, &result, 0..) |*layer, *out, bucket| {
+        var result: [8]i32 = undefined;
+        for (&self.layers, &result) |*layer, *out| {
             var buffer: Architecture.Buffer = undefined;
-            const psqt = @divTrunc(state.psqt[side][bucket] - state.psqt[side ^ 1][bucket], 2);
-            out.* = .{ .psqt = @divTrunc(psqt, 16), .positional = @divTrunc(layer.propagatePreparedMasked(&transformed, &masks, &buffer), 16) };
+            out.* = @divTrunc(layer.propagatePreparedMasked(&transformed, &masks, &buffer), 16);
         }
         return result;
     }
     pub fn evaluateAdjusted(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches, initial_optimism: i32) i32 {
         std.debug.assert(pos.st.checkers == 0);
-        const out = self.evaluate(pos, stack, cache);
-        var nnue: i64 = out.psqt + out.positional;
-        const complexity: i64 = @intCast(@abs(out.psqt - out.positional));
-        var optimism: i64 = initial_optimism;
-        optimism += @divTrunc(optimism * complexity, 476);
-        nnue -= @divTrunc(nnue * complexity, 18236);
-        const material = 534 * @as(i64, @popCount(pos.by_type[1])) + pos.st.non_pawn_material[0] + pos.st.non_pawn_material[1];
-        var value = nnue + @divTrunc(nnue * material + optimism * 7675, 91000);
-        value -= @divTrunc(value * pos.st.rule50, 199);
+        const nnue: i64 = self.evaluate(pos, stack, cache);
+        const side = @intFromEnum(pos.side);
+        const pawns = @as(i64, @popCount(pos.piecesOf(pos.side, .pawn))) - @as(i64, @popCount(pos.piecesOf(pos.side.opposite(), .pawn)));
+        const simple = @import("../position.zig").piece_value[1] * pawns + pos.st.non_pawn_material[side] - pos.st.non_pawn_material[side ^ 1];
+        const se_norm = @divTrunc(simple * 1024, @as(i64, @intCast(@abs(simple))) + 1024);
+        const nnue_norm = @divTrunc(nnue * 1024, @as(i64, @intCast(@abs(nnue))) + 1024);
+        const alignment = @divTrunc(se_norm * nnue_norm, 512);
+        const base_eval = nnue + @divTrunc(nnue * alignment, 65536) + @divTrunc(@as(i64, initial_optimism) * alignment, 16384);
+        const material = 521 * @as(i64, @popCount(pos.by_type[1])) + pos.st.non_pawn_material[0] + pos.st.non_pawn_material[1];
+        var value = @divTrunc(base_eval * (90649 + material), 90649);
+        value -= @divTrunc(value * pos.st.rule50, 189);
         const max = t.value_mate - 2 * t.max_ply - 2;
         return @intCast(std.math.clamp(value, -max, max));
     }

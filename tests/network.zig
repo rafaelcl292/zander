@@ -53,12 +53,9 @@ test "real NNUE loading and incremental evaluation match pinned Stockfish" {
         for (stack.latest().accumulation) |perspective| for (perspective) |v| {
             checksum = (checksum ^ @as(u16, @bitCast(v))) *% 1099511628211;
         };
-        for (stack.latest().psqt) |perspective| for (perspective) |v| {
-            checksum = (checksum ^ @as(u32, @bitCast(v))) *% 1099511628211;
-        };
         try std.testing.expectEqual(event.checksum, checksum);
-        try std.testing.expectEqual(event.psqt, output.psqt);
-        try std.testing.expectEqual(event.positional, output.positional);
+        try std.testing.expectEqual(event.positional, output);
+        if (event.move == 0) try std.testing.expectEqual(event.trace, network.trace(&pos, stack, cache));
         if (pos.st.checkers == 0) for ([_]i32{ 0, 17, -13 }, event.adjusted) |optimism, expected| {
             try std.testing.expectEqual(expected, network.evaluateAdjusted(&pos, stack, cache, optimism));
         };
