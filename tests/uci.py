@@ -336,6 +336,34 @@ def main():
         client.send("go infinite")  # Quit also interrupts and joins a live worker.
     finally:
         client.close()
+    # Reuse the same main worker across active, stopped, and terminal searches.
+    reuse_client = Client(args.executable)
+    try:
+        reuse_client.send(f"setoption name EvalFile value {args.network}")
+        reuse_client.send("isready")
+        reuse_client.until("readyok")
+        reuse_client.send("go infinite depth 1")
+        reuse_client.until("info depth 1")
+        task_dir = pathlib.Path(f"/proc/{reuse_client.process.pid}/task")
+        tasks = {p.name for p in task_dir.iterdir()} if task_dir.exists() else None
+        reuse_client.send("stop")
+        reuse_client.until("bestmove", 5)
+        for iteration in range(16):
+            terminal = iteration % 2 == 0
+            reuse_client.send("position fen 7k/6Q1/5K2/8/8/8/8/8 b - - 100 70" if terminal else "position startpos")
+            reuse_client.send("go depth 1")
+            if not terminal:
+                reuse_client.send("stop")  # Also cover stopping a just-published job.
+            lines = reuse_client.until("bestmove", 5)
+            assert not any("info string error" in line for line in lines), lines
+            if terminal:
+                assert lines[-1] == "bestmove 0000", lines
+            reuse_client.send("isready")
+            assert reuse_client.until("readyok") == ["readyok"]
+            if tasks is not None:
+                assert {p.name for p in task_dir.iterdir()} == tasks, "Search worker was replaced or leaked"
+    finally:
+        reuse_client.close()  # Shutdown must also join an idle worker.
     eof_client = Client(args.executable)
     try:
         eof_client.send(f"setoption name EvalFile value {args.network}")

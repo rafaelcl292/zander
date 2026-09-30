@@ -15,11 +15,12 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, network_path: ?[]const u8) 
     var logger: @import("protocol_log.zig").Log = .{ .destination = &output.interface, .io = io };
     defer logger.close();
     var session: Session = .{ .engine = engine, .writer = &logger.interface, .logger = &logger };
-    defer session.stopAndJoin();
+    defer session.shutdown();
     engine.worker.progress_context = &session;
     engine.worker.on_progress = Session.progress;
     engine.wait_context = &session;
     engine.on_wait = Session.waitForFinish;
+    session.thread = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, Session.searchLoop, .{&session});
     var input_buffer: [65536]u8 = undefined;
     var input = std.Io.File.stdin().readerStreaming(io, &input_buffer);
     var tokens: [16384][]const u8 = undefined;
@@ -62,6 +63,9 @@ const Session = struct {
     output_mutex: std.Io.Mutex = .init,
     wake_mutex: std.Io.Mutex = .init,
     wake_condition: std.Io.Condition = .init,
+    // Protected by wake_mutex, including publication of prepared search state.
+    searching: bool = false,
+    exiting: bool = false,
     multi_pv: usize = 1,
     skill_level: i32 = 20,
     limit_strength: bool = false,
@@ -95,12 +99,46 @@ const Session = struct {
         defer self.wake_mutex.unlock(self.engine.io);
         self.wake_condition.broadcast(self.engine.io);
     }
-    fn stopAndJoin(self: *Session) void {
-        if (self.thread) |thread| {
+    fn isSearching(self: *Session) bool {
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        defer self.wake_mutex.unlock(self.engine.io);
+        return self.searching;
+    }
+    fn waitSearch(self: *Session) void {
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        defer self.wake_mutex.unlock(self.engine.io);
+        while (self.searching) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+    }
+    fn stopSearch(self: *Session) void {
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        defer self.wake_mutex.unlock(self.engine.io);
+        if (self.searching) {
             self.engine.control.requestStop();
-            self.wake();
-            thread.join();
-            self.thread = null;
+            self.wake_condition.broadcast(self.engine.io);
+            while (self.searching) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+        }
+    }
+    fn shutdown(self: *Session) void {
+        const thread = self.thread orelse return;
+        self.stopSearch();
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        self.exiting = true;
+        self.wake_condition.broadcast(self.engine.io);
+        self.wake_mutex.unlock(self.engine.io);
+        thread.join();
+        self.thread = null;
+    }
+    fn searchLoop(self: *Session) void {
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        defer self.wake_mutex.unlock(self.engine.io);
+        while (true) {
+            while (!self.searching and !self.exiting) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+            if (self.exiting) return;
+            self.wake_mutex.unlock(self.engine.io);
+            self.searchThread();
+            self.wake_mutex.lockUncancelable(self.engine.io);
+            self.searching = false;
+            self.wake_condition.broadcast(self.engine.io);
         }
     }
     fn command(self: *Session, args: []const []const u8) !void {
@@ -128,36 +166,36 @@ const Session = struct {
                 "option name EvalFile type string default " ++ e.default_network ++ "\n" ++
                 "option name Clear Hash type button\nuciok\n", .{ e.max_hash_mb, e.maxThreads() });
         } else if (std.mem.eql(u8, cmd, "isready")) {
-            if (self.thread == null) self.engine.ensureNetwork() catch |err| self.report(err);
+            if (!self.isSearching()) self.engine.ensureNetwork() catch |err| self.report(err);
             try self.text("readyok\n");
         } else if (std.mem.eql(u8, cmd, "stop")) {
-            self.stopAndJoin();
+            self.stopSearch();
         } else if (std.mem.eql(u8, cmd, "ponderhit")) {
             self.engine.control.ponderHit();
             self.wake();
         } else if (std.mem.eql(u8, cmd, "ucinewgame")) {
-            self.stopAndJoin();
+            self.stopSearch();
             self.engine.newGame();
         } else if (std.mem.eql(u8, cmd, "setoption")) {
-            self.stopAndJoin();
+            self.stopSearch();
             try self.setOption(args[1..]);
         } else if (std.mem.eql(u8, cmd, "position")) {
-            self.stopAndJoin();
+            self.stopSearch();
             try self.setPosition(args[1..]);
         } else if (std.mem.eql(u8, cmd, "go")) {
-            self.stopAndJoin();
+            self.stopSearch();
             self.go(args[1..]) catch |err| {
                 self.report(err);
                 try self.text("bestmove 0000\n");
             };
         } else if (std.mem.eql(u8, cmd, "speedtest")) {
-            self.stopAndJoin();
+            self.stopSearch();
             try self.speedtest(args[1..]);
         } else if (std.mem.eql(u8, cmd, "bench")) {
-            self.stopAndJoin();
+            self.stopSearch();
             try self.bench(args[1..]);
         } else if (std.mem.eql(u8, cmd, "d") or std.mem.eql(u8, cmd, "flip") or std.mem.eql(u8, cmd, "eval") or std.mem.eql(u8, cmd, "compiler") or std.mem.eql(u8, cmd, "export_net")) {
-            self.stopAndJoin();
+            self.stopSearch();
             try self.diagnostic(args);
         } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "license") or std.mem.eql(u8, cmd, "--license")) {
             try self.text("Zander is a Stockfish port in Zig, licensed under GPL-3.0-or-later. See README.md and LICENSE.\nCommands: uci, position, go, stop, ponderhit, setoption, isready, ucinewgame, d, flip, eval, compiler, export_net, bench, speedtest, quit.\n");
@@ -174,8 +212,7 @@ const Session = struct {
         var buffer: [24]u8 = undefined;
         const limit = try std.fmt.bufPrint(&buffer, "{d}", .{milliseconds});
         try self.go(&.{ "movetime", limit });
-        if (self.thread) |thread| thread.join();
-        self.thread = null;
+        self.waitSearch();
         return self.engine.totalNodes();
     }
     fn speedtest(self: *Session, args: []const []const u8) !void {
@@ -284,8 +321,7 @@ const Session = struct {
                 total += try self.writePerft(try integer(u8, limit, 1, t.max_ply - 1));
             } else {
                 try self.go(&.{ kind, limit });
-                if (self.thread) |thread| thread.join();
-                self.thread = null;
+                self.waitSearch();
                 total += self.engine.totalNodes();
             }
         }
@@ -543,7 +579,11 @@ const Session = struct {
         self.engine.worker.skill_level = self.skill_level;
         self.engine.worker.skill_elo = if (self.limit_strength) self.elo else 0;
         try self.engine.prepareSearch(limits, time_limits, self.move_overhead, self.ponder_option);
-        self.thread = try std.Thread.spawn(.{ .stack_size = 16 * 1024 * 1024 }, searchThread, .{self});
+        self.wake_mutex.lockUncancelable(self.engine.io);
+        defer self.wake_mutex.unlock(self.engine.io);
+        std.debug.assert(!self.searching and !self.exiting);
+        self.searching = true;
+        self.wake_condition.broadcast(self.engine.io);
     }
     fn isGoKeyword(word: []const u8) bool {
         for ([_][]const u8{ "infinite", "ponder", "searchmoves", "depth", "nodes", "movetime", "wtime", "btime", "winc", "binc", "movestogo", "mate" }) |key| if (std.mem.eql(u8, word, key)) {
