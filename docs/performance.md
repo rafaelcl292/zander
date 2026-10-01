@@ -12,8 +12,12 @@ GCC/BMI2/LTO Stockfish binary for pinned commit
 
 The [three-version comparison](#controlled-comparison-of-three-zander-versions)
 tests the historical, pre-huge-page and huge-page versions together. The
-[latest NNUE tile comparison](#contiguous-nnue-accumulator-tiles--2026-09-22)
+[NNUE tile comparison](#contiguous-nnue-accumulator-tiles--2026-09-22)
 measures the retained optimization against that same Stockfish binary.
+
+The [Kiwipete investigation](#kiwipete-and-sfnnv17-feature-preparation--2026-09-30)
+uses the newer SFNNv17 network and Stockfish `49ea5ded` reference. Its results
+must not be pooled with the older network and reference measurements below.
 
 ## Search equivalence — did the searches produce the same results?
 
@@ -721,3 +725,99 @@ Local evidence: [report](../artifacts/profile-followup/REPORT.md),
 [decision](../artifacts/profile-followup/decision.json),
 [runner](../artifacts/profile-followup/confirmation.py), and
 [analysis](../artifacts/profile-followup/analyze.py).
+
+## Kiwipete and SFNNv17 feature preparation — 2026-09-30
+
+The retained change restores three reference fast paths in NNUE feature
+preparation: precomputed pawn-pair geometry, immediate return when neither
+pawn bitboard changed, and conditional list-length increments when filtering
+threat features. The latter also matches the reference's speculative weight
+prefetch before filtering. Excluded indices never enter the active list.
+Boundary tests cover all 64 pawn masks and mixed valid/excluded feature indices.
+
+The investigation compared baseline `fe7bb9f` with the optimized GCC/BMI2/AVX2/LTO
+Stockfish `49ea5ded` reference, using network `nn-252f33942263.nnue`, Zig 0.16.0,
+ReleaseFast/auto, Python 3.14.7 and the i7-10750H/WSL2 host. Neither engine uses
+PGO. The initial Kiwipete slowdown varied between runs; the initial 3.6–4.3%
+wall-time estimates do not describe a stable, precisely measured regression.
+Search results matched, including all 870,304 Kiwipete depth-20 nodes.
+
+Cycle and retired-instruction profiles found feature preparation and move
+processing costs. Earlier exact TT/history prefetches initially looked faster,
+but a separate 216-search confirmation reduced their gain to 0.15%, with an
+interval crossing zero. Reusing gives-check results, specializing move updates,
+avoiding overwritten state initialization, packed move arguments/returns, and
+preserving native CPU features in dispatched SIMD objects also failed to
+establish an elapsed-time gain. These changes are excluded. An assembly operand
+experiment failed code inspection and was excluded before inference.
+
+The NNUE-only change improved Kiwipete in two exploratory pilots. The final
+independent production-binary comparison used twelve fresh-process sessions,
+two copies each of baseline, candidate and Stockfish, one worker, 64 MiB hash,
+NUMA policy none, engine CPU 2 and harness CPU 0. Each process warmed up on all
+27 positions at depth 12. Execution ranks were balanced in six-session blocks;
+position and process creation orders were randomized. Each ordinary position
+has 24 samples per engine; Kiwipete has 72. Startup, clearing and warmups are
+excluded. No builds, tests or profiling ran concurrently.
+
+All **2,088 measured searches and 1,944 warmups** matched move, score, PV, nodes
+and depth for each position. The final executable's `.text` section matches the
+NNUE-only pilot executable. Hardware counters ran without multiplexing.
+
+| Final comparison, candidate versus baseline | Change | Within-run 95% session-bootstrap interval |
+| --- | ---: | ---: |
+| Kiwipete mean search time (primary) | -0.20% | -1.82% to +1.22% |
+| Kiwipete CPU cycles | -0.79% | -1.91% to +0.16% |
+| Kiwipete retired instructions | -0.45% | Essentially invariant |
+| Kiwipete branch misses | -2.44% | -2.59% to -2.32% |
+| Full-corpus sum of position mean times | -1.04% | -2.05% to -0.04% |
+| Full-corpus CPU cycles, equal position weighting | -0.90% | -1.49% to -0.35% |
+
+The candidate averaged 1.19% more Kiwipete time than Stockfish (interval -1.38%
+to +3.87%), versus 1.39% for the baseline. Across the full corpus, candidate and
+Stockfish mean-time totals differed by +0.004% (interval -0.85% to +0.83%).
+These estimates do not establish general performance parity.
+
+The earlier pooled-median statistic gives a different descriptive result:
+Kiwipete medians were 1,275.80 ms baseline, 1,294.72 ms candidate and 1,274.79 ms
+Stockfish. Sums of position medians were 5,386.26, 5,412.08 and 5,332.72 ms,
+respectively. All samples are retained; the medians are not substituted for the
+predeclared mean-time criterion. Identical baseline copies differed by 2.02%
+in Kiwipete cycles, and identical candidate copies differed by 3.25% in session
+median time. Those controls limit interpretation of small timing effects.
+
+The full-corpus result favors the change, while a production-binary Kiwipete
+wall-time improvement remains unproven. The retained fast paths remove measured
+work and preserve reference behavior; they are not evidence that the entire
+original timing gap has been eliminated. This is an execution investigation,
+not a playing-strength or Elo result. Bootstrap intervals resample twelve
+complete sessions 20,000 times and do not account for all WSL host interference
+or guarantee effects on other hardware.
+
+A subsequent diagnostic held memory placement and code addresses fixed within
+each process. An artifact-only UCI option selected old or new feature paths
+while the worker was idle. Twelve fresh-process sessions each ran four balanced
+Latin passes over two labels per path, with hash/history clearing before every
+search. All 192 measured Kiwipete searches matched the production search.
+The new path used **0.36% fewer cycles** (interval -0.67% to -0.03%) and 0.44%
+fewer instructions. Time changed by -0.19% (interval -0.77% to +0.42%). Both
+identical-path controls crossed zero for time and cycles. This supports a small
+feature-preparation efficiency gain; selector branches make it a diagnostic,
+not another production-binary or Stockfish timing estimate. The option is not
+part of the production change.
+
+Validation passed Debug unit tests; ReleaseFast/auto unit, differential,
+network, search, engine, UCI and Syzygy tests; scalar network/search reference
+tests; Zig formatting and Python checks. Debug skipped two backend-specific
+checks; ReleaseFast/auto passed all 51 tests and UCI integration.
+
+Local evidence: [final protocol](../artifacts/kiwipete-deep/final-suite/protocol.json),
+[raw samples](../artifacts/kiwipete-deep/final-suite/timings.json),
+[analysis](../artifacts/kiwipete-deep/final-suite/summary.json),
+[per-position results, sorted by difference](../artifacts/kiwipete-deep/final-suite/positions.csv),
+[runner](../artifacts/kiwipete-deep/final-suite.py),
+[analyzer](../artifacts/kiwipete-deep/analyze-suite.py),
+[same-process protocol](../artifacts/kiwipete-deep/within-process-results/protocol.json),
+[same-process results](../artifacts/kiwipete-deep/within-process-results/summary.json),
+[validation](../artifacts/kiwipete-deep/validation.json), and
+[experiment decisions](../artifacts/kiwipete-deep/decisions.json).

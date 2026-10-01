@@ -60,9 +60,18 @@ pub const HalfKA = struct {
 fn orientation(perspective: t.Color, king: t.Square) u8 {
     return @as(u8, if (king.file() < 4) 0 else 7) ^ (56 * @intFromEnum(perspective));
 }
+// Match the reference PawnPairBB: geometry depends only on the square.
+const pawn_pairs = blk: {
+    var table: [64]u64 = undefined;
+    for (&table, 0..) |*entry, square| {
+        const s: t.Square = @enumFromInt(square);
+        const file = bb.file_a << s.file();
+        entry.* = (file | bb.shift(file, 1) | bb.shift(file, -1)) & ~@as(u64, 0xff000000000000ff) & ~bb.square(s);
+    }
+    break :blk table;
+};
 fn pawnPair(s: t.Square) u64 {
-    const file = bb.file_a << s.file();
-    return (file | bb.shift(file, 1) | bb.shift(file, -1)) & ~@as(u64, 0xff000000000000ff) & ~bb.square(s);
+    return pawn_pairs[@intFromEnum(s)];
 }
 pub const PawnPairs = struct {
     pub const hash_value: u32 = 0x86f2b1dd;
@@ -109,10 +118,12 @@ pub const PawnPairs = struct {
         }
     }
     pub fn appendChanged(perspective: t.Color, king: t.Square, before: [2]u64, after: [2]u64, removed: *ThreatList, added: *ThreatList) void {
+        if (before[0] == after[0] and before[1] == after[1]) return;
         generate(perspective, king, after[0] & ~before[0], after[1] & ~before[1], after[0], after[1], added);
         generate(perspective, king, before[0] & ~after[0], before[1] & ~after[1], before[0], before[1], removed);
     }
     pub fn appendChangedBoth(kings: [2]t.Square, before: [2]u64, after: [2]u64, removed: *[2]ThreatList, added: *[2]ThreatList) void {
+        if (before[0] == after[0] and before[1] == after[1]) return;
         generateBoth(kings, after[0] & ~before[0], after[1] & ~before[1], after[0], after[1], added);
         generateBoth(kings, before[0] & ~after[0], before[1] & ~after[1], before[0], before[1], removed);
     }
@@ -191,7 +202,13 @@ pub const FullThreats = struct {
         return lookup.index1[pc][target][@intFromBool(f < dest)] + lookup.index2[geometry][f][dest];
     }
     fn appendIfValid(list: *ThreatList, index: u32) void {
-        if (index < dimensions) list.append(index);
+        std.debug.assert(list.len < list.items.len and index <= std.math.maxInt(u16));
+        // Match ValueList::push_back_if_lt. Excluded indices occupy only the
+        // unused slot, which the next insertion overwrites. Prefetch remains a
+        // hint; excluded rows never enter the accumulator's feature list.
+        if (list.prefetch_base) |base| @import("../prefetch.zig").readLow(&base[index]);
+        list.items[list.len] = @intCast(index);
+        list.len += @intFromBool(index < dimensions);
     }
     pub fn appendActive(perspective: t.Color, pos: *const Position, active: *ThreatList) void {
         const king = pos.king(perspective);
@@ -242,3 +259,22 @@ pub const FullThreats = struct {
         }
     }
 };
+
+test "pawn pair masks cover adjacent files and legal pawn ranks" {
+    for (0..64) |from| {
+        var expected: u64 = 0;
+        for (8..56) |to| {
+            const file_distance = @abs(@as(i32, @intCast(from % 8)) - @as(i32, @intCast(to % 8)));
+            if (from != to and file_distance <= 1) expected |= @as(u64, 1) << @as(u6, @intCast(to));
+        }
+        try std.testing.expectEqual(expected, pawnPair(@enumFromInt(from)));
+    }
+}
+
+test "threat filtering preserves valid boundary indices and insertion order" {
+    var list: ThreatList = .{};
+    for ([_]u32{ FullThreats.dimensions, 0, FullThreats.dimensions + 1, FullThreats.dimensions - 1, std.math.maxInt(u16), 42 }) |index| {
+        FullThreats.appendIfValid(&list, index);
+    }
+    try std.testing.expectEqualSlices(u16, &.{ 0, FullThreats.dimensions - 1, 42 }, list.slice());
+}
