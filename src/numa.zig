@@ -12,9 +12,9 @@ pub const Topology = struct {
         return discoverWithAffinity(io, true);
     }
     pub fn discoverWithAffinity(io: std.Io, respect_affinity: bool) Topology {
-        if (builtin.os.tag == .windows and @sizeOf(usize) == 8) return @import("numa_windows.zig").discover(respect_affinity);
+        if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) return @import("numa_windows.zig").discover(respect_affinity);
         var result: Topology = .{};
-        if (builtin.os.tag != .linux) return result;
+        if (builtin.target.os.tag != .linux) return result;
         var allowed: Mask = @splat(0);
         if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &allowed)) != .SUCCESS) return result;
         if (!respect_affinity) {
@@ -91,7 +91,7 @@ pub const Topology = struct {
     }
     /// Parse explicit domains in Stockfish's colon-separated CPU-list format.
     pub fn fromString(text: []const u8) !Topology {
-        var result: Topology = .{ .count = 0, .available = builtin.os.tag == .linux or (builtin.os.tag == .windows and @sizeOf(usize) == 8) };
+        var result: Topology = .{ .count = 0, .available = builtin.target.os.tag == .linux or (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) };
         var used: Mask = @splat(0);
         var domains = std.mem.splitScalar(u8, text, ':');
         while (domains.next()) |domain| {
@@ -142,20 +142,20 @@ pub const Topology = struct {
 };
 pub const Guard = struct {
     previous: ?Mask = null,
-    windows: if (builtin.os.tag == .windows and @sizeOf(usize) == 8) ?@import("numa_windows.zig").Guard else ?void = null,
+    windows: if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) ?@import("numa_windows.zig").Guard else ?void = null,
     pub fn bind(mask: ?*const Mask) !Guard {
-        if (builtin.os.tag == .windows and @sizeOf(usize) == 8) {
+        if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) {
             return if (mask) |cpus| .{ .windows = try @import("numa_windows.zig").Guard.bind(cpus.*) } else .{};
         }
-        if (builtin.os.tag != .linux or mask == null) return .{};
+        if (builtin.target.os.tag != .linux or mask == null) return .{};
         var previous: Mask = @splat(0);
         if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &previous)) != .SUCCESS) return error.AffinityUnavailable;
         try linux.sched_setaffinity(0, mask.?);
         return .{ .previous = previous };
     }
     pub fn restore(self: Guard) void {
-        if (builtin.os.tag == .windows and @sizeOf(usize) == 8) if (self.windows) |guard| guard.restore();
-        if (builtin.os.tag == .linux) if (self.previous) |mask| {
+        if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) if (self.windows) |guard| guard.restore();
+        if (builtin.target.os.tag == .linux) if (self.previous) |mask| {
             linux.sched_setaffinity(0, &mask) catch {};
         };
     }
@@ -199,7 +199,7 @@ test "CPU lists and node distribution honor unequal capacities" {
 }
 
 test "affinity guard restores the calling thread mask" {
-    if (builtin.os.tag != .linux) return;
+    if (builtin.target.os.tag != .linux) return;
     var original: Mask = @splat(0);
     if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &original)) != .SUCCESS) return;
     var single: Mask = @splat(0);

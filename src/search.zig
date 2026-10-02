@@ -26,10 +26,10 @@ fn decisive(v: i32) bool {
     return win(v) or loss(v);
 }
 fn bound(value: tt.Bound, lower: bool) bool {
-    return @intFromEnum(value) & @intFromEnum(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
+    return @backingInt(value) & @backingInt(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
 }
 fn pieceValue(pc: t.Piece) i32 {
-    return p.piece_value[@intFromEnum(pc.pieceType())];
+    return p.piece_value[@backingInt(pc.pieceType())];
 }
 const Searched = struct {
     moves: [32]t.Move = undefined,
@@ -145,7 +145,7 @@ pub const Worker = struct {
         var iter_values: [4]i32 = @splat(if (self.previous_score == t.value_infinite) 0 else self.previous_score);
         var iter_index: usize = 0;
         var iteration_value: i32 = -t.value_infinite;
-        const us = @intFromEnum(pos.side);
+        const us = @backingInt(pos.side);
         while (self.root_depth < limits.depth and !self.base.stopped()) {
             self.root_depth += 1;
             total_changes /= 2;
@@ -350,7 +350,7 @@ pub const Worker = struct {
         var quiets: Searched = .{};
         ss.in_check = pos.st.checkers != 0;
         const prior_capture = pos.st.captured_piece != .none;
-        const us = @intFromEnum(pos.side);
+        const us = @backingInt(pos.side);
         ss.move_count = 0;
         var best_value: i32 = -t.value_infinite;
         var max_value: i32 = t.value_infinite;
@@ -447,7 +447,7 @@ pub const Worker = struct {
             if (prev.current_move.valid() and !prev.in_check and !prior_capture) {
                 const diff = std.math.clamp(-(prev.static_eval + ss.static_eval), -189, 194) + 60;
                 w.main_history[us ^ 1][prev.current_move.data].update(diff * 11);
-                if (!probe.found and pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)].update(diff * 13);
+                if (!probe.found and pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)].update(diff * 13);
             }
             if (all_node and eval < alpha - 342 * depth and !seek_mate) return w.search(false, pos, frame, alpha, beta);
             if (!ss.tt_pv and depth < @as(i32, if (seek_mate) 6 else 19) and eval >= beta and (data.move.data == 0 or tt_capture) and !loss(beta) and !win(eval)) {
@@ -527,8 +527,8 @@ pub const Worker = struct {
             var extension: i32 = 0;
             const capture = pos.captureStage(move);
             const pc = pos.pieceOn(move.from());
-            const pci = @intFromEnum(pc);
-            const to = @intFromEnum(move.to());
+            const pci = @backingInt(pc);
+            const to = @backingInt(move.to());
             const check = pos.givesCheck(move);
             var new_depth = depth - 1;
             var r = self.reductions.reduction(improving, @intCast(depth), @intCast(move_count), beta - alpha, self.root_delta);
@@ -538,7 +538,7 @@ pub const Worker = struct {
                 var lmr_depth = new_depth - div(r, 1024);
                 if (capture or check) {
                     const captured = pos.pieceOn(move.to());
-                    const capt_hist: i32 = w.capture_history[pci][to][@intFromEnum(captured.pieceType())].get();
+                    const capt_hist: i32 = w.capture_history[pci][to][@backingInt(captured.pieceType())].get();
                     if (!check and lmr_depth < 8 and ss.static_eval + 234 + 247 * lmr_depth + pieceValue(captured) + div(134 * capt_hist, 1024) <= alpha) continue;
                     const margin = 177 * depth + div(capt_hist * 34, 1024);
                     if ((alpha >= 0 or pos.st.non_pawn_material[us] != pieceValue(pc)) and !pos.seeGe(move, -margin)) continue;
@@ -585,7 +585,7 @@ pub const Worker = struct {
             if (cut_node) r += 4026 + 933 * b(data.move.data == 0);
             if (tt_capture) r += 1079;
             if (w.frames[frame + 1].cutoff_count > 1) r += 264 + 1095 * b(w.frames[frame + 1].cutoff_count > 2) + 1138 * b(all_node) else if (move.data == data.move.data) r -= 2179;
-            if (capture) ss.stat_score = div(873 * pieceValue(pos.st.captured_piece), 128) + w.capture_history[pci][to][@intFromEnum(pos.st.captured_piece.pieceType())].get() else ss.stat_score = div(2252 * @as(i32, w.main_history[us][move.data].get()) + 1126 * @as(i32, cont[0][pci][to].get()) + 1093 * @as(i32, cont[1][pci][to].get()), 1024);
+            if (capture) ss.stat_score = div(873 * pieceValue(pos.st.captured_piece), 128) + w.capture_history[pci][to][@backingInt(pos.st.captured_piece.pieceType())].get() else ss.stat_score = div(2252 * @as(i32, w.main_history[us][move.data].get()) + 1126 * @as(i32, cont[0][pci][to].get()) + 1093 * @as(i32, cont[1][pci][to].get()), 1024);
             r -= div(ss.stat_score * 439, 4096);
             if (!capture and !decisive(alpha)) r += 3 * std.math.clamp(alpha - eval, -64, 96);
             if (all_node) r += div(r * 276, 256 * depth + 268);
@@ -651,8 +651,8 @@ pub const Worker = struct {
             const bonus = @min(150 * depth - 85, 1337) * scale;
             s.updateContinuationHistories(&w.frames, frame - 1, pos.pieceOn(prev_sq), prev_sq, div(bonus * 263, 16384));
             w.main_history[us ^ 1][prev.current_move.data].update(div(bonus * 215, 32768));
-            if (pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)].update(div(bonus * 324, 8192));
-        } else if (prior_capture and prev_sq != .none) w.capture_history[@intFromEnum(pos.pieceOn(prev_sq))][@intFromEnum(prev_sq)][@intFromEnum(pos.st.captured_piece.pieceType())].update(892);
+            if (pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)].update(div(bonus * 324, 8192));
+        } else if (prior_capture and prev_sq != .none) w.capture_history[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)][@backingInt(pos.st.captured_piece.pieceType())].update(892);
         if (pv_node) best_value = @min(best_value, max_value);
         if (best_value <= alpha) ss.tt_pv = ss.tt_pv or prev.tt_pv;
         if (excluded.data == 0 and !(root_node and self.pv_idx != 0)) w.save(probe.writer, key, s.valueToTT(best_value, ss.ply), ss.tt_pv, if (best_value >= beta) .lower else if (pv_node and best_move.data != 0) .exact else .upper, if (move_count != 0) depth else @min(t.max_ply - 1, depth + 6), best_move, unadjusted);

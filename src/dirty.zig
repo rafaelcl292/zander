@@ -13,7 +13,7 @@ pub const DirtyPiece = struct {
 pub const DirtyThreat = extern struct {
     data: u32,
     pub fn init(pc: t.Piece, threatened_pc: t.Piece, pc_sq: t.Square, threatened_sq: t.Square, add: bool) DirtyThreat {
-        return .{ .data = (@as(u32, @intFromBool(add)) << 31) | (@as(u32, @intFromEnum(pc)) << 20) | (@as(u32, @intFromEnum(threatened_pc)) << 16) | (@as(u32, @intFromEnum(threatened_sq)) << 8) | @intFromEnum(pc_sq) };
+        return .{ .data = (@as(u32, @intFromBool(add)) << 31) | (@as(u32, @backingInt(pc)) << 20) | (@as(u32, @backingInt(threatened_pc)) << 16) | (@as(u32, @backingInt(threatened_sq)) << 8) | @backingInt(pc_sq) };
     }
 };
 pub const DirtyThreats = struct {

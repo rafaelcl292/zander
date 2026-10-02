@@ -398,8 +398,8 @@ pub const Engine = struct {
         self.search_limits = limits;
         self.search_limits.search_moves = self.requested[0..limits.search_moves.len];
         var adjusted_overhead = overhead;
-        const adjusted_limits = self.node_time.prepare(time_limits, @intFromEnum(self.position.side), self.node_rate, &adjusted_overhead);
-        const budget = tm.Budget.init(adjusted_limits, @intFromEnum(self.position.side), self.position.game_ply, adjusted_overhead, ponder_option, &self.original_time_adjust);
+        const adjusted_limits = self.node_time.prepare(time_limits, @backingInt(self.position.side), self.node_rate, &adjusted_overhead);
+        const budget = tm.Budget.init(adjusted_limits, @backingInt(self.position.side), self.position.game_ply, adjusted_overhead, ponder_option, &self.original_time_adjust);
         self.control.reset(adjusted_limits, budget);
         self.control.use_nodes_time = self.node_rate != 0;
         self.base.published_nodes.store(0, .monotonic);
@@ -443,7 +443,7 @@ pub const Engine = struct {
             }
         }
         result.nodes = self.totalNodes();
-        if (self.control.limits.npmsec != 0) self.node_time.advance(@intCast(result.nodes), self.control.limits.increment[@intFromEnum(self.position.side)]);
+        if (self.control.limits.npmsec != 0) self.node_time.advance(@intCast(result.nodes), self.control.limits.increment[@backingInt(self.position.side)]);
         return result;
     }
     pub fn extendPonder(self: *Engine) void {

@@ -75,7 +75,7 @@ pub const MovePicker = struct {
         return picker;
     }
     fn advance(self: *MovePicker) void {
-        self.stage = @enumFromInt(@intFromEnum(self.stage) + 1);
+        self.stage = @fromBackingInt(@intCast(@backingInt(self.stage) + 1));
     }
     pub fn skipQuietMoves(self: *MovePicker) void {
         self.skip_quiets = true;
@@ -102,16 +102,16 @@ pub const MovePicker = struct {
         for (list.slice(), self.cur..) |move, i| {
             const from = move.from();
             const to = move.to();
-            const pc = @intFromEnum(self.pos.pieceOn(from));
+            const pc = @backingInt(self.pos.pieceOn(from));
             const pt = pc & 7;
-            const dest = @intFromEnum(to);
-            const captured = @intFromEnum(self.pos.pieceOn(to).pieceType());
+            const dest = @backingInt(to);
+            const captured = @backingInt(self.pos.pieceOn(to).pieceType());
             var value: i32 = 0;
             if (kind == .captures) {
                 value = self.capture[pc][dest][captured].get() + 7 * position.piece_value[captured];
             } else if (kind == .quiets) {
                 const histories = self.histories.?;
-                value = 2 * @as(i32, histories.main[@intFromEnum(us)][move.data].get());
+                value = 2 * @as(i32, histories.main[@backingInt(us)][move.data].get());
                 value += 2 * @as(i32, histories.shared.pawnEntry(self.pos)[pc][dest].get());
                 for ([_]usize{ 0, 1, 2, 3, 5 }) |j| value += histories.continuation[j][pc][dest].get();
                 if (self.pos.st.check_squares[pt] & bb.square(to) != 0 and self.pos.seeGe(move, -75)) value += 16384;
@@ -120,7 +120,7 @@ pub const MovePicker = struct {
                 if (self.ply < h.low_ply_history_size) value += @divTrunc(8 * @as(i32, histories.low_ply[self.ply][move.data].get()), @as(i32, @intCast(1 + self.ply)));
             } else {
                 const histories = self.histories.?;
-                value = if (self.pos.captureStage(move)) position.piece_value[captured] + (1 << 28) else @as(i32, histories.main[@intFromEnum(us)][move.data].get()) + histories.continuation[0][pc][dest].get();
+                value = if (self.pos.captureStage(move)) position.piece_value[captured] + (1 << 28) else @as(i32, histories.main[@backingInt(us)][move.data].get()) + histories.continuation[0][pc][dest].get();
             }
             self.moves[i] = .{ .move = move, .value = value };
         }

@@ -31,10 +31,10 @@ pub const PositionKeys = struct {
         var rng = Prng.init(1070372);
         self.psq = @splat(@splat(0));
         for (pieces) |pc| {
-            for (&self.psq[@intFromEnum(pc)]) |*key| key.* = rng.next();
+            for (&self.psq[@backingInt(pc)]) |*key| key.* = rng.next();
         }
-        @memset(self.psq[@intFromEnum(t.Piece.white_pawn)][56..64], 0);
-        @memset(self.psq[@intFromEnum(t.Piece.black_pawn)][0..8], 0);
+        @memset(self.psq[@backingInt(t.Piece.white_pawn)][56..64], 0);
+        @memset(self.psq[@backingInt(t.Piece.black_pawn)][0..8], 0);
         for (&self.enpassant) |*key| key.* = rng.next();
         for (&self.castling) |*key| key.* = rng.next();
         self.side = rng.next();
@@ -47,9 +47,9 @@ pub const PositionKeys = struct {
             if (pt == .pawn) continue;
             for (0..64) |a| {
                 for (a + 1..64) |b| {
-                    if (attacks.pseudo[@intFromEnum(pt)][a] & bb.square(@enumFromInt(b)) == 0) continue;
-                    var move = t.Move.make(.normal, @enumFromInt(a), @enumFromInt(b), .knight);
-                    var key = self.psq[@intFromEnum(pc)][a] ^ self.psq[@intFromEnum(pc)][b] ^ self.side;
+                    if (attacks.pseudo[@backingInt(pt)][a] & bb.square(@fromBackingInt(@intCast(b))) == 0) continue;
+                    var move = t.Move.make(.normal, @fromBackingInt(@intCast(a)), @fromBackingInt(@intCast(b)), .knight);
+                    var key = self.psq[@backingInt(pc)][a] ^ self.psq[@backingInt(pc)][b] ^ self.side;
                     var index = h1(key);
                     while (true) {
                         std.mem.swap(u64, &self.cuckoo[index], &key);

@@ -1,7 +1,7 @@
 # Project basics
 
 - Zander is a native Zig port of Stockfish and a UCI chess engine.
-- Use Zig 0.16.0 and Python 3.14.7 (see `.python-version`).
+- Use Zig 0.17.0 and Python 3.14.7 (see `.python-version`).
 - Engine code lives in `src/`, tests in `tests/`, Python helpers in `scripts/`,
   and guides in `docs/`. Start with `docs/development.md` for test prerequisites.
 - `vendor/stockfish` is the pinned reference submodule; production code does not

@@ -46,9 +46,9 @@ pub const Plan = struct {
         const total = try bytesForWorkers(count);
         try writer.print("{{\n\"workers\":{d},\"bytes_per_worker\":{d},\"total_payload_bytes\":{d},\"alignment\":{d},\n", .{ count, bytes_per_worker, total, alignment });
         try writer.print("\"frame_capacity\":{d},\"accumulator_capacity\":{d},\"root_capacity\":{d},\n\"components\":[", .{ frame_capacity, accumulator_capacity, root_capacity });
-        inline for (@typeInfo(Storage).@"struct".fields, 0..) |field, i| {
+        inline for (@typeInfo(Storage).@"struct".field_names, @typeInfo(Storage).@"struct".field_types, 0..) |name, Field, i| {
             if (i != 0) try writer.writeAll(",");
-            try writer.print("{{\"name\":\"{s}\",\"offset\":{d},\"bytes\":{d},\"alignment\":{d}}}", .{ field.name, @offsetOf(Storage, field.name), @sizeOf(field.type), @alignOf(field.type) });
+            try writer.print("{{\"name\":\"{s}\",\"offset\":{d},\"bytes\":{d},\"alignment\":{d}}}", .{ name, @offsetOf(Storage, name), @sizeOf(Field), @alignOf(Field) });
         }
         try writer.writeAll("]\n}\n");
     }
@@ -62,11 +62,11 @@ test "worker storage has a single bounded allocation and releases its owner" {
     try std.testing.expectEqual(Plan.bytes_per_worker, allocator.allocated_bytes);
     try std.testing.expectEqual(@as(usize, 0), @intFromPtr(storage) % Plan.alignment);
     const start = @intFromPtr(storage);
-    inline for (@typeInfo(Storage).@"struct".fields) |field| {
-        const address = @intFromPtr(&@field(storage, field.name));
+    inline for (@typeInfo(Storage).@"struct".field_names, @typeInfo(Storage).@"struct".field_types) |name, Field| {
+        const address = @intFromPtr(&@field(storage, name));
         try std.testing.expect(address >= start);
-        try std.testing.expect(address + @sizeOf(field.type) <= start + Plan.bytes_per_worker);
-        try std.testing.expectEqual(@as(usize, 0), address % @alignOf(field.type));
+        try std.testing.expect(address + @sizeOf(Field) <= start + Plan.bytes_per_worker);
+        try std.testing.expectEqual(@as(usize, 0), address % @alignOf(Field));
     }
     // Exercise both ends of independent writable buffers without another
     // allocation. Allocation failure must not affect already reserved payloads.

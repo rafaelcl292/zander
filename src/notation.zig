@@ -7,13 +7,13 @@ pub fn moveText(move: t.Move, chess960: bool, buffer: *[6]u8) []const u8 {
     if (move.data == 0 or move.data == t.Move.null_move.data) return "0000";
     const from = move.from();
     var to = move.to();
-    if (move.kind() == .castling and !chess960) to = t.Square.make(if (@intFromEnum(to) > @intFromEnum(from)) 6 else 2, from.rank());
+    if (move.kind() == .castling and !chess960) to = t.Square.make(if (@backingInt(to) > @backingInt(from)) 6 else 2, from.rank());
     buffer[0] = 'a' + @as(u8, from.file());
     buffer[1] = '1' + @as(u8, from.rank());
     buffer[2] = 'a' + @as(u8, to.file());
     buffer[3] = '1' + @as(u8, to.rank());
     if (move.kind() == .promotion) {
-        buffer[4] = " pnbrqk"[@intFromEnum(move.promotionType())];
+        buffer[4] = " pnbrqk"[@backingInt(move.promotionType())];
         return buffer[0..5];
     }
     return buffer[0..4];

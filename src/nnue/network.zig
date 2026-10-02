@@ -61,7 +61,7 @@ pub const Network = struct {
         std.debug.assert(self.initialized);
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
-        const side = @intFromEnum(pos.side);
+        const side = @backingInt(pos.side);
         const bucket = (@popCount(pos.pieces()) - 1) / 4;
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
@@ -73,7 +73,7 @@ pub const Network = struct {
     pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [8]i32 {
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
-        const side = @intFromEnum(pos.side);
+        const side = @backingInt(pos.side);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
         if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
@@ -87,7 +87,7 @@ pub const Network = struct {
     pub fn evaluateAdjusted(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches, initial_optimism: i32) i32 {
         std.debug.assert(pos.st.checkers == 0);
         const nnue: i64 = self.evaluate(pos, stack, cache);
-        const side = @intFromEnum(pos.side);
+        const side = @backingInt(pos.side);
         const pawns = @as(i64, @popCount(pos.piecesOf(pos.side, .pawn))) - @as(i64, @popCount(pos.piecesOf(pos.side.opposite(), .pawn)));
         const simple = @import("../position.zig").piece_value[1] * pawns + pos.st.non_pawn_material[side] - pos.st.non_pawn_material[side ^ 1];
         const se_norm = @divTrunc(simple * 1024, @as(i64, @intCast(@abs(simple))) + 1024);

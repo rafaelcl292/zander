@@ -9,7 +9,7 @@ Run these commands from the repository root. Build steps are defined in
 
 | Task | Requirements beyond the checkout |
 | --- | --- |
-| Native build and unit tests | Zig 0.16.0 |
+| Native build and unit tests | Zig 0.17.0 |
 | Differential and reference tests | Stockfish submodule and a host C++17 compiler with GNU-compatible flags; the harness targets Linux x86-64 |
 | Network-dependent tests | Downloaded NNUE weights; fetching them requires Python and the submodule |
 | UCI integration tests | Python and NNUE weights |

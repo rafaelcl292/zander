@@ -87,7 +87,7 @@ pub const SharedHistories = struct {
     }
     pub fn prefetch(self: *const SharedHistories, pos: *const Position, piece: t.Piece, square: t.Square) void {
         const hints = @import("prefetch.zig");
-        hints.read(&self.pawnEntry(pos)[@intFromEnum(piece)][@intFromEnum(square)]);
+        hints.read(&self.pawnEntry(pos)[@backingInt(piece)][@backingInt(square)]);
         hints.read(self.pawnCorrectionEntry(pos));
         hints.read(self.minorCorrectionEntry(pos));
         hints.read(self.nonPawnCorrectionEntry(pos, .white));
@@ -103,6 +103,6 @@ pub const SharedHistories = struct {
         return &self.correction[pos.st.minor_piece_key & (self.correction.len - 1)];
     }
     pub fn nonPawnCorrectionEntry(self: *const SharedHistories, pos: *const Position, color: t.Color) *CorrectionEntry {
-        return &self.correction[pos.st.non_pawn_key[@intFromEnum(color)] & (self.correction.len - 1)];
+        return &self.correction[pos.st.non_pawn_key[@backingInt(color)] & (self.correction.len - 1)];
     }
 };

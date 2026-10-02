@@ -1,7 +1,7 @@
 const std = @import("std");
 const z = @import("zander");
 const usage =
-    \\Zander — incremental Stockfish port in Zig 0.16.0
+    \\Zander — incremental Stockfish port in Zig 0.17.0
     \\Usage:
     \\  zander perft <depth: 0..8> [--chess960] ["FEN"]
     \\  zander eval <network.nnue> [--chess960] ["FEN"]
@@ -158,8 +158,8 @@ fn writeMove(writer: *std.Io.Writer, move: z.types.Move, chess960: bool) !void {
     if (move.data == z.types.Move.null_move.data) return writer.writeAll("0000");
     const from = move.from();
     var to = move.to();
-    if (move.kind() == .castling and !chess960) to = @enumFromInt(@as(u8, from.rank()) * 8 + @as(u8, if (@intFromEnum(to) > @intFromEnum(from)) 6 else 2));
+    if (move.kind() == .castling and !chess960) to = @fromBackingInt(@intCast(@as(u8, from.rank()) * 8 + @as(u8, if (@backingInt(to) > @backingInt(from)) 6 else 2)));
     const squares = [4]u8{ 'a' + @as(u8, from.file()), '1' + @as(u8, from.rank()), 'a' + @as(u8, to.file()), '1' + @as(u8, to.rank()) };
     try writer.writeAll(&squares);
-    if (move.kind() == .promotion) try writer.writeByte(" pnbrqk"[@intFromEnum(move.promotionType())]);
+    if (move.kind() == .promotion) try writer.writeByte(" pnbrqk"[@backingInt(move.promotionType())]);
 }

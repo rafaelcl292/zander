@@ -27,7 +27,7 @@ pub const Entry = extern struct {
             .value = @atomicLoad(i16, &self.value16, .monotonic),
             .eval = @atomicLoad(i16, &self.eval16, .monotonic),
             .depth = depth_none + @as(i32, @atomicLoad(u8, &self.depth8, .monotonic)),
-            .bound = @enumFromInt((@atomicLoad(u8, &self.gen_bound8, .monotonic) & 0x60) >> 5),
+            .bound = @fromBackingInt(@intCast((@atomicLoad(u8, &self.gen_bound8, .monotonic) & 0x60) >> 5)),
             .is_pv = @atomicLoad(u8, &self.gen_bound8, .monotonic) & 0x80 != 0,
         };
     }
@@ -44,10 +44,10 @@ pub const Entry = extern struct {
             std.debug.assert(data.depth > depth_none and data.depth - depth_none < 256 and generation <= 31);
             @atomicStore(u16, &self.key16, key16, .monotonic);
             @atomicStore(u8, &self.depth8, @intCast(data.depth - depth_none), .monotonic);
-            @atomicStore(u8, &self.gen_bound8, generation | (@intFromEnum(data.bound) << 5) | (@as(u8, @intFromBool(data.is_pv)) << 7), .monotonic);
+            @atomicStore(u8, &self.gen_bound8, generation | (@backingInt(data.bound) << 5) | (@as(u8, @intFromBool(data.is_pv)) << 7), .monotonic);
             @atomicStore(i16, &self.value16, @intCast(data.value), .monotonic);
             @atomicStore(i16, &self.eval16, @intCast(data.eval), .monotonic);
-        } else if (@as(i32, @atomicLoad(u8, &self.depth8, .monotonic)) + depth_none >= 5 and (@atomicLoad(u8, &self.gen_bound8, .monotonic) & 0x60) >> 5 != @intFromEnum(Bound.exact)) {
+        } else if (@as(i32, @atomicLoad(u8, &self.depth8, .monotonic)) + depth_none >= 5 and (@atomicLoad(u8, &self.gen_bound8, .monotonic) & 0x60) >> 5 != @backingInt(Bound.exact)) {
             const v: i32 = @atomicLoad(i16, &self.value16, .monotonic);
             const tb_win_in_max_ply = t.value_mate - 2 * t.max_ply - 1;
             if (@abs(v) < t.value_infinite and @abs(v) >= tb_win_in_max_ply) self.penalize(1);

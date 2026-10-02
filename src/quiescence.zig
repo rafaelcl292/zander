@@ -62,9 +62,9 @@ pub const Worker = struct {
     pub fn doMoveCapture(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, capture: bool, frame: ?usize) void {
         self.table.prefetch(pos.prefetchKey(move));
         if (frame) |index| {
-            const piece = @intFromEnum(pos.pieceOn(move.from()));
+            const piece = @backingInt(pos.pieceOn(move.from()));
             for ([_]usize{ 1, 3, 5 }) |offset| {
-                if (self.frames[index - offset].continuation_correction_history) |history| @import("prefetch.zig").read(&history[piece][@intFromEnum(move.to())]);
+                if (self.frames[index - offset].continuation_correction_history) |history| @import("prefetch.zig").read(&history[piece][@backingInt(move.to())]);
             }
         }
         self.nodes += 1;
@@ -76,8 +76,8 @@ pub const Worker = struct {
         if (frame) |index| {
             const ss = &self.frames[index];
             ss.current_move = move;
-            ss.continuation_history = &self.shared.continuation[@intFromBool(ss.in_check)][@intFromBool(capture)][@intFromEnum(dirties.piece.pc)][@intFromEnum(move.to())];
-            ss.continuation_correction_history = &self.continuation_correction[@intFromEnum(dirties.piece.pc)][@intFromEnum(move.to())];
+            ss.continuation_history = &self.shared.continuation[@intFromBool(ss.in_check)][@intFromBool(capture)][@backingInt(dirties.piece.pc)][@backingInt(move.to())];
+            ss.continuation_correction_history = &self.continuation_correction[@backingInt(dirties.piece.pc)][@backingInt(move.to())];
         }
     }
     pub fn undoMove(self: *Worker, pos: *p.Position, move: t.Move) void {
@@ -95,7 +95,7 @@ pub const Worker = struct {
         pos.undoNullMove();
     }
     pub fn evaluate(self: *Worker, pos: *const p.Position) i32 {
-        return self.network.evaluateAdjusted(pos, self.accumulators, self.caches, self.optimism[@intFromEnum(pos.side)]);
+        return self.network.evaluateAdjusted(pos, self.accumulators, self.caches, self.optimism[@backingInt(pos.side)]);
     }
     pub fn histories(self: *Worker) @import("search_history.zig").State {
         return .{ .main = self.main_history, .low_ply = self.low_ply_history, .capture = self.capture_history, .shared = self.shared, .frames = &self.frames };
@@ -104,7 +104,7 @@ pub const Worker = struct {
         return value >= s.tb_win_in_max_ply or value <= -s.tb_win_in_max_ply;
     }
     fn hasBound(bound: tt.Bound, lower: bool) bool {
-        return @intFromEnum(bound) & @intFromEnum(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
+        return @backingInt(bound) & @backingInt(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
     }
     pub fn save(self: *Worker, writer: *tt.Entry, key: u64, value: i32, is_pv: bool, bound: tt.Bound, depth: i32, move: t.Move, eval: i32) void {
         writer.save(key, .{ .move = move, .value = value, .eval = eval, .depth = depth, .bound = bound, .is_pv = is_pv }, self.table.generation);
@@ -168,7 +168,7 @@ pub const Worker = struct {
             if (best_value > -s.tb_win_in_max_ply) {
                 if (!gives_check and move.to() != prev_sq and futility_base > -s.tb_win_in_max_ply and move.kind() != .promotion) {
                     if (move_count > 2) continue;
-                    const futility_value = futility_base + p.piece_value[@intFromEnum(pos.pieceOn(move.to()).pieceType())];
+                    const futility_value = futility_base + p.piece_value[@backingInt(pos.pieceOn(move.to()).pieceType())];
                     if (futility_value <= alpha) {
                         best_value = @max(best_value, futility_value);
                         continue;
@@ -198,7 +198,7 @@ pub const Worker = struct {
         if (move_count == 0) {
             if (ss.in_check) return -t.value_mate + ss.ply;
             const pushes = bb.shift(pos.piecesOf(pos.side, .pawn), if (pos.side == .white) 8 else -8) & ~pos.pieces();
-            if (pushes == 0 and pos.st.non_pawn_material[@intFromEnum(pos.side)] == 0 and @intFromEnum(pos.st.captured_piece.pieceType()) >= @intFromEnum(t.PieceType.knight)) {
+            if (pushes == 0 and pos.st.non_pawn_material[@backingInt(pos.side)] == 0 and @backingInt(pos.st.captured_piece.pieceType()) >= @backingInt(t.PieceType.knight)) {
                 var legal: mg.MoveList = undefined;
                 mg.generate(.legal, pos, &legal);
                 if (legal.len == 0) best_value = 0;

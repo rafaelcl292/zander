@@ -13,7 +13,7 @@ pub const Color = enum(u8) {
     white,
     black,
     pub fn opposite(self: Color) Color {
-        return @enumFromInt(@intFromEnum(self) ^ 1);
+        return @fromBackingInt(@intCast(@backingInt(self) ^ 1));
     }
 };
 pub const PieceType = enum(u8) { none, pawn, knight, bishop, rook, queen, king };
@@ -33,14 +33,14 @@ pub const Piece = enum(u8) {
     black_king,
     pub fn make(c: Color, pt: PieceType) Piece {
         std.debug.assert(pt != .none);
-        return @enumFromInt((@intFromEnum(c) << 3) + @intFromEnum(pt));
+        return @fromBackingInt(@intCast((@backingInt(c) << 3) + @backingInt(pt)));
     }
     pub fn pieceType(self: Piece) PieceType {
-        return @enumFromInt(@intFromEnum(self) & 7);
+        return @fromBackingInt(@intCast(@backingInt(self) & 7));
     }
     pub fn color(self: Piece) Color {
         std.debug.assert(self != .none);
-        return @enumFromInt(@intFromEnum(self) >> 3);
+        return @fromBackingInt(@intCast(@backingInt(self) >> 3));
     }
 };
 // Preserve the upstream byte-sized representation, including SQ_NONE = 64.
@@ -48,22 +48,22 @@ pub const Square = enum(u8) {
     none = 64,
     _,
     pub fn make(f: u3, r: u3) Square {
-        return @enumFromInt((@as(u8, r) << 3) + f);
+        return @fromBackingInt(@intCast((@as(u8, r) << 3) + f));
     }
     pub fn valid(self: Square) bool {
-        return @intFromEnum(self) < 64;
+        return @backingInt(self) < 64;
     }
     pub fn file(self: Square) u3 {
         std.debug.assert(self.valid());
-        return @truncate(@intFromEnum(self));
+        return @truncate(@backingInt(self));
     }
     pub fn rank(self: Square) u3 {
         std.debug.assert(self.valid());
-        return @intCast(@intFromEnum(self) >> 3);
+        return @intCast(@backingInt(self) >> 3);
     }
     pub fn relative(self: Square, c: Color) Square {
         std.debug.assert(self.valid());
-        return @enumFromInt(@intFromEnum(self) ^ (@intFromEnum(c) * 56));
+        return @fromBackingInt(@intCast(@backingInt(self) ^ (@backingInt(c) * 56)));
     }
 };
 pub const MoveType = enum(u16) { normal = 0, promotion = 1 << 14, en_passant = 2 << 14, castling = 3 << 14 };
@@ -73,25 +73,25 @@ pub const Move = extern struct {
     pub const null_move: Move = .{ .data = 65 };
     pub fn make(move_type: MoveType, origin: Square, destination: Square, promotion: PieceType) Move {
         std.debug.assert(origin.valid() and destination.valid());
-        std.debug.assert(@intFromEnum(promotion) >= 2 and @intFromEnum(promotion) <= 5);
-        return .{ .data = @intFromEnum(move_type) + ((@as(u16, @intFromEnum(promotion)) - 2) << 12) + (@as(u16, @intFromEnum(origin)) << 6) + @intFromEnum(destination) };
+        std.debug.assert(@backingInt(promotion) >= 2 and @backingInt(promotion) <= 5);
+        return .{ .data = @backingInt(move_type) + ((@as(u16, @backingInt(promotion)) - 2) << 12) + (@as(u16, @backingInt(origin)) << 6) + @backingInt(destination) };
     }
     pub fn valid(self: Move) bool {
         return self.data != 0 and self.data != 65;
     }
     pub fn from(self: Move) Square {
         std.debug.assert(self.valid());
-        return @enumFromInt((self.data >> 6) & 63);
+        return @fromBackingInt(@intCast((self.data >> 6) & 63));
     }
     pub fn to(self: Move) Square {
         std.debug.assert(self.valid());
-        return @enumFromInt(self.data & 63);
+        return @fromBackingInt(@intCast(self.data & 63));
     }
     pub fn kind(self: Move) MoveType {
-        return @enumFromInt(self.data & 0xc000);
+        return @fromBackingInt(@intCast(self.data & 0xc000));
     }
     pub fn promotionType(self: Move) PieceType {
-        return @enumFromInt(((self.data >> 12) & 3) + 2);
+        return @fromBackingInt(@intCast(((self.data >> 12) & 3) + 2));
     }
 };
 pub fn makeKey(seed: u64) Key {
@@ -104,6 +104,6 @@ comptime {
 test "sentinels and square mapping" {
     try std.testing.expect(!Move.none.valid());
     try std.testing.expect(!Move.null_move.valid());
-    try std.testing.expectEqual(@as(u8, 60), @intFromEnum(Square.make(4, 0).relative(.black)));
+    try std.testing.expectEqual(@as(u8, 60), @backingInt(Square.make(4, 0).relative(.black)));
     try std.testing.expectEqual(Color.black, Piece.black_queen.color());
 }

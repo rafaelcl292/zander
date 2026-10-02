@@ -34,7 +34,7 @@ fn selectFeatures(max_leaf: u32, leaf1: u32, xcr0: u32, leaf7: Registers, leaf71
     return .avx2;
 }
 fn detect() Kernel {
-    if (builtin.cpu.arch != .x86_64) return .sse2;
+    if (builtin.target.cpu.arch != .x86_64) return .sse2;
     const max_leaf = cpuid(0, 0).eax;
     if (max_leaf < 7) return .sse2;
     const flags = cpuid(1, 0).ecx;
@@ -52,9 +52,9 @@ fn detect() Kernel {
 /// Atomic caching permits simultaneous first use by independent workers.
 pub fn selected() Kernel {
     const value = cached.load(.acquire);
-    if (value != 0) return @enumFromInt(value);
+    if (value != 0) return @fromBackingInt(@intCast(value));
     const kernel = detect();
-    cached.store(@intFromEnum(kernel), .release);
+    cached.store(@backingInt(kernel), .release);
     return kernel;
 }
 const Affine = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32, usize, usize) callconv(.c) void;

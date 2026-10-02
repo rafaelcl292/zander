@@ -6,7 +6,7 @@ const Reader = @import("reader.zig").Reader;
 pub const dimensions = 1024;
 // ARM64 has room for a larger live tile, halving feature-index traversals.
 // Keep the separately tuned eight-vector tile on other architectures.
-const tile_registers = if (@import("builtin").cpu.arch == .aarch64) 16 else 8;
+const tile_registers = if (@import("builtin").target.cpu.arch == .aarch64) 16 else 8;
 pub const combined_features = features.FullThreats.dimensions + features.PawnPairs.dimensions;
 pub const FeatureTransformer = struct {
     biases: [dimensions]i16 align(64),
@@ -177,7 +177,7 @@ pub const FeatureTransformer = struct {
         }
     }
     inline fn activationProduct(comptime lanes: usize, a: @Vector(lanes, i16), b: @Vector(lanes, i16)) @Vector(lanes, u8) {
-        if (comptime @import("builtin").cpu.arch == .aarch64 and lanes == 8)
+        if (comptime @import("builtin").target.cpu.arch == .aarch64 and lanes == 8)
             return @import("arm.zig").clippedProduct(a, b);
         const Signed = @Vector(lanes, i16);
         const Unsigned = @Vector(lanes, u16);

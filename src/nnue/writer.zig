@@ -10,7 +10,7 @@ fn encoded(comptime T: type, value: T, buffer: *[(@bitSizeOf(T) + 6) / 7]u8) []c
     var remaining = value;
     var count: usize = 0;
     while (true) {
-        var byte: u8 = @as(u8, @truncate(@as(std.meta.Int(.unsigned, @bitSizeOf(T)), @bitCast(remaining)))) & 127;
+        var byte: u8 = @as(u8, @truncate(@as(@Int(.unsigned, @bitSizeOf(T)), @bitCast(remaining)))) & 127;
         remaining >>= 7;
         const done = (remaining == 0 and byte & 64 == 0) or (remaining == -1 and byte & 64 != 0);
         if (!done) byte |= 128;

@@ -20,7 +20,7 @@ pub const Database = struct {
         defer arena.deinit();
         const a = arena.allocator();
         var files: std.StringHashMapUnmanaged([]const u8) = .empty;
-        var dirs = std.mem.tokenizeScalar(u8, paths, if (@import("builtin").os.tag == .windows) ';' else ':');
+        var dirs = std.mem.tokenizeScalar(u8, paths, if (@import("builtin").target.os.tag == .windows) ';' else ':');
         while (dirs.next()) |path| {
             if (std.mem.eql(u8, path, "<empty>")) continue;
             var dir = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
@@ -43,7 +43,7 @@ pub const Database = struct {
             const entry = try allocator.create(Entry);
             errdefer allocator.destroy(entry);
             entry.* = .{ .wdl = wdl_table };
-            const dtz_name = try std.fmt.allocPrint(a, "{s}.rtbz", .{stem});
+            const dtz_name = try a.print("{s}.rtbz", .{stem});
             if (files.get(dtz_name)) |dtz_path| entry.dtz = try Table.load(allocator, io, dtz_path, material, &self.maps, true);
             errdefer if (entry.dtz) |dtz_table| dtz_table.destroy(allocator, io);
             try self.lookup.ensureUnusedCapacity(allocator, 2);
@@ -80,7 +80,7 @@ pub const Database = struct {
         var searched: usize = 0;
         var best: i32 = -2;
         for (moves.slice()) |move| {
-            if (!pos.capture(move) and (!zeroing_moves or pos.board[@intFromEnum(move.from())].pieceType() != .pawn)) continue;
+            if (!pos.capture(move) and (!zeroing_moves or pos.board[@backingInt(move.from())].pieceType() != .pawn)) continue;
             searched += 1;
             var state: p.StateInfo = undefined;
             pos.doMove(move, &state);
@@ -117,7 +117,7 @@ pub const Database = struct {
         mg.generate(.legal, pos, &moves);
         var minimum: i32 = 0xffff;
         for (moves.slice()) |move| {
-            const zeroing = pos.capture(move) or pos.board[@intFromEnum(move.from())].pieceType() == .pawn;
+            const zeroing = pos.capture(move) or pos.board[@backingInt(move.from())].pieceType() == .pawn;
             var state: p.StateInfo = undefined;
             pos.doMove(move, &state);
             const probe = block: {

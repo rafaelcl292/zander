@@ -12,7 +12,7 @@ performance, or complete parity across every platform and configuration.
 
 ## Quick start
 
-Use **Zig 0.16.0**, Git, and Python. Python helpers target **3.14.7**, pinned in
+Use **Zig 0.17.0**, Git, and Python. Python helpers target **3.14.7**, pinned in
 [.python-version](.python-version).
 
 ```sh

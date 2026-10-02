@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "zander", .root_module = exe_mod });
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    run.addPassthruArgs();
     b.step("run", "Run the UCI engine or diagnostic CLI").dependOn(&run.step);
     const unit = b.addTest(.{ .root_module = mod });
     const test_step = b.step("test", "Run Zig unit tests");
@@ -69,7 +69,9 @@ pub fn build(b: *std.Build) void {
     var upstream_inputs: std.ArrayList(std.Build.LazyPath) = .empty;
     const reference_commands = [_]*std.Build.Step.Run{ cpp, reference_cpp, tt_cpp, nnue_cpp, network_cpp, history_cpp, movepick_cpp, search_cpp, worker_cpp };
     var reference_unavailable: ?*std.Build.Step.Fail = null;
-    var upstream = std.Io.Dir.cwd().openDir(b.graph.io, b.pathFromRoot("vendor/stockfish/src"), .{ .iterate = true }) catch |err| blk: {
+    var upstream = b.root.openDir(b.graph.io, "vendor/stockfish/src", .{ .iterate = true }) catch |err| blk: {
+        // Retry discovery after the submodule is initialized or access is restored.
+        b.graph.poisonCache();
         const missing_reference = b.addFail(b.fmt(
             "Cannot open Stockfish reference sources ({s}). Run `git submodule update --init` before reference tests.",
             .{@errorName(err)},
@@ -79,10 +81,15 @@ pub fn build(b: *std.Build) void {
         break :blk null;
     };
     if (upstream) |*directory| {
+        // Configuration caches must track directory entries as well as file contents.
+        b.dependOnDirectoryContents(b.path("vendor/stockfish/src"));
         defer directory.close(b.graph.io);
         var walker = directory.walk(b.allocator) catch @panic("Cannot walk Stockfish sources");
         defer walker.deinit();
         while (walker.next(b.graph.io) catch @panic("Cannot read Stockfish sources")) |entry| {
+            if (entry.kind == .directory) {
+                b.dependOnDirectoryContents(b.path(b.fmt("vendor/stockfish/src/{s}", .{entry.path})));
+            }
             if (entry.kind == .file) {
                 const input = b.path(b.fmt("vendor/stockfish/src/{s}", .{entry.path}));
                 upstream_inputs.append(b.allocator, input) catch @panic("Out of memory");
@@ -120,7 +127,7 @@ pub fn build(b: *std.Build) void {
         network_mod.addImport("zander", diff_mod.import_table.get("zander").?);
         network_mod.addAnonymousImport("reference", .{ .root_source_file = network_run.captureStdOut(.{ .basename = "network_reference.zig" }) });
         const options = b.addOptions();
-        options.addOption([]const u8, "network_path", b.pathFromRoot(path));
+        options.addOptionPath("network_path", if (std.Io.Dir.path.isAbsolute(path)) .{ .cwd_relative = path } else b.path(path));
         options.addOption(?[]const u8, "tablebase_path", tablebase_path);
         network_mod.addOptions("options", options);
         const network_test = b.addTest(.{ .root_module = network_mod });
@@ -168,6 +175,7 @@ pub fn build(b: *std.Build) void {
         const reference = std.Build.Step.Run.create(b, "generate Syzygy reference");
         reference.addFileArg(oracle);
         reference.addArg(path);
+        b.dependOnDirectoryContents(.{ .cwd_relative = path });
         var tablebase_dir = std.Io.Dir.cwd().openDir(b.graph.io, path, .{ .iterate = true }) catch @panic("Fetch the Syzygy regression tables first");
         defer tablebase_dir.close(b.graph.io);
         var tablebase_files = tablebase_dir.iterate();
@@ -205,7 +213,7 @@ pub fn build(b: *std.Build) void {
     diff_step.dependOn(&b.addRunArtifact(diff).step);
 }
 
-fn addDispatchObject(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+fn addDispatchObject(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) void {
     if (target.result.cpu.arch != .x86_64) return;
     const Variant = enum { avx2, avx512, avxvnni, vnni512 };
     inline for (.{ Variant.avx2, Variant.avx512, Variant.avxvnni, Variant.vnni512 }) |variant| {

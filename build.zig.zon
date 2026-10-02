@@ -2,7 +2,7 @@
     .name = .zander,
     .version = "0.0.0",
     .fingerprint = 0x8d8fbdc785a3ac16, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",

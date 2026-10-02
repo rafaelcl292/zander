@@ -5,7 +5,7 @@ pub const file_a: u64 = 0x0101010101010101;
 pub const file_h: u64 = file_a << 7;
 pub fn square(s: t.Square) u64 {
     std.debug.assert(s.valid());
-    return @as(u64, 1) << @as(u6, @intCast(@intFromEnum(s)));
+    return @as(u64, 1) << @as(u6, @intCast(@backingInt(s)));
 }
 pub fn shift(b: u64, dir: i8) u64 {
     return switch (dir) {
@@ -30,11 +30,11 @@ pub fn moreThanOne(b: u64) bool {
 }
 pub fn lsb(b: u64) t.Square {
     std.debug.assert(b != 0);
-    return @enumFromInt(@ctz(b));
+    return @fromBackingInt(@intCast(@ctz(b)));
 }
 pub fn msb(b: u64) t.Square {
     std.debug.assert(b != 0);
-    return @enumFromInt(63 - @clz(b));
+    return @fromBackingInt(@intCast(63 - @clz(b)));
 }
 pub fn popLsb(b: *u64) t.Square {
     const s = lsb(b.*);
@@ -45,7 +45,7 @@ test "edge shifts never wrap and pop clears exactly one bit" {
     try std.testing.expectEqual(@as(u64, 0), shift(file_h, 1));
     try std.testing.expectEqual(@as(u64, 0), shift(file_a, -1));
     var b: u64 = 0x8000000000000001;
-    try std.testing.expectEqual(@as(u8, 0), @intFromEnum(popLsb(&b)));
-    try std.testing.expectEqual(@as(u8, 63), @intFromEnum(popLsb(&b)));
+    try std.testing.expectEqual(@as(u8, 0), @backingInt(popLsb(&b)));
+    try std.testing.expectEqual(@as(u8, 63), @backingInt(popLsb(&b)));
     try std.testing.expectEqual(@as(u64, 0), b);
 }

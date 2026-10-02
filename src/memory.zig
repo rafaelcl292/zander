@@ -13,7 +13,7 @@ pub const Region = struct {
     allocator: std.mem.Allocator,
     pub fn allocate(allocator: std.mem.Allocator, size: usize, policy: PagePolicy) !Region {
         if (size == 0) return error.InvalidAllocationSize;
-        if (builtin.os.tag == .linux) {
+        if (builtin.target.os.tag == .linux) {
             const huge_size: usize = if (policy == .huge2m) 2 * 1024 * 1024 else 1024 * 1024 * 1024;
             if (policy == .huge2m or policy == .huge1g or (policy == .auto and size >= huge_size)) {
                 const length = std.mem.alignForward(usize, size, huge_size);
@@ -45,7 +45,7 @@ pub const Region = struct {
         return @ptrFromInt(result);
     }
     pub fn deinit(self: *Region) void {
-        if (builtin.os.tag == .linux and self.mapped_length != 0) {
+        if (builtin.target.os.tag == .linux and self.mapped_length != 0) {
             _ = linux.munmap(self.bytes.ptr, self.mapped_length);
         } else self.allocator.free(self.bytes);
         self.* = undefined;

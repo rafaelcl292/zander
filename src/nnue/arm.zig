@@ -1,6 +1,6 @@
 // ARM NNUE kernels using Stockfish's four-input weight layout; GPL-3.0-or-later.
 const std = @import("std");
-const cpu = @import("builtin").cpu;
+const cpu = @import("builtin").target.cpu;
 const Bytes = @Vector(16, i8);
 const Sums = @Vector(4, i32);
 

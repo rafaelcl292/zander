@@ -164,13 +164,13 @@ pub fn encode(pos: *const @import("../position.zig").Position, material: Materia
     const flip = symmetric_black or black_stronger;
     const color: u8 = if (flip) 8 else 0;
     const square_flip: usize = if (flip) 56 else 0;
-    const side = @intFromEnum(pos.side) ^ @as(usize, @intFromBool(flip));
+    const side = @backingInt(pos.side) ^ @as(usize, @intFromBool(flip));
     var count: usize = 0;
     var leading: u64 = 0;
     var file: usize = 0;
     if (material.has_pawns) {
         const piece = items[0][0].pieces[0] ^ color;
-        leading = pos.piecesOf(@enumFromInt(piece / 8), .pawn);
+        leading = pos.piecesOf(@fromBackingInt(@intCast(piece / 8)), .pawn);
         var bits = leading;
         while (bits != 0) {
             squares[count] = @ctz(bits) ^ square_flip;
@@ -190,7 +190,7 @@ pub fn encode(pos: *const @import("../position.zig").Position, material: Materia
         bits &= bits - 1;
         if (count >= 7) return error.CorruptTablebase;
         squares[count] = square ^ square_flip;
-        pieces[count] = @as(u8, @intCast(@intFromEnum(pos.board[square]))) ^ color;
+        pieces[count] = @as(u8, @intCast(@backingInt(pos.board[square]))) ^ color;
         count += 1;
     }
     if (count != material.piece_count) return error.CorruptTablebase;

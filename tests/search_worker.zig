@@ -331,7 +331,7 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expectError(error.InvalidDepth, search.iterativeDeepening(&pos, roots, .{ .depth = z.types.max_ply }));
         try std.testing.expectError(error.InvalidMultiPV, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .multi_pv = 0 }));
         try std.testing.expectError(error.InvalidMultiPV, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .multi_pv = z.types.max_moves + 1 }));
-        const duplicates = [_]z.types.Move{z.types.Move.make(.normal, z.types.Square.make(4, 1), z.types.Square.make(4, 3), .knight)} ** (z.types.max_moves + 1);
+        const duplicates: [z.types.max_moves + 1]z.types.Move = @splat(z.types.Move.make(.normal, z.types.Square.make(4, 1), z.types.Square.make(4, 3), .knight));
         try std.testing.expectError(error.TooManyRootMoves, search.iterativeDeepening(&pos, roots, .{ .depth = 1, .search_moves = &duplicates }));
         try std.testing.expectError(error.InsufficientRootStorage, search.iterativeDeepening(&pos, roots[0..19], .{ .depth = 1 }));
     }

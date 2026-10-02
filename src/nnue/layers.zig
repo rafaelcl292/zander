@@ -5,21 +5,21 @@ const Reader = @import("reader.zig").Reader;
 pub const output_scale: i32 = 16;
 pub const weight_scale_bits = 6;
 pub const hidden_one = 128;
-pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and (@import("builtin").cpu.arch == .x86_64 or @import("builtin").cpu.arch == .aarch64);
+pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and (@import("builtin").target.cpu.arch == .x86_64 or @import("builtin").target.cpu.arch == .aarch64);
 const Sparse = *const fn ([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
 const Small = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
 fn sparseKernel() ?Sparse {
-    if (@import("builtin").cpu.arch == .aarch64) return &@import("arm.zig").sparse;
+    if (@import("builtin").target.cpu.arch == .aarch64) return &@import("arm.zig").sparse;
     const dispatch = @import("dispatch.zig");
     return dispatch.sparseFunction(dispatch.selected());
 }
 fn hiddenKernel() ?Small {
-    if (@import("builtin").cpu.arch == .aarch64) return &@import("arm.zig").hidden;
+    if (@import("builtin").target.cpu.arch == .aarch64) return &@import("arm.zig").hidden;
     const dispatch = @import("dispatch.zig");
     return dispatch.hiddenFunction(dispatch.selected());
 }
 fn outputKernel() ?Small {
-    if (@import("builtin").cpu.arch == .aarch64) return &@import("arm.zig").final;
+    if (@import("builtin").target.cpu.arch == .aarch64) return &@import("arm.zig").final;
     const dispatch = @import("dispatch.zig");
     return dispatch.outputFunction(dispatch.selected());
 }
@@ -39,7 +39,7 @@ pub fn activatePair(input: *const [32]i32, output: *[64]u8, comptime scale: u5) 
         }
         return;
     }
-    const cpu = @import("builtin").cpu;
+    const cpu = @import("builtin").target.cpu;
     const avx2 = comptime cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);
     const lanes = if (avx2) 16 else 8;
     const Wide = @Vector(lanes, i32);
@@ -81,7 +81,7 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
         pub fn propagate(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
             switch (@import("backend").nnue_backend) {
                 .auto => {
-                    if (@import("builtin").cpu.arch == .x86_64) {
+                    if (@import("builtin").target.cpu.arch == .x86_64) {
                         const dispatch = @import("dispatch.zig");
                         if (dispatch.function(dispatch.selected())) |kernel| kernel(input, @ptrCast(&self.weights), &self.biases, output, inputs, outputs) else self.propagateSse2(input, output);
                     } else self.propagateVector(input, output);
@@ -101,7 +101,7 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
             self.propagatePacked(16, input, output);
         }
         fn propagatePacked(self: *const @This(), comptime lanes: usize, input: *const [inputs]u8, output: *[outputs]i32) void {
-            const cpu = @import("builtin").cpu;
+            const cpu = @import("builtin").target.cpu;
             if (cpu.arch != .x86_64) @compileError("Packed x86 NNUE backends require x86-64");
             if (comptime lanes == 16 and !std.Target.x86.featureSetHas(cpu.features, .avx2)) @compileError("The AVX2 NNUE backend requires an AVX2 compilation target");
             comptime std.debug.assert(inputs % lanes == 0);
@@ -251,10 +251,10 @@ test "vector affine matches scalar with signed weights and wrapping bias" {
         try std.testing.expectEqualSlices(i32, &scalar, &vector);
         layer.propagateVector(&input, &vector);
         try std.testing.expectEqualSlices(i32, &scalar, &vector);
-        if (@import("builtin").cpu.arch == .x86_64) {
+        if (@import("builtin").target.cpu.arch == .x86_64) {
             layer.propagateSse2(&input, &vector);
             try std.testing.expectEqualSlices(i32, &scalar, &vector);
-            if (comptime std.Target.x86.featureSetHas(@import("builtin").cpu.features, .avx2)) {
+            if (comptime std.Target.x86.featureSetHas(@import("builtin").target.cpu.features, .avx2)) {
                 layer.propagateAvx2(&input, &vector);
                 try std.testing.expectEqualSlices(i32, &scalar, &vector);
             }

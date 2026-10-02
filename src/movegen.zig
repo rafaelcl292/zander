@@ -18,9 +18,9 @@ pub const MoveList = struct {
     }
 };
 fn offset(s: t.Square, delta: i16) t.Square {
-    return @enumFromInt(@as(i16, @intFromEnum(s)) + delta);
+    return @fromBackingInt(@intCast(@as(i16, @backingInt(s)) + delta));
 }
-const cpu = @import("builtin").cpu;
+const cpu = @import("builtin").target.cpu;
 const vector_splat = cpu.arch == .x86_64 and
     std.Target.x86.featureSetHasAll(cpu.features, &.{ .avx512f, .avx512bw, .avx512vbmi2 });
 fn compressedSquares(targets: u64) @Vector(64, u8) {
@@ -39,7 +39,7 @@ fn vectorSplat(comptime hardware: bool, list: *MoveList, targets: u64, from: t.S
         var values: [64]u8 = @splat(0);
         var bits = targets;
         var i: usize = 0;
-        while (bits != 0) : (i += 1) values[i] = @intFromEnum(bb.popLsb(&bits));
+        while (bits != 0) : (i += 1) values[i] = @backingInt(bb.popLsb(&bits));
         break :blk @as(@Vector(64, u8), values);
     };
     if (delta) |offset_delta| {
@@ -53,7 +53,7 @@ fn vectorSplat(comptime hardware: bool, list: *MoveList, targets: u64, from: t.S
     } else {
         std.debug.assert(count <= 32);
         const to: @Vector(32, u16) = @intCast(@shuffle(u8, squares, undefined, std.simd.iota(i32, 32)));
-        const moves: [32]u16 = to | @as(@Vector(32, u16), @splat(@as(u16, @intFromEnum(from)) << 6));
+        const moves: [32]u16 = to | @as(@Vector(32, u16), @splat(@as(u16, @backingInt(from)) << 6));
         @memcpy(list.moves[list.len..][0..count], @as(*const [32]t.Move, @ptrCast(&moves))[0..count]);
     }
     list.len += count;
@@ -87,7 +87,7 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
     const right: i8 = if (us == .white) 9 else -9;
     const left: i8 = if (us == .white) 7 else -7;
     const empty = ~pos.pieces();
-    const enemies = if (kind == .evasions) pos.st.checkers else pos.by_color[@intFromEnum(them)];
+    const enemies = if (kind == .evasions) pos.st.checkers else pos.by_color[@backingInt(them)];
     const on7 = pos.piecesOf(us, .pawn) & rank7;
     const not7 = pos.piecesOf(us, .pawn) & ~rank7;
     if (kind != .captures) {
@@ -114,7 +114,7 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
         pawnSplat(list, bb.shift(not7, left) & enemies, left);
         if (pos.st.ep_square != .none) {
             if (kind == .evasions and target & bb.square(offset(pos.st.ep_square, up)) != 0) return;
-            var b = not7 & a.pseudo[@intFromEnum(them)][@intFromEnum(pos.st.ep_square)];
+            var b = not7 & a.pseudo[@backingInt(them)][@backingInt(pos.st.ep_square)];
             while (b != 0) list.append(t.Move.make(.en_passant, bb.popLsb(&b), pos.st.ep_square, .knight));
         }
     }
@@ -124,7 +124,7 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
 pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) void {
     if (kind == .legal) {
         if (pos.st.checkers != 0) generate(.evasions, pos, list) else generate(.non_evasions, pos, list);
-        const pinned = pos.st.blockers_for_king[@intFromEnum(pos.side)] & pos.by_color[@intFromEnum(pos.side)];
+        const pinned = pos.st.blockers_for_king[@backingInt(pos.side)] & pos.by_color[@backingInt(pos.side)];
         const king = pos.king(pos.side);
         var i: usize = 0;
         while (i < list.len) {
@@ -143,9 +143,9 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
     var target: u64 = 0;
     if (kind != .evasions or !bb.moreThanOne(pos.st.checkers)) {
         target = switch (kind) {
-            .evasions => pos.tables.between[@intFromEnum(k)][@intFromEnum(bb.lsb(pos.st.checkers))],
-            .non_evasions => ~pos.by_color[@intFromEnum(us)],
-            .captures => pos.by_color[@intFromEnum(us.opposite())],
+            .evasions => pos.tables.between[@backingInt(k)][@backingInt(bb.lsb(pos.st.checkers))],
+            .non_evasions => ~pos.by_color[@backingInt(us)],
+            .captures => pos.by_color[@backingInt(us.opposite())],
             .quiets => ~pos.pieces(),
             .legal => unreachable,
         };
@@ -158,9 +158,9 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
             }
         }
     }
-    splat(list, k, a.pseudo[6][@intFromEnum(k)] & (if (kind == .evasions) ~pos.by_color[@intFromEnum(us)] else target));
+    splat(list, k, a.pseudo[6][@backingInt(k)] & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target));
     if (kind == .quiets or kind == .non_evasions) {
-        const shift: u3 = @intCast(@intFromEnum(us) * 2);
+        const shift: u3 = @intCast(@backingInt(us) * 2);
         for ([_]u8{ @as(u8, 1) << shift, @as(u8, 2) << shift }) |cr| {
             if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0) list.append(t.Move.make(.castling, k, pos.castling_rook[cr], .knight));
         }
@@ -173,7 +173,7 @@ test "move splats preserve ascending square order and list boundaries" {
         var targets = rng.next();
         // A single queen has at most 27 destinations.
         while (@popCount(targets) > 27) targets &= targets - 1;
-        const from: t.Square = @enumFromInt(rng.next() & 63);
+        const from: t.Square = @fromBackingInt(@intCast(rng.next() & 63));
         var list: MoveList = undefined;
         list.len = @as(usize, t.max_moves) - @popCount(targets);
         const begin = list.len;

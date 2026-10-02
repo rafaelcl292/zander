@@ -54,10 +54,10 @@ pub const Position = struct {
         return self.by_type[0];
     }
     pub fn piecesOf(self: *const Position, c: Color, pt: PieceType) u64 {
-        return self.by_color[@intFromEnum(c)] & self.by_type[@intFromEnum(pt)];
+        return self.by_color[@backingInt(c)] & self.by_type[@backingInt(pt)];
     }
     pub fn pieceOn(self: *const Position, s: Square) Piece {
-        return self.board[@intFromEnum(s)];
+        return self.board[@backingInt(s)];
     }
     pub fn king(self: *const Position, c: Color) Square {
         return bb.lsb(self.piecesOf(c, .king));
@@ -68,11 +68,11 @@ pub const Position = struct {
     /// Speculative post-move key from Position::prefetch_key. Special moves
     /// intentionally approximate the destination; never use this for probing.
     pub fn prefetchKey(self: *const Position, move: t.Move) u64 {
-        const from = @intFromEnum(move.from());
-        const to = @intFromEnum(move.to());
+        const from = @backingInt(move.from());
+        const to = @backingInt(move.to());
         const piece = self.board[from];
         const captured = self.board[to];
-        const value = self.st.key ^ self.keys.side ^ self.keys.psq[@intFromEnum(captured)][to] ^ self.keys.psq[@intFromEnum(piece)][to] ^ self.keys.psq[@intFromEnum(piece)][from];
+        const value = self.st.key ^ self.keys.side ^ self.keys.psq[@backingInt(captured)][to] ^ self.keys.psq[@backingInt(piece)][to] ^ self.keys.psq[@backingInt(piece)][from];
         if (captured != .none or piece.pieceType() == .pawn or self.st.rule50 < 13) return value;
         return value ^ t.makeKey(@intCast(@divTrunc(self.st.rule50 - 13, 8)));
     }
@@ -82,12 +82,12 @@ pub const Position = struct {
     fn putWithThreats(self: *Position, pc: Piece, s: Square, dts: ?*dirty.DirtyThreats) void {
         const bit = bb.square(s);
         std.debug.assert(self.pieceOn(s) == .none and pc != .none);
-        self.board[@intFromEnum(s)] = pc;
+        self.board[@backingInt(s)] = pc;
         self.by_type[0] |= bit;
-        self.by_type[@intFromEnum(pc.pieceType())] |= bit;
-        self.by_color[@intFromEnum(pc.color())] |= bit;
-        self.piece_count[@intFromEnum(pc)] += 1;
-        self.piece_count[@as(usize, @intFromEnum(pc.color())) * 8] += 1;
+        self.by_type[@backingInt(pc.pieceType())] |= bit;
+        self.by_color[@backingInt(pc.color())] |= bit;
+        self.piece_count[@backingInt(pc)] += 1;
+        self.piece_count[@as(usize, @backingInt(pc.color())) * 8] += 1;
         if (dts) |threats| self.updatePieceThreats(true, pc, true, s, threats, ~@as(u64, 0));
     }
     fn remove(self: *Position, s: Square) void {
@@ -98,44 +98,44 @@ pub const Position = struct {
         if (dts) |threats| self.updatePieceThreats(true, pc, false, s, threats, ~@as(u64, 0));
         const bit = bb.square(s);
         std.debug.assert(pc != .none);
-        self.board[@intFromEnum(s)] = .none;
+        self.board[@backingInt(s)] = .none;
         self.by_type[0] ^= bit;
-        self.by_type[@intFromEnum(pc.pieceType())] ^= bit;
-        self.by_color[@intFromEnum(pc.color())] ^= bit;
-        self.piece_count[@intFromEnum(pc)] -= 1;
-        self.piece_count[@as(usize, @intFromEnum(pc.color())) * 8] -= 1;
+        self.by_type[@backingInt(pc.pieceType())] ^= bit;
+        self.by_color[@backingInt(pc.color())] ^= bit;
+        self.piece_count[@backingInt(pc)] -= 1;
+        self.piece_count[@as(usize, @backingInt(pc.color())) * 8] -= 1;
     }
     pub fn attackersTo(self: *const Position, s: Square, occupied: u64) u64 {
-        const i = @intFromEnum(s);
+        const i = @backingInt(s);
         return (self.tables.attacks(.rook, s, occupied) & (self.by_type[4] | self.by_type[5])) | (self.tables.attacks(.bishop, s, occupied) & (self.by_type[3] | self.by_type[5])) | (a.pseudo[1][i] & self.piecesOf(.white, .pawn)) | (a.pseudo[0][i] & self.piecesOf(.black, .pawn)) | (a.pseudo[2][i] & self.by_type[2]) | (a.pseudo[6][i] & self.by_type[6]);
     }
     pub fn attackedBy(self: *const Position, s: Square, occupied: u64, c: Color) bool {
-        return self.attackersTo(s, occupied) & self.by_color[@intFromEnum(c)] != 0;
+        return self.attackersTo(s, occupied) & self.by_color[@backingInt(c)] != 0;
     }
     fn setCastlingRight(self: *Position, c: Color, rook: Square) void {
         const k = self.king(c);
-        const kingside = @intFromEnum(k) < @intFromEnum(rook);
-        const cr: u8 = @as(u8, if (kingside) 1 else 2) << (@as(u3, @intCast(@intFromEnum(c))) * 2);
+        const kingside = @backingInt(k) < @backingInt(rook);
+        const cr: u8 = @as(u8, if (kingside) 1 else 2) << (@as(u3, @intCast(@backingInt(c))) * 2);
         self.st.castling_rights |= cr;
-        self.castling_mask[@intFromEnum(k)] |= cr;
-        self.castling_mask[@intFromEnum(rook)] |= cr;
+        self.castling_mask[@backingInt(k)] |= cr;
+        self.castling_mask[@backingInt(rook)] |= cr;
         self.castling_rook[cr] = rook;
         const kto = Square.make(if (kingside) 6 else 2, 0).relative(c);
         const rto = Square.make(if (kingside) 5 else 3, 0).relative(c);
-        self.castling_path[cr] = (self.tables.between[@intFromEnum(rook)][@intFromEnum(rto)] | self.tables.between[@intFromEnum(k)][@intFromEnum(kto)]) & ~(bb.square(k) | bb.square(rook));
+        self.castling_path[cr] = (self.tables.between[@backingInt(rook)][@backingInt(rto)] | self.tables.between[@backingInt(k)][@backingInt(kto)]) & ~(bb.square(k) | bb.square(rook));
     }
     fn setCheckInfo(self: *Position) void {
         for ([_]Color{ .white, .black }) |c| {
-            const ci = @intFromEnum(c);
-            const them = @intFromEnum(c.opposite());
-            const k = @intFromEnum(self.king(c));
+            const ci = @backingInt(c);
+            const them = @backingInt(c.opposite());
+            const k = @backingInt(self.king(c));
             self.st.blockers_for_king[ci] = 0;
             self.st.pinners[them] = 0;
             var snipers = ((a.pseudo[4][k] & (self.by_type[4] | self.by_type[5])) | (a.pseudo[3][k] & (self.by_type[3] | self.by_type[5]))) & self.by_color[them];
             const occupied = self.pieces() ^ snipers;
             while (snipers != 0) {
                 const sniper = bb.popLsb(&snipers);
-                const blockers = self.tables.between[k][@intFromEnum(sniper)] & occupied;
+                const blockers = self.tables.between[k][@backingInt(sniper)] & occupied;
                 if (blockers != 0 and !bb.moreThanOne(blockers)) {
                     self.st.blockers_for_king[ci] |= blockers;
                     if (blockers & self.by_color[ci] != 0) self.st.pinners[them] |= bb.square(sniper);
@@ -143,8 +143,8 @@ pub const Position = struct {
             }
         }
         const k = self.king(self.side.opposite());
-        self.st.check_squares[1] = a.pseudo[@intFromEnum(self.side.opposite())][@intFromEnum(k)];
-        self.st.check_squares[2] = a.pseudo[2][@intFromEnum(k)];
+        self.st.check_squares[1] = a.pseudo[@backingInt(self.side.opposite())][@backingInt(k)];
+        self.st.check_squares[2] = a.pseudo[2][@backingInt(k)];
         self.st.check_squares[3] = self.tables.attacks(.bishop, k, self.pieces());
         self.st.check_squares[4] = self.tables.attacks(.rook, k, self.pieces());
         self.st.check_squares[5] = self.st.check_squares[3] | self.st.check_squares[4];
@@ -157,19 +157,19 @@ pub const Position = struct {
         self.st.non_pawn_key = @splat(0);
         self.st.pawn_key = self.keys.no_pawns;
         self.st.non_pawn_material = @splat(0);
-        self.st.checkers = self.attackersTo(self.king(self.side), self.pieces()) & self.by_color[@intFromEnum(self.side.opposite())];
+        self.st.checkers = self.attackersTo(self.king(self.side), self.pieces()) & self.by_color[@backingInt(self.side.opposite())];
         self.setCheckInfo();
         var occupied = self.pieces();
         while (occupied != 0) {
             const s = bb.popLsb(&occupied);
             const pc = self.pieceOn(s);
-            const k = self.keys.psq[@intFromEnum(pc)][@intFromEnum(s)];
+            const k = self.keys.psq[@backingInt(pc)][@backingInt(s)];
             self.st.key ^= k;
             if (pc.pieceType() == .pawn) self.st.pawn_key ^= k else {
-                self.st.non_pawn_key[@intFromEnum(pc.color())] ^= k;
+                self.st.non_pawn_key[@backingInt(pc.color())] ^= k;
                 if (pc.pieceType() != .king) {
-                    self.st.non_pawn_material[@intFromEnum(pc.color())] += piece_value[@intFromEnum(pc.pieceType())];
-                    if (@intFromEnum(pc.pieceType()) <= 3) self.st.minor_piece_key ^= k;
+                    self.st.non_pawn_material[@backingInt(pc.color())] += piece_value[@backingInt(pc.pieceType())];
+                    if (@backingInt(pc.pieceType()) <= 3) self.st.minor_piece_key ^= k;
                 }
             }
         }
@@ -177,7 +177,7 @@ pub const Position = struct {
         if (self.side == .black) self.st.key ^= self.keys.side;
         self.st.key ^= self.keys.castling[self.st.castling_rights];
         for (pk.pieces) |pc| {
-            const p = @intFromEnum(pc);
+            const p = @backingInt(pc);
             for (0..@intCast(self.piece_count[p])) |n| self.st.material_key ^= self.keys.psq[p][8 + n];
         }
     }
@@ -204,7 +204,7 @@ pub const Position = struct {
                 if (pi == 0 or pi == 7 or pi == 8) return error.InvalidFen;
                 count += 1;
                 if (count > 32) return error.UnsupportedPosition;
-                self.put(@enumFromInt(pi), Square.make(@intCast(file), @intCast(rank)));
+                self.put(@fromBackingInt(@intCast(pi)), Square.make(@intCast(file), @intCast(rank)));
                 file += 1;
             }
         }
@@ -216,7 +216,7 @@ pub const Position = struct {
             if (pawns > 8) return error.UnsupportedPosition;
             var additional: i32 = 0;
             for ([_]PieceType{ .knight, .bishop, .rook, .queen }) |pt| {
-                additional += @max(self.piece_count[@intFromEnum(Piece.make(c, pt))] - @as(i32, if (pt == .queen) 1 else 2), 0);
+                additional += @max(self.piece_count[@backingInt(Piece.make(c, pt))] - @as(i32, if (pt == .queen) 1 else 2), 0);
             }
             if (additional > 8 - @as(i32, pawns)) return error.UnsupportedPosition;
         }
@@ -232,9 +232,9 @@ pub const Position = struct {
                 var k: Square = .none;
                 if (token == 'K' or token == 'Q') {
                     const dir: i16 = if (token == 'K') -1 else 1;
-                    var sq: i16 = @intFromEnum(Square.make(if (token == 'K') 7 else 0, 0).relative(c));
+                    var sq: i16 = @backingInt(Square.make(if (token == 'K') 7 else 0, 0).relative(c));
                     for (0..7) |_| {
-                        const s: Square = @enumFromInt(sq);
+                        const s: Square = @fromBackingInt(@intCast(sq));
                         const pc = self.pieceOn(s);
                         if (pc == Piece.make(c, .king)) {
                             k = s;
@@ -257,15 +257,15 @@ pub const Position = struct {
             if (ep.len != 2 or ep[0] < 'a' or ep[0] > 'h' or ep[1] != @as(u8, if (self.side == .white) '6' else '3')) return error.InvalidFen;
             const s = Square.make(@intCast(ep[0] - 'a'), @intCast(ep[1] - '1'));
             const push: i16 = if (self.side == .white) 8 else -8;
-            const captured: Square = @enumFromInt(@as(i16, @intFromEnum(s)) - push);
-            const behind: Square = @enumFromInt(@as(i16, @intFromEnum(s)) + push);
-            var pawns = a.pseudo[@intFromEnum(self.side.opposite())][@intFromEnum(s)] & self.piecesOf(self.side, .pawn);
+            const captured: Square = @fromBackingInt(@intCast(@as(i16, @backingInt(s)) - push));
+            const behind: Square = @fromBackingInt(@intCast(@as(i16, @backingInt(s)) + push));
+            var pawns = a.pseudo[@backingInt(self.side.opposite())][@backingInt(s)] & self.piecesOf(self.side, .pawn);
             const target = self.piecesOf(self.side.opposite(), .pawn) & bb.square(captured);
             if (pawns != 0 and target != 0 and self.pieces() & (bb.square(s) | bb.square(behind)) == 0) {
                 const occ = self.pieces() ^ target ^ bb.square(s);
                 while (pawns != 0) {
                     const p = bb.popLsb(&pawns);
-                    if (self.attackersTo(self.king(self.side), occ ^ bb.square(p)) & self.by_color[@intFromEnum(self.side.opposite())] & ~target == 0) self.st.ep_square = s;
+                    if (self.attackersTo(self.king(self.side), occ ^ bb.square(p)) & self.by_color[@backingInt(self.side.opposite())] & ~target == 0) self.st.ep_square = s;
                 }
             }
         }
@@ -273,7 +273,7 @@ pub const Position = struct {
         self.st.rule50 = std.fmt.parseInt(i32, fields.next() orelse "0", 10) catch return error.InvalidFen;
         const fullmove = std.fmt.parseInt(i32, fields.next() orelse "1", 10) catch return error.InvalidFen;
         if (self.st.rule50 < 0 or self.st.rule50 > 32767 or fullmove < 0 or fullmove > 100000) return error.UnsupportedPosition;
-        self.game_ply = @max(2 * (fullmove - 1), 0) + @as(i32, @intFromEnum(self.side));
+        self.game_ply = @max(2 * (fullmove - 1), 0) + @as(i32, @backingInt(self.side));
         self.setState();
         if (self.attackedBy(self.king(self.side.opposite()), self.pieces(), self.side)) return error.UnsupportedPosition;
     }
@@ -303,19 +303,19 @@ pub const Position = struct {
             return false;
         }
         if (m.promotionType() != .knight) return false;
-        if (pc == .none or pc.color() != us or self.by_color[@intFromEnum(us)] & bb.square(to) != 0) return false;
+        if (pc == .none or pc.color() != us or self.by_color[@backingInt(us)] & bb.square(to) != 0) return false;
         if (pc.pieceType() == .pawn) {
             if (bb.square(to) & 0xff000000000000ff != 0) return false;
             const push: i16 = if (us == .white) 8 else -8;
-            const delta = @as(i16, @intFromEnum(to)) - @as(i16, @intFromEnum(from));
-            const captures = a.pseudo[@intFromEnum(us)][@intFromEnum(from)] & self.by_color[@intFromEnum(us.opposite())] & bb.square(to) != 0;
+            const delta = @as(i16, @backingInt(to)) - @as(i16, @backingInt(from));
+            const captures = a.pseudo[@backingInt(us)][@backingInt(from)] & self.by_color[@backingInt(us.opposite())] & bb.square(to) != 0;
             const single = delta == push and self.pieceOn(to) == .none;
-            const double = delta == 2 * push and from.relative(us).rank() == 1 and self.pieceOn(to) == .none and self.pieceOn(@enumFromInt(@as(i16, @intFromEnum(to)) - push)) == .none;
+            const double = delta == 2 * push and from.relative(us).rank() == 1 and self.pieceOn(to) == .none and self.pieceOn(@fromBackingInt(@intCast(@as(i16, @backingInt(to)) - push))) == .none;
             if (!captures and !single and !double) return false;
         } else if (self.tables.attacks(pc.pieceType(), from, self.pieces()) & bb.square(to) == 0) return false;
         if (self.st.checkers != 0 and pc.pieceType() != .king) {
             if (bb.moreThanOne(self.st.checkers)) return false;
-            if (self.tables.between[@intFromEnum(self.king(us))][@intFromEnum(bb.lsb(self.st.checkers))] & bb.square(to) == 0) return false;
+            if (self.tables.between[@backingInt(self.king(us))][@backingInt(bb.lsb(self.st.checkers))] & bb.square(to) == 0) return false;
         }
         return true;
     }
@@ -324,9 +324,9 @@ pub const Position = struct {
         if (m.kind() != .normal) return threshold <= 0;
         const from = m.from();
         const to = m.to();
-        var swap = piece_value[@intFromEnum(self.pieceOn(to).pieceType())] - threshold;
+        var swap = piece_value[@backingInt(self.pieceOn(to).pieceType())] - threshold;
         if (swap < 0) return false;
-        swap = piece_value[@intFromEnum(self.pieceOn(from).pieceType())] - swap;
+        swap = piece_value[@backingInt(self.pieceOn(from).pieceType())] - swap;
         if (swap <= 0) return true;
         var occupied = self.pieces() ^ bb.square(from) ^ bb.square(to);
         var stm = self.side;
@@ -335,24 +335,24 @@ pub const Position = struct {
         while (true) {
             stm = stm.opposite();
             attackers &= occupied;
-            var stm_attackers = attackers & self.by_color[@intFromEnum(stm)];
+            var stm_attackers = attackers & self.by_color[@backingInt(stm)];
             if (stm_attackers == 0) break;
-            if (self.st.pinners[@intFromEnum(stm.opposite())] & occupied != 0) {
-                stm_attackers &= ~self.st.blockers_for_king[@intFromEnum(stm)];
+            if (self.st.pinners[@backingInt(stm.opposite())] & occupied != 0) {
+                stm_attackers &= ~self.st.blockers_for_king[@backingInt(stm)];
                 if (stm_attackers == 0) break;
             }
             result ^= 1;
             var selected: PieceType = .king;
             var candidates: u64 = 0;
             for ([_]PieceType{ .pawn, .knight, .bishop, .rook, .queen }) |pt| {
-                candidates = stm_attackers & self.by_type[@intFromEnum(pt)];
+                candidates = stm_attackers & self.by_type[@backingInt(pt)];
                 if (candidates != 0) {
                     selected = pt;
                     break;
                 }
             }
-            if (selected == .king) return (if (attackers & ~self.by_color[@intFromEnum(stm)] != 0) result ^ 1 else result) != 0;
-            swap = piece_value[@intFromEnum(selected)] - swap;
+            if (selected == .king) return (if (attackers & ~self.by_color[@backingInt(stm)] != 0) result ^ 1 else result) != 0;
+            swap = piece_value[@backingInt(selected)] - swap;
             if (selected != .queen and swap < result) break;
             occupied ^= bb.square(bb.lsb(candidates));
             if (selected == .pawn or selected == .bishop or selected == .queen) attackers |= self.tables.attacks(.bishop, to, occupied) & (self.by_type[3] | self.by_type[5]);
@@ -400,7 +400,7 @@ pub const Position = struct {
             if (self.keys.cuckoo[index] != move_key) index = pk.PositionKeys.h2(move_key);
             if (self.keys.cuckoo[index] != move_key) continue;
             const move = self.keys.cuckoo_move[index];
-            if ((self.tables.between[@intFromEnum(move.from())][@intFromEnum(move.to())] ^ bb.square(move.to())) & self.pieces() == 0) {
+            if ((self.tables.between[@backingInt(move.from())][@backingInt(move.to())] ^ bb.square(move.to())) & self.pieces() == 0) {
                 if (ply > distance or state.repetition != 0) return true;
             }
         }
@@ -411,8 +411,8 @@ pub const Position = struct {
         const from = m.from();
         const to = m.to();
         const them = self.side.opposite();
-        if (self.st.check_squares[@intFromEnum(self.pieceOn(from).pieceType())] & bb.square(to) != 0) return true;
-        if (self.st.blockers_for_king[@intFromEnum(them)] & bb.square(from) != 0) return self.tables.line[@intFromEnum(from)][@intFromEnum(to)] & self.piecesOf(them, .king) == 0 or m.kind() == .castling;
+        if (self.st.check_squares[@backingInt(self.pieceOn(from).pieceType())] & bb.square(to) != 0) return true;
+        if (self.st.blockers_for_king[@backingInt(them)] & bb.square(from) != 0) return self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(them, .king) == 0 or m.kind() == .castling;
         return switch (m.kind()) {
             .normal => false,
             .promotion => self.tables.attacks(m.promotionType(), to, self.pieces() ^ bb.square(from)) & self.piecesOf(them, .king) != 0,
@@ -420,9 +420,9 @@ pub const Position = struct {
                 const captured = Square.make(to.file(), from.rank());
                 const occupied = (self.pieces() ^ bb.square(from) ^ bb.square(captured)) | bb.square(to);
                 const k = self.king(them);
-                break :blk ((self.tables.attacks(.rook, k, occupied) & (self.by_type[4] | self.by_type[5])) | (self.tables.attacks(.bishop, k, occupied) & (self.by_type[3] | self.by_type[5]))) & self.by_color[@intFromEnum(self.side)] != 0;
+                break :blk ((self.tables.attacks(.rook, k, occupied) & (self.by_type[4] | self.by_type[5])) | (self.tables.attacks(.bishop, k, occupied) & (self.by_type[3] | self.by_type[5]))) & self.by_color[@backingInt(self.side)] != 0;
             },
-            .castling => self.st.check_squares[4] & bb.square(Square.make(if (@intFromEnum(to) > @intFromEnum(from)) 5 else 3, 0).relative(self.side)) != 0,
+            .castling => self.st.check_squares[4] & bb.square(Square.make(if (@backingInt(to) > @backingInt(from)) 5 else 3, 0).relative(self.side)) != 0,
         };
     }
     fn movePiece(self: *Position, from: Square, to: Square) void {
@@ -434,10 +434,10 @@ pub const Position = struct {
         std.debug.assert(pc != .none and self.pieceOn(to) == .none);
         if (dts) |threats| self.updatePieceThreats(true, pc, false, from, threats, bits);
         self.by_type[0] ^= bits;
-        self.by_type[@intFromEnum(pc.pieceType())] ^= bits;
-        self.by_color[@intFromEnum(pc.color())] ^= bits;
-        self.board[@intFromEnum(from)] = .none;
-        self.board[@intFromEnum(to)] = pc;
+        self.by_type[@backingInt(pc.pieceType())] ^= bits;
+        self.by_color[@backingInt(pc.color())] ^= bits;
+        self.board[@backingInt(from)] = .none;
+        self.board[@backingInt(to)] = pc;
         if (dts) |threats| self.updatePieceThreats(true, pc, true, to, threats, bits);
     }
     fn addThreat(dts: *dirty.DirtyThreats, put_piece: bool, pc: Piece, threatened: Piece, from: Square, to: Square) void {
@@ -448,7 +448,7 @@ pub const Position = struct {
         while (b != 0) {
             const slider_sq = bb.popLsb(&b);
             const slider = self.pieceOn(slider_sq);
-            const ray = self.tables.ray_pass[@intFromEnum(slider_sq)][@intFromEnum(s)];
+            const ray = self.tables.ray_pass[@backingInt(slider_sq)][@backingInt(s)];
             const discovered = ray & slider_attacks & (self.pieces() ^ self.by_type[6]);
             std.debug.assert(!bb.moreThanOne(discovered));
             if (discovered != 0 and (ray & no_rays) != no_rays) {
@@ -480,11 +480,11 @@ pub const Position = struct {
             .bishop => bishop_attacks,
             .rook => rook_attacks,
             .queen => slider_attacks,
-            .pawn => a.pseudo[@intFromEnum(pc.color())][@intFromEnum(s)],
-            else => a.pseudo[@intFromEnum(pt)][@intFromEnum(s)],
+            .pawn => a.pseudo[@backingInt(pc.color())][@backingInt(s)],
+            else => a.pseudo[@backingInt(pt)][@backingInt(s)],
         };
-        var incoming = a.pseudo[2][@intFromEnum(s)] & self.by_type[2];
-        if (pt == .knight or pt == .rook) incoming |= (a.pseudo[0][@intFromEnum(s)] & self.piecesOf(.black, .pawn)) | (a.pseudo[1][@intFromEnum(s)] & self.piecesOf(.white, .pawn));
+        var incoming = a.pseudo[2][@backingInt(s)] & self.by_type[2];
+        if (pt == .knight or pt == .rook) incoming |= (a.pseudo[0][@backingInt(s)] & self.piecesOf(.black, .pawn)) | (a.pseudo[1][@backingInt(s)] & self.piecesOf(.white, .pawn));
         while (threatened != 0) {
             const to = bb.popLsb(&threatened);
             addThreat(dts, put_piece, pc, self.pieceOn(to), s, to);
@@ -534,18 +534,18 @@ pub const Position = struct {
         var k = old.key ^ self.keys.side;
         const us = self.side;
         const them = us.opposite();
-        const ui = @intFromEnum(us);
-        const ti = @intFromEnum(them);
+        const ui = @backingInt(us);
+        const ti = @backingInt(them);
         const from = m.from();
         var to = m.to();
         const pc = self.pieceOn(from);
-        const pi = @intFromEnum(pc);
+        const pi = @backingInt(pc);
         if (dirties) |d| d.piece = .{ .pc = pc, .from = from, .to = to };
         var captured = if (m.kind() == .en_passant) Piece.make(them, .pawn) else self.pieceOn(to);
         const push: i16 = if (us == .white) 8 else -8;
         if (m.kind() == .castling) {
             const rfrom = to;
-            const kingside = @intFromEnum(to) > @intFromEnum(from);
+            const kingside = @backingInt(to) > @backingInt(from);
             const rto = Square.make(if (kingside) 5 else 3, 0).relative(us);
             to = Square.make(if (kingside) 6 else 2, 0).relative(us);
             if (dirties) |d| {
@@ -559,73 +559,73 @@ pub const Position = struct {
             self.removeWithThreats(rfrom, dts);
             self.putWithThreats(Piece.make(us, .king), to, dts);
             self.putWithThreats(Piece.make(us, .rook), rto, dts);
-            const delta = self.keys.psq[@intFromEnum(captured)][@intFromEnum(rfrom)] ^ self.keys.psq[@intFromEnum(captured)][@intFromEnum(rto)];
+            const delta = self.keys.psq[@backingInt(captured)][@backingInt(rfrom)] ^ self.keys.psq[@backingInt(captured)][@backingInt(rto)];
             k ^= delta;
             next.non_pawn_key[ui] ^= delta;
             captured = .none;
         } else if (captured != .none) {
             var capsq = to;
-            const ci = @intFromEnum(captured);
+            const ci = @backingInt(captured);
             if (captured.pieceType() == .pawn) {
                 if (m.kind() == .en_passant) {
-                    capsq = @enumFromInt(@as(i16, @intFromEnum(to)) - push);
+                    capsq = @fromBackingInt(@intCast(@as(i16, @backingInt(to)) - push));
                     self.removeWithThreats(capsq, dts);
                 }
-                next.pawn_key ^= self.keys.psq[ci][@intFromEnum(capsq)];
+                next.pawn_key ^= self.keys.psq[ci][@backingInt(capsq)];
             } else {
-                next.non_pawn_material[ti] -= piece_value[@intFromEnum(captured.pieceType())];
-                next.non_pawn_key[ti] ^= self.keys.psq[ci][@intFromEnum(capsq)];
-                if (@intFromEnum(captured.pieceType()) <= 3) next.minor_piece_key ^= self.keys.psq[ci][@intFromEnum(capsq)];
+                next.non_pawn_material[ti] -= piece_value[@backingInt(captured.pieceType())];
+                next.non_pawn_key[ti] ^= self.keys.psq[ci][@backingInt(capsq)];
+                if (@backingInt(captured.pieceType()) <= 3) next.minor_piece_key ^= self.keys.psq[ci][@backingInt(capsq)];
             }
             if (dirties) |d| {
                 d.piece.remove_pc = captured;
                 d.piece.remove_sq = capsq;
             }
-            k ^= self.keys.psq[ci][@intFromEnum(capsq)];
+            k ^= self.keys.psq[ci][@backingInt(capsq)];
             next.material_key ^= self.keys.psq[ci][@intCast(8 + self.piece_count[ci] - @as(i32, @intFromBool(m.kind() != .en_passant)))];
             next.rule50 = 0;
         }
-        k ^= self.keys.psq[pi][@intFromEnum(from)] ^ self.keys.psq[pi][@intFromEnum(to)];
+        k ^= self.keys.psq[pi][@backingInt(from)] ^ self.keys.psq[pi][@backingInt(to)];
         if (next.ep_square != .none) {
             k ^= self.keys.enpassant[next.ep_square.file()];
             next.ep_square = .none;
         }
         k ^= self.keys.castling[next.castling_rights];
-        next.castling_rights &= ~(self.castling_mask[@intFromEnum(from)] | self.castling_mask[@intFromEnum(to)]);
+        next.castling_rights &= ~(self.castling_mask[@backingInt(from)] | self.castling_mask[@backingInt(to)]);
         k ^= self.keys.castling[next.castling_rights];
         if (pc.pieceType() == .pawn) {
-            if ((@intFromEnum(to) ^ @intFromEnum(from)) == 16) {
-                const ep: Square = @enumFromInt(@as(i16, @intFromEnum(to)) - push);
-                const pawns = a.pseudo[ui][@intFromEnum(ep)] & self.piecesOf(them, .pawn);
+            if ((@backingInt(to) ^ @backingInt(from)) == 16) {
+                const ep: Square = @fromBackingInt(@intCast(@as(i16, @backingInt(to)) - push));
+                const pawns = a.pseudo[ui][@backingInt(ep)] & self.piecesOf(them, .pawn);
                 if (pawns != 0) {
                     const king_sq = self.king(them);
                     const not_blockers = ~old.blockers_for_king[ti];
                     const no_discovery = bb.square(from) & not_blockers != 0 or from.file() == king_sq.file();
-                    if (no_discovery and pawns & (not_blockers | self.tables.line[@intFromEnum(ep)][@intFromEnum(king_sq)]) != 0) {
+                    if (no_discovery and pawns & (not_blockers | self.tables.line[@backingInt(ep)][@backingInt(king_sq)]) != 0) {
                         next.ep_square = ep;
                         k ^= self.keys.enpassant[ep.file()];
                     }
                 }
             } else if (m.kind() == .promotion) {
                 const pt = m.promotionType();
-                const promotion = @intFromEnum(Piece.make(us, pt));
+                const promotion = @backingInt(Piece.make(us, pt));
                 if (dirties) |d| {
-                    d.piece.add_pc = @enumFromInt(promotion);
+                    d.piece.add_pc = @fromBackingInt(@intCast(promotion));
                     d.piece.add_sq = to;
                     d.piece.to = .none;
                 }
-                k ^= self.keys.psq[promotion][@intFromEnum(to)];
+                k ^= self.keys.psq[promotion][@backingInt(to)];
                 next.material_key ^= self.keys.psq[promotion][@intCast(8 + self.piece_count[promotion])] ^ self.keys.psq[pi][@intCast(8 + self.piece_count[pi] - 1)];
-                next.non_pawn_key[ui] ^= self.keys.psq[promotion][@intFromEnum(to)];
-                if (@intFromEnum(pt) <= 3) next.minor_piece_key ^= self.keys.psq[promotion][@intFromEnum(to)];
-                next.non_pawn_material[ui] += piece_value[@intFromEnum(pt)];
+                next.non_pawn_key[ui] ^= self.keys.psq[promotion][@backingInt(to)];
+                if (@backingInt(pt) <= 3) next.minor_piece_key ^= self.keys.psq[promotion][@backingInt(to)];
+                next.non_pawn_material[ui] += piece_value[@backingInt(pt)];
             }
-            next.pawn_key ^= self.keys.psq[pi][@intFromEnum(from)] ^ self.keys.psq[pi][@intFromEnum(to)];
+            next.pawn_key ^= self.keys.psq[pi][@backingInt(from)] ^ self.keys.psq[pi][@backingInt(to)];
             next.rule50 = 0;
         } else {
-            const delta = self.keys.psq[pi][@intFromEnum(from)] ^ self.keys.psq[pi][@intFromEnum(to)];
+            const delta = self.keys.psq[pi][@backingInt(from)] ^ self.keys.psq[pi][@backingInt(to)];
             next.non_pawn_key[ui] ^= delta;
-            if (@intFromEnum(pc.pieceType()) <= 3) next.minor_piece_key ^= delta;
+            if (@backingInt(pc.pieceType()) <= 3) next.minor_piece_key ^= delta;
         }
         next.key = k;
         if (m.kind() != .castling) {
@@ -666,7 +666,7 @@ pub const Position = struct {
             self.put(Piece.make(us, .pawn), to);
         }
         if (m.kind() == .castling) {
-            const kingside = @intFromEnum(to) > @intFromEnum(from);
+            const kingside = @backingInt(to) > @backingInt(from);
             const kto = Square.make(if (kingside) 6 else 2, 0).relative(us);
             const rto = Square.make(if (kingside) 5 else 3, 0).relative(us);
             self.remove(kto);
@@ -711,16 +711,16 @@ pub const Position = struct {
         var to = m.to();
         const us = self.side;
         if (m.kind() == .castling) {
-            to = Square.make(if (@intFromEnum(to) > @intFromEnum(from)) 6 else 2, 0).relative(us);
-            const step: i16 = if (@intFromEnum(to) > @intFromEnum(from)) -1 else 1;
-            var sq: i16 = @intFromEnum(to);
-            while (sq != @intFromEnum(from)) : (sq += step) {
-                if (self.attackedBy(@enumFromInt(sq), self.pieces(), us.opposite())) return false;
+            to = Square.make(if (@backingInt(to) > @backingInt(from)) 6 else 2, 0).relative(us);
+            const step: i16 = if (@backingInt(to) > @backingInt(from)) -1 else 1;
+            var sq: i16 = @backingInt(to);
+            while (sq != @backingInt(from)) : (sq += step) {
+                if (self.attackedBy(@fromBackingInt(@intCast(sq)), self.pieces(), us.opposite())) return false;
             }
-            return !self.chess960 or self.st.blockers_for_king[@intFromEnum(us)] & bb.square(m.to()) == 0;
+            return !self.chess960 or self.st.blockers_for_king[@backingInt(us)] & bb.square(m.to()) == 0;
         }
         if (self.pieceOn(from).pieceType() == .king) return !self.attackedBy(to, self.pieces() ^ bb.square(from), us.opposite());
-        return self.st.blockers_for_king[@intFromEnum(us)] & bb.square(from) == 0 or self.tables.line[@intFromEnum(from)][@intFromEnum(to)] & self.piecesOf(us, .king) != 0;
+        return self.st.blockers_for_king[@backingInt(us)] & bb.square(from) == 0 or self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(us, .king) != 0;
     }
     pub fn writeFen(self: *const Position, writer: *std.Io.Writer) !void {
         for (0..8) |r| {
@@ -735,7 +735,7 @@ pub const Position = struct {
                     try writer.writeByte('0' + empty);
                     empty = 0;
                 }
-                try writer.writeByte(piece_chars[@intFromEnum(pc)]);
+                try writer.writeByte(piece_chars[@backingInt(pc)]);
             }
             if (empty != 0) try writer.writeByte('0' + empty);
             if (r != 7) try writer.writeByte('/');
@@ -750,6 +750,6 @@ pub const Position = struct {
         if (self.st.ep_square == .none) try writer.writeAll(" - ") else {
             try writer.print(" {c}{c} ", .{ @as(u8, 'a') + self.st.ep_square.file(), @as(u8, '1') + self.st.ep_square.rank() });
         }
-        try writer.print("{d} {d}", .{ self.st.rule50, 1 + @divTrunc(self.game_ply - @as(i32, @intFromEnum(self.side)), 2) });
+        try writer.print("{d} {d}", .{ self.st.rule50, 1 + @divTrunc(self.game_ply - @as(i32, @backingInt(self.side)), 2) });
     }
 };

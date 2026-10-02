@@ -4,9 +4,9 @@ const t = @import("types.zig");
 const bb = @import("bitboard.zig");
 
 pub fn safeDestination(s: t.Square, step: i16) u64 {
-    const dest = @as(i16, @intFromEnum(s)) + step;
+    const dest = @as(i16, @backingInt(s)) + step;
     if (dest < 0 or dest >= 64) return 0;
-    const to: t.Square = @enumFromInt(dest);
+    const to: t.Square = @fromBackingInt(@intCast(dest));
     return if (@abs(@as(i16, s.file()) - @as(i16, to.file())) <= 2) bb.square(to) else 0;
 }
 pub fn slidingAttack(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
@@ -34,7 +34,7 @@ pub const pseudo = blk: {
     @setEvalBranchQuota(100000);
     var table: [8][64]u64 = @splat(@splat(0));
     for (0..64) |i| {
-        const s: t.Square = @enumFromInt(i);
+        const s: t.Square = @fromBackingInt(@intCast(i));
         table[0][i] = bb.pawnAttacks(.white, bb.square(s));
         table[1][i] = bb.pawnAttacks(.black, bb.square(s));
         table[2][i] = leaper(s, &.{ -17, -15, -10, -6, 6, 10, 15, 17 });
@@ -46,7 +46,7 @@ pub const pseudo = blk: {
     break :blk table;
 };
 
-const cpu = @import("builtin").cpu;
+const cpu = @import("builtin").target.cpu;
 const dual_hq = cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);
 const scalar_hq = cpu.arch == .aarch64 or cpu.arch == .loongarch64;
 const use_hq = @import("backend").hq_attacks and (dual_hq or scalar_hq);
@@ -67,7 +67,7 @@ const hq_masks = blk: {
     @setEvalBranchQuota(100000);
     var masks: [64][4]u64 = undefined;
     for (&masks, 0..) |*mask, square| {
-        const sq: t.Square = @enumFromInt(square);
+        const sq: t.Square = @fromBackingInt(@intCast(square));
         mask.* = .{ lineMask(sq, .{ 8, -8 }), lineMask(sq, .{ 9, -9 }), lineMask(sq, .{ 1, -1 }), lineMask(sq, .{ 7, -7 }) };
     }
     break :blk masks;
@@ -76,7 +76,7 @@ const rank_attacks = blk: {
     @setEvalBranchQuota(100000);
     var table: [8][64]u8 = undefined;
     for (&table, 0..) |*row, file| for (row, 0..) |*entry, occupied| {
-        entry.* = @truncate(slidingAttack(.rook, @enumFromInt(file), occupied << 1));
+        entry.* = @truncate(slidingAttack(.rook, @fromBackingInt(@intCast(file)), occupied << 1));
     };
     break :blk table;
 };
@@ -85,7 +85,7 @@ fn hyperbola(s: t.Square, occupied: u64, mask: u64) u64 {
     return ((o -% bb.square(s)) ^ @bitReverse(@bitReverse(o) -% @bitReverse(bb.square(s)))) & mask;
 }
 fn hqAttacks(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
-    const masks = hq_masks[@intFromEnum(s)];
+    const masks = hq_masks[@backingInt(s)];
     if (scalar_hq) {
         const bishop = hyperbola(s, occupied, masks[1]) | hyperbola(s, occupied, masks[3]);
         const rook = hyperbola(s, occupied, masks[0]) | hyperbola(s, occupied, masks[2]);
@@ -104,7 +104,7 @@ fn hqAttacks(pt: t.PieceType, s: t.Square, occupied: u64) u64 {
     const reversed = @shuffle(u64, @byteSwap(o), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
     // Reversing a one-bit board maps square s to 63 - s. Keep that invariant
     // explicit so x86 needs a shift instead of a general software bit reversal.
-    const rev = reversed -% @as(Vec, @splat(bb.square(@enumFromInt(63 - @intFromEnum(s))) *% 2));
+    const rev = reversed -% @as(Vec, @splat(bb.square(@fromBackingInt(@intCast(63 - @backingInt(s)))) *% 2));
     const restored = @shuffle(u64, @byteSwap(rev), undefined, @Vector(4, i32){ 1, 0, 3, 2 });
     const result = ((o -% @as(Vec, @splat(bb.square(s) *% 2))) ^ restored) & mask;
     const shift: u6 = @as(u6, s.rank()) * 8;
@@ -149,11 +149,11 @@ pub const Tables = struct {
         self.between = @splat(@splat(0));
         self.ray_pass = @splat(@splat(0));
         for (0..64) |a| {
-            const s1: t.Square = @enumFromInt(a);
+            const s1: t.Square = @fromBackingInt(@intCast(a));
             for ([_]t.PieceType{ .bishop, .rook }) |pt| {
                 for (0..64) |b| {
-                    const s2: t.Square = @enumFromInt(b);
-                    if (pseudo[@intFromEnum(pt)][a] & bb.square(s2) != 0) {
+                    const s2: t.Square = @fromBackingInt(@intCast(b));
+                    if (pseudo[@backingInt(pt)][a] & bb.square(s2) != 0) {
                         self.line[a][b] = (self.attacks(pt, s1, 0) & self.attacks(pt, s2, 0)) | bb.square(s1) | bb.square(s2);
                         self.between[a][b] = self.attacks(pt, s1, bb.square(s2)) & self.attacks(pt, s2, bb.square(s1));
                         self.ray_pass[a][b] = self.attacks(pt, s1, 0) & (self.attacks(pt, s2, bb.square(s1)) | bb.square(s2));
@@ -168,11 +168,11 @@ pub const Tables = struct {
         if (use_hq and (pt == .bishop or pt == .rook or pt == .queen)) return hqAttacks(pt, s, occupied);
         return switch (pt) {
             .bishop, .rook => blk: {
-                const m = self.magics[@intFromEnum(s)][@intFromEnum(pt) - 3];
+                const m = self.magics[@backingInt(s)][@backingInt(pt) - 3];
                 break :blk m.attacks[m.index(occupied)];
             },
             .queen => self.attacks(.bishop, s, occupied) | self.attacks(.rook, s, occupied),
-            else => pseudo[@intFromEnum(pt)][@intFromEnum(s)],
+            else => pseudo[@backingInt(pt)][@backingInt(s)],
         };
     }
     fn initMagics(self: *Tables, pt: t.PieceType, backing: []u64) void {
@@ -183,11 +183,11 @@ pub const Tables = struct {
         var count: u64 = 0;
         var offset: usize = 0;
         for (0..64) |i| {
-            const s: t.Square = @enumFromInt(i);
+            const s: t.Square = @fromBackingInt(@intCast(i));
             const rank = @as(u64, 0xff) << (@as(u6, s.rank()) * 8);
             const file = bb.file_a << s.file();
             const edges = ((@as(u64, 0xff000000000000ff)) & ~rank) | ((bb.file_a | bb.file_h) & ~file);
-            const m = &self.magics[i][@intFromEnum(pt) - 3];
+            const m = &self.magics[i][@backingInt(pt) - 3];
             m.mask = slidingAttack(pt, s, 0) & ~edges;
             m.shift = @intCast(64 - @popCount(m.mask));
             m.attacks = backing[offset..].ptr;
@@ -224,7 +224,7 @@ pub const Tables = struct {
 
 test "hyperbola attacks match rays for every relevant occupancy" {
     for (0..64) |square| {
-        const sq: t.Square = @enumFromInt(square);
+        const sq: t.Square = @fromBackingInt(@intCast(square));
         inline for (.{ t.PieceType.bishop, t.PieceType.rook }) |pt| {
             const mask = slidingAttack(pt, sq, 0);
             var occupied: u64 = 0;

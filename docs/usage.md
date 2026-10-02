@@ -7,7 +7,7 @@ the [quick start](../README.md#quick-start).
 
 ## Build the engine
 
-Zig 0.16.0 is required. A native build needs neither the Stockfish submodule nor
+Zig 0.17.0 is required. A native build needs neither the Stockfish submodule nor
 a C++ compiler:
 
 ```sh

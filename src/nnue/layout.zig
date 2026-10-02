@@ -1,6 +1,6 @@
 // AVX2 byte packs operate independently in each 128-bit lane.
 const std = @import("std");
-const cpu = @import("builtin").cpu;
+const cpu = @import("builtin").target.cpu;
 // Only targets that guarantee AVX2 use this layout. Generic targets retain
 // canonical activations even when runtime dispatch selects an AVX2 kernel.
 pub const native_pack = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);

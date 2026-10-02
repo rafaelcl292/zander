@@ -365,7 +365,7 @@ const Session = struct {
             try self.writer.writeAll("\n");
             try self.writer.writeAll(border);
             for (0..8) |r| {
-                for (0..8) |f| try self.writer.print(" | {c}", .{" PNBRQK  pnbrqk"[@intFromEnum(pos.pieceOn(t.Square.make(@intCast(f), @intCast(7 - r))))]});
+                for (0..8) |f| try self.writer.print(" | {c}", .{" PNBRQK  pnbrqk"[@backingInt(pos.pieceOn(t.Square.make(@intCast(f), @intCast(7 - r))))]});
                 try self.writer.print(" | {d}\n{s}", .{ 8 - r, border });
             }
             try self.writer.writeAll("   a   b   c   d   e   f   g   h\n\nFen: ");
@@ -373,15 +373,15 @@ const Session = struct {
             try self.writer.print("\nKey: {X:0>16}\nCheckers: ", .{pos.key()});
             var checkers = pos.st.checkers;
             while (checkers != 0) {
-                const square: t.Square = @enumFromInt(@ctz(checkers));
+                const square: t.Square = @fromBackingInt(@intCast(@ctz(checkers)));
                 checkers &= checkers - 1;
                 try self.writer.print("{c}{c} ", .{ @as(u8, 'a') + square.file(), @as(u8, '1') + square.rank() });
             }
             try self.writer.writeByte('\n');
         } else if (std.mem.eql(u8, cmd, "compiler")) {
             const builtin = @import("builtin");
-            try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{ builtin.zig_version_string, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), @tagName(builtin.mode), @tagName(@import("backend").nnue_backend) });
-            if (@import("backend").nnue_backend == .auto and builtin.cpu.arch == .x86_64) try self.writer.print("Selected affine kernel: {s}\n", .{@tagName(@import("nnue/dispatch.zig").selected())});
+            try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{ builtin.zig_version_string, @tagName(builtin.target.cpu.arch), @tagName(builtin.target.os.tag), @tagName(builtin.mode), @tagName(@import("backend").nnue_backend) });
+            if (@import("backend").nnue_backend == .auto and builtin.target.cpu.arch == .x86_64) try self.writer.print("Selected affine kernel: {s}\n", .{@tagName(@import("nnue/dispatch.zig").selected())});
         } else if (std.mem.eql(u8, cmd, "eval")) {
             try self.engine.ensureNetwork();
             if (pos.st.checkers != 0) {

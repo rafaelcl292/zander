@@ -32,20 +32,20 @@ pub const HalfKA = struct {
         @setEvalBranchQuota(30000);
         var table: [2][64][16]u16 = @splat(@splat(@splat(0)));
         for (0..2) |side| for (0..64) |square| {
-            const perspective: t.Color = @enumFromInt(side);
-            const king: t.Square = @enumFromInt(square);
+            const perspective: t.Color = @fromBackingInt(@intCast(side));
+            const king: t.Square = @fromBackingInt(@intCast(square));
             const relative = king.relative(perspective);
             const bucket = (7 - @as(u16, relative.rank())) * 4 + @min(@as(u16, relative.file()), 7 - @as(u16, relative.file()));
             const orient: u16 = @as(u16, if (king.file() < 4) 7 else 0) ^ (56 * @as(u16, @intCast(side)));
             for (all_pieces) |pc| {
-                const piece_offset: u16 = if (pc.pieceType() == .king) 640 else (@as(u16, @intFromEnum(pc.pieceType())) - 1) * 128 + @as(u16, @intFromBool(pc.color() != perspective)) * 64;
-                table[side][square][@intFromEnum(pc)] = piece_offset + bucket * 704 + orient;
+                const piece_offset: u16 = if (pc.pieceType() == .king) 640 else (@as(u16, @backingInt(pc.pieceType())) - 1) * 128 + @as(u16, @intFromBool(pc.color() != perspective)) * 64;
+                table[side][square][@backingInt(pc)] = piece_offset + bucket * 704 + orient;
             }
         };
         break :blk table;
     };
     pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square) u32 {
-        return @as(u32, @intFromEnum(s)) ^ offsets[@intFromEnum(perspective)][@intFromEnum(king)][@intFromEnum(pc)];
+        return @as(u32, @backingInt(s)) ^ offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)];
     }
     pub fn requiresRefresh(diff: dirty.DirtyPiece, perspective: t.Color) bool {
         return diff.pc == t.Piece.make(perspective, .king);
@@ -58,20 +58,20 @@ pub const HalfKA = struct {
     }
 };
 fn orientation(perspective: t.Color, king: t.Square) u8 {
-    return @as(u8, if (king.file() < 4) 0 else 7) ^ (56 * @intFromEnum(perspective));
+    return @as(u8, if (king.file() < 4) 0 else 7) ^ (56 * @backingInt(perspective));
 }
 // Match the reference PawnPairBB: geometry depends only on the square.
 const pawn_pairs = blk: {
     var table: [64]u64 = undefined;
     for (&table, 0..) |*entry, square| {
-        const s: t.Square = @enumFromInt(square);
+        const s: t.Square = @fromBackingInt(@intCast(square));
         const file = bb.file_a << s.file();
         entry.* = (file | bb.shift(file, 1) | bb.shift(file, -1)) & ~@as(u64, 0xff000000000000ff) & ~bb.square(s);
     }
     break :blk table;
 };
 fn pawnPair(s: t.Square) u64 {
-    return pawn_pairs[@intFromEnum(s)];
+    return pawn_pairs[@backingInt(s)];
 }
 pub const PawnPairs = struct {
     pub const hash_value: u32 = 0x86f2b1dd;
@@ -79,8 +79,8 @@ pub const PawnPairs = struct {
     pub const index_base: u32 = FullThreats.dimensions;
     pub fn makeIndex(perspective: t.Color, color: t.Color, from: t.Square, to: t.Square, paired: t.Color, king: t.Square) u32 {
         const orient = orientation(perspective, king);
-        const id_a = 48 * @as(u32, @intFromEnum(color) ^ @intFromEnum(perspective)) + (@as(u32, @intFromEnum(from)) ^ orient) - 8;
-        const id_b = 48 * @as(u32, @intFromEnum(paired) ^ @intFromEnum(perspective)) + (@as(u32, @intFromEnum(to)) ^ orient) - 8;
+        const id_a = 48 * @as(u32, @backingInt(color) ^ @backingInt(perspective)) + (@as(u32, @backingInt(from)) ^ orient) - 8;
+        const id_b = 48 * @as(u32, @backingInt(paired) ^ @backingInt(perspective)) + (@as(u32, @backingInt(to)) ^ orient) - 8;
         const hi = @max(id_a, id_b);
         return hi * (hi - 1) / 2 + @min(id_a, id_b) + index_base;
     }
@@ -138,7 +138,7 @@ pub const PawnPairs = struct {
                 var partners = (if (paired == .black) black else white) & mask;
                 while (partners != 0) {
                     const to = bb.popLsb(&partners);
-                    inline for (0..2) |side| out[side].append(makeIndex(@enumFromInt(side), color, from, to, paired, kings[side]));
+                    inline for (0..2) |side| out[side].append(makeIndex(@fromBackingInt(@intCast(side)), color, from, to, paired, kings[side]));
                 }
             }
         }
@@ -164,9 +164,9 @@ pub const FullThreats = struct {
         var counts: [16]u32 = @splat(0);
         var bases: [16]u32 = @splat(0);
         for (all_pieces) |pc| {
-            const p = @intFromEnum(pc);
+            const p = @backingInt(pc);
             for (0..64) |from| {
-                const pseudo = attacks.pseudo[if (pc.pieceType() == .pawn) @intFromEnum(pc.color()) else @intFromEnum(pc.pieceType())][from];
+                const pseudo = attacks.pseudo[if (pc.pieceType() == .pawn) @backingInt(pc.color()) else @backingInt(pc.pieceType())][from];
                 const offset = counts[p];
                 const geometry = if (p == 9) 0 else p & 7;
                 if (pc.pieceType() != .pawn or (from >= 8 and from <= 55)) counts[p] += @popCount(pseudo);
@@ -178,13 +178,13 @@ pub const FullThreats = struct {
         std.debug.assert(cumulative == dimensions);
         for (all_pieces) |attacker| {
             for (all_pieces) |attacked| {
-                const p = @intFromEnum(attacker);
-                const q = @intFromEnum(attacked);
+                const p = @backingInt(attacker);
+                const q = @backingInt(attacked);
                 const pt = attacker.pieceType();
                 const qt = attacked.pieceType();
-                const mapped = mapping[@intFromEnum(pt) - 1][@intFromEnum(qt) - 1];
+                const mapped = mapping[@backingInt(pt) - 1][@backingInt(qt) - 1];
                 const semi_excluded = pt == qt and ((p ^ q) == 8 or pt != .pawn);
-                const feature = if (mapped < 0) dimensions else bases[p] + (@as(u32, @intFromEnum(attacked.color())) * (valid_targets[p] / 2) + @as(u32, @intCast(mapped))) * counts[p];
+                const feature = if (mapped < 0) dimensions else bases[p] + (@as(u32, @backingInt(attacked.color())) * (valid_targets[p] / 2) + @as(u32, @intCast(mapped))) * counts[p];
                 result.index1[p][q] = .{ feature, if (mapped < 0 or semi_excluded) dimensions else feature };
             }
         }
@@ -192,10 +192,10 @@ pub const FullThreats = struct {
     };
     pub fn makeIndex(perspective: t.Color, attacker: t.Piece, from: t.Square, to: t.Square, attacked: t.Piece, king: t.Square) u32 {
         const orient = orientation(perspective, king);
-        const f = @intFromEnum(from) ^ orient;
-        const dest = @intFromEnum(to) ^ orient;
-        const pc = @intFromEnum(attacker) ^ (8 * @intFromEnum(perspective));
-        const target = @intFromEnum(attacked) ^ (8 * @intFromEnum(perspective));
+        const f = @backingInt(from) ^ orient;
+        const dest = @backingInt(to) ^ orient;
+        const pc = @backingInt(attacker) ^ (8 * @backingInt(perspective));
+        const target = @backingInt(attacked) ^ (8 * @backingInt(perspective));
         // Geometry is color-independent except for pawn attack directions.
         // Fold each square offset into the geometry table at compile time.
         const geometry = if (pc == 9) 0 else pc & 7;
@@ -219,7 +219,7 @@ pub const FullThreats = struct {
             var b = bb.shift(pos.piecesOf(c, .pawn), dir) & pawn_targets;
             while (b != 0) {
                 const to = bb.popLsb(&b);
-                const from: t.Square = @enumFromInt(@as(i16, @intFromEnum(to)) - dir);
+                const from: t.Square = @fromBackingInt(@intCast(@as(i16, @backingInt(to)) - dir));
                 appendIfValid(active, makeIndex(perspective, t.Piece.make(c, .pawn), from, to, pos.pieceOn(to), king));
             }
         }
@@ -241,19 +241,19 @@ pub const FullThreats = struct {
     pub fn appendChanged(perspective: t.Color, king: t.Square, diff: *const dirty.DirtyThreats, removed: *ThreatList, added: *ThreatList) void {
         for (diff.list[0..diff.len]) |entry| {
             const raw = entry.data;
-            const index = makeIndex(perspective, @enumFromInt((raw >> 20) & 15), @enumFromInt(raw & 255), @enumFromInt((raw >> 8) & 255), @enumFromInt((raw >> 16) & 15), king);
+            const index = makeIndex(perspective, @fromBackingInt(@intCast((raw >> 20) & 15)), @fromBackingInt(@intCast(raw & 255)), @fromBackingInt(@intCast((raw >> 8) & 255)), @fromBackingInt(@intCast((raw >> 16) & 15)), king);
             appendIfValid(if (raw >> 31 != 0) added else removed, index);
         }
     }
     pub fn appendChangedBoth(kings: [2]t.Square, diff: *const dirty.DirtyThreats, removed: *[2]ThreatList, added: *[2]ThreatList) void {
         for (diff.list[0..diff.len]) |entry| {
             const raw = entry.data;
-            const attacker: t.Piece = @enumFromInt((raw >> 20) & 15);
-            const from: t.Square = @enumFromInt(raw & 255);
-            const to: t.Square = @enumFromInt((raw >> 8) & 255);
-            const attacked: t.Piece = @enumFromInt((raw >> 16) & 15);
+            const attacker: t.Piece = @fromBackingInt(@intCast((raw >> 20) & 15));
+            const from: t.Square = @fromBackingInt(@intCast(raw & 255));
+            const to: t.Square = @fromBackingInt(@intCast((raw >> 8) & 255));
+            const attacked: t.Piece = @fromBackingInt(@intCast((raw >> 16) & 15));
             inline for (0..2) |side| {
-                const index = makeIndex(@enumFromInt(side), attacker, from, to, attacked, kings[side]);
+                const index = makeIndex(@fromBackingInt(@intCast(side)), attacker, from, to, attacked, kings[side]);
                 appendIfValid(if (raw >> 31 != 0) &added[side] else &removed[side], index);
             }
         }
@@ -267,7 +267,7 @@ test "pawn pair masks cover adjacent files and legal pawn ranks" {
             const file_distance = @abs(@as(i32, @intCast(from % 8)) - @as(i32, @intCast(to % 8)));
             if (from != to and file_distance <= 1) expected |= @as(u64, 1) << @as(u6, @intCast(to));
         }
-        try std.testing.expectEqual(expected, pawnPair(@enumFromInt(from)));
+        try std.testing.expectEqual(expected, pawnPair(@fromBackingInt(@intCast(from))));
     }
 }
 

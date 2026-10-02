@@ -9,18 +9,18 @@ test "all 65536 move encodings match Stockfish" {
     for (0..65536) |raw| {
         const m: z.types.Move = .{ .data = @intCast(raw) };
         var packed_value: u32 = @intFromBool(m.valid());
-        packed_value |= @as(u32, @intFromEnum(m.kind())) << 1;
-        packed_value |= @as(u32, @intFromEnum(m.promotionType())) << 17;
+        packed_value |= @as(u32, @backingInt(m.kind())) << 1;
+        packed_value |= @as(u32, @backingInt(m.promotionType())) << 17;
         if (m.valid()) {
-            packed_value |= @as(u32, @intFromEnum(m.from())) << 20;
-            packed_value |= @as(u32, @intFromEnum(m.to())) << 26;
+            packed_value |= @as(u32, @backingInt(m.from())) << 20;
+            packed_value |= @as(u32, @backingInt(m.to())) << 26;
         }
         try std.testing.expectEqual(sf_decode(@intCast(raw)), packed_value);
     }
 }
 test "every promotion encoding matches Stockfish" {
     for (0..64) |from| for (0..64) |to| for (2..6) |pt| {
-        const m = z.types.Move.make(.promotion, @enumFromInt(from), @enumFromInt(to), @enumFromInt(pt));
+        const m = z.types.Move.make(.promotion, @fromBackingInt(@intCast(from)), @fromBackingInt(@intCast(to)), @fromBackingInt(@intCast(pt)));
         try std.testing.expectEqual(sf_move(@intCast(from), @intCast(to), @intCast(pt)), m.data);
     };
 }
@@ -34,7 +34,7 @@ test "bitboard shifts, pawn attacks and wrapping keys match Stockfish" {
             try std.testing.expectEqual(sf_shift(b, d), z.bitboard.shift(b, d));
         }
         inline for (.{ z.types.Color.white, z.types.Color.black }) |c| {
-            try std.testing.expectEqual(sf_pawns(b, @intFromEnum(c)), z.bitboard.pawnAttacks(c, b));
+            try std.testing.expectEqual(sf_pawns(b, @backingInt(c)), z.bitboard.pawnAttacks(c, b));
         }
         try std.testing.expectEqual(sf_key(b), z.types.makeKey(b));
         b = z.types.makeKey(b);
@@ -52,16 +52,16 @@ test "attack tables match upstream for every relevant occupancy and square pair"
     tables.init();
     sf_attacks_init();
     for (0..64) |i| {
-        const s: z.types.Square = @enumFromInt(i);
+        const s: z.types.Square = @fromBackingInt(@intCast(i));
         for ([_]z.types.PieceType{ .bishop, .rook }) |pt| {
-            const m = tables.magics[i][@intFromEnum(pt) - 3];
-            try std.testing.expectEqual(sf_magic(@intFromEnum(pt), @intCast(i)), m.magic);
+            const m = tables.magics[i][@backingInt(pt) - 3];
+            try std.testing.expectEqual(sf_magic(@backingInt(pt), @intCast(i)), m.magic);
             var b: u64 = 0;
             while (true) {
                 // Irrelevant bits include edges and the origin; they must not
                 // affect lookup results, even when all of them are occupied.
                 for ([_]u64{ b, b | ~m.mask }) |occupied| {
-                    try std.testing.expectEqual(sf_attacks(@intFromEnum(pt), @intCast(i), occupied), tables.attacks(pt, s, occupied));
+                    try std.testing.expectEqual(sf_attacks(@backingInt(pt), @intCast(i), occupied), tables.attacks(pt, s, occupied));
                 }
                 b = (b -% m.mask) & m.mask;
                 if (b == 0) break;
@@ -75,7 +75,7 @@ test "attack tables match upstream for every relevant occupancy and square pair"
         var occupied = z.types.makeKey(i);
         for (0..128) |_| {
             for ([_]z.types.PieceType{ .knight, .king, .queen }) |pt| {
-                try std.testing.expectEqual(sf_attacks(@intFromEnum(pt), @intCast(i), occupied), tables.attacks(pt, s, occupied));
+                try std.testing.expectEqual(sf_attacks(@backingInt(pt), @intCast(i), occupied), tables.attacks(pt, s, occupied));
             }
             occupied = z.types.makeKey(occupied);
         }
@@ -226,7 +226,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
 fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const u64 {
     var n: usize = 0;
     for (pos.board) |pc| {
-        buffer[n] = @intFromEnum(pc);
+        buffer[n] = @backingInt(pc);
         n += 1;
     }
     for (pos.by_type) |v| {
@@ -238,7 +238,7 @@ fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const 
         n += 1;
     }
     const st = pos.st;
-    const values = [_]u64{ pos.key(), st.key, st.material_key, st.pawn_key, st.minor_piece_key, st.non_pawn_key[0], st.non_pawn_key[1], @intCast(st.non_pawn_material[0]), @intCast(st.non_pawn_material[1]), st.castling_rights, @intCast(st.rule50), @intCast(st.plies_from_null), @intFromEnum(st.ep_square), st.checkers };
+    const values = [_]u64{ pos.key(), st.key, st.material_key, st.pawn_key, st.minor_piece_key, st.non_pawn_key[0], st.non_pawn_key[1], @intCast(st.non_pawn_material[0]), @intCast(st.non_pawn_material[1]), st.castling_rights, @intCast(st.rule50), @intCast(st.plies_from_null), @backingInt(st.ep_square), st.checkers };
     for (values) |v| {
         buffer[n] = v;
         n += 1;
@@ -255,7 +255,7 @@ fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const 
         buffer[n] = v;
         n += 1;
     }
-    for ([_]u64{ @intFromEnum(st.captured_piece), @bitCast(@as(i64, st.repetition)), @intCast(pos.game_ply), @intFromEnum(pos.side) }) |v| {
+    for ([_]u64{ @backingInt(st.captured_piece), @bitCast(@as(i64, st.repetition)), @intCast(pos.game_ply), @backingInt(pos.side) }) |v| {
         buffer[n] = v;
         n += 1;
     }
@@ -263,13 +263,13 @@ fn snapshotPosition(pos: *const z.position.Position, buffer: *[256]u64) []const 
         const can = st.castling_rights & cr != 0;
         buffer[n] = @intFromBool(can);
         n += 1;
-        buffer[n] = if (can) @intFromEnum(pos.castling_rook[cr]) else 64;
+        buffer[n] = if (can) @backingInt(pos.castling_rook[cr]) else 64;
         n += 1;
         buffer[n] = @intFromBool(can and pos.pieces() & pos.castling_path[cr] != 0);
         n += 1;
     }
     for (0..64) |i| {
-        buffer[n] = pos.attackersTo(@enumFromInt(i), pos.pieces());
+        buffer[n] = pos.attackersTo(@fromBackingInt(@intCast(i)), pos.pieces());
         n += 1;
     }
     return buffer[0..n];
@@ -321,7 +321,7 @@ test "TT layout, probe, replacement, aging and hashfull match C++ trace" {
         probe.writer.save(event.key, .{
             .value = if (i % 11 == 0) 31900 else @mod(signed_i, 4000) - 2000,
             .is_pv = i % 3 == 0,
-            .bound = @enumFromInt(i % 4),
+            .bound = @fromBackingInt(@intCast(i % 4)),
             .depth = @mod(signed_i, 32) - 2,
             .move = .{ .data = @intCast(if (i % 5 == 0) 0 else 1 + i % 4094) },
             .eval = @mod(signed_i, 2000) - 1000,
@@ -350,13 +350,13 @@ test "TT layout, probe, replacement, aging and hashfull match C++ trace" {
     try std.testing.expectEqual(@as(u32, 0), table.hashfull(31));
 }
 fn ttData(data: z.tt.Data) [6]i32 {
-    return .{ data.move.data, data.value, data.eval, data.depth, @intFromEnum(data.bound), @intFromBool(data.is_pv) };
+    return .{ data.move.data, data.value, data.eval, data.depth, @backingInt(data.bound), @intFromBool(data.is_pv) };
 }
 
 fn expectDirties(pos: *const z.position.Position, expected: @import("position_reference").Snapshot, actual: *const z.dirty.Dirties) !void {
     try expectChangedFeatures(pos, expected, actual);
     const d = actual.piece;
-    const piece = [_]u8{ @intFromEnum(d.pc), @intFromEnum(d.from), @intFromEnum(d.to), @intFromEnum(d.remove_sq), @intFromEnum(d.add_sq), @intFromEnum(d.remove_pc), @intFromEnum(d.add_pc) };
+    const piece = [_]u8{ @backingInt(d.pc), @backingInt(d.from), @backingInt(d.to), @backingInt(d.remove_sq), @backingInt(d.add_sq), @backingInt(d.remove_pc), @backingInt(d.add_pc) };
     try std.testing.expectEqualSlices(u8, expected.dirty_piece, &piece);
     try std.testing.expectEqual(expected.dirty_threats.len, actual.threats.len);
     for (expected.dirty_threats, actual.threats.list[0..actual.threats.len]) |e, threat| try std.testing.expectEqual(e, threat.data);
@@ -409,25 +409,25 @@ test "NNUE index spaces match C++ across kings, pieces, threats and pawn pairs" 
     var hashes: [3]u64 = @splat(14695981039346656037);
     for ([_]z.types.Color{ .white, .black }) |c| {
         for (0..64) |k| for (0..64) |s| for (z.position_keys.pieces) |pc| {
-            hashes[0] = (hashes[0] ^ f.HalfKA.makeIndex(c, @enumFromInt(s), pc, @enumFromInt(k))) *% 1099511628211;
+            hashes[0] = (hashes[0] ^ f.HalfKA.makeIndex(c, @fromBackingInt(@intCast(s)), pc, @fromBackingInt(@intCast(k)))) *% 1099511628211;
         };
         // FullThreats and PP orientation depends only on king file half.
         for ([_]u8{ 0, 7 }) |k| {
             for (z.position_keys.pieces) |pc| for (0..64) |from| {
-                var targets = z.attacks.pseudo[if (pc.pieceType() == .pawn) @intFromEnum(pc.color()) else @intFromEnum(pc.pieceType())][from];
+                var targets = z.attacks.pseudo[if (pc.pieceType() == .pawn) @backingInt(pc.color()) else @backingInt(pc.pieceType())][from];
                 while (targets != 0) {
                     const to = z.bitboard.popLsb(&targets);
                     for (z.position_keys.pieces) |target| {
-                        hashes[1] = (hashes[1] ^ f.FullThreats.makeIndex(c, pc, @enumFromInt(from), to, target, @enumFromInt(k))) *% 1099511628211;
+                        hashes[1] = (hashes[1] ^ f.FullThreats.makeIndex(c, pc, @fromBackingInt(@intCast(from)), to, target, @fromBackingInt(@intCast(k)))) *% 1099511628211;
                     }
                 }
             };
             for (0..96) |first| for (first + 1..96) |second| {
-                const color: z.types.Color = @enumFromInt(first / 48);
-                const paired: z.types.Color = @enumFromInt(second / 48);
-                const from: z.types.Square = @enumFromInt(first % 48 + 8);
-                const to: z.types.Square = @enumFromInt(second % 48 + 8);
-                hashes[2] = (hashes[2] ^ f.PawnPairs.makeIndex(c, color, from, to, paired, @enumFromInt(k))) *% 1099511628211;
+                const color: z.types.Color = @fromBackingInt(@intCast(first / 48));
+                const paired: z.types.Color = @fromBackingInt(@intCast(second / 48));
+                const from: z.types.Square = @fromBackingInt(@intCast(first % 48 + 8));
+                const to: z.types.Square = @fromBackingInt(@intCast(second % 48 + 8));
+                hashes[2] = (hashes[2] ^ f.PawnPairs.makeIndex(c, color, from, to, paired, @fromBackingInt(@intCast(k)))) *% 1099511628211;
             };
         }
     }
@@ -598,7 +598,7 @@ test "search score conversion, continuation bonuses and PVs match Stockfish" {
             frames[5 - i].continuation_history = table;
             frames[5 - i].current_move = if (case.valid & (@as(u8, 1) << @as(u3, @intCast(i))) != 0) .{ .data = (8 << 6) + 16 } else .null_move;
         }
-        search.updateContinuationHistories(&frames, 6, .white_knight, @enumFromInt(18), case.bonus);
+        search.updateContinuationHistories(&frames, 6, .white_knight, @fromBackingInt(@intCast(18)), case.bonus);
         for (tables, case.result) |*table, expected| try std.testing.expectEqual(expected, table[2][18].get());
     }
     var child: search.PV = .{};
