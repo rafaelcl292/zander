@@ -75,8 +75,10 @@ To include tablebase coverage in network and UCI tests, also pass
 
 ## Formatting and Python checks
 
+Format Zig sources with `zig build fmt`. To check without modifying files:
+
 ```sh
-zig fmt --check build.zig src tests
+zig build fmt-check
 zig build python-check
 ```
 

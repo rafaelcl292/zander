@@ -25,6 +25,11 @@ pub fn build(b: *std.Build) void {
     const unit = b.addTest(.{ .root_module = mod });
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&b.addRunArtifact(unit).step);
+    const fmt_paths = b.pathList(&.{ "build.zig", "src", "tests" });
+    const fmt = b.addFmt(.{ .paths = fmt_paths });
+    b.step("fmt", "Format Zig sources").dependOn(&fmt.step);
+    const fmt_check = b.addFmt(.{ .paths = fmt_paths, .check = true });
+    b.step("fmt-check", "Check Zig source formatting").dependOn(&fmt_check.step);
     const python_check = b.addSystemCommand(&.{ "uvx", "ty==0.0.32", "check" });
     python_check.setCwd(b.path("."));
     b.step("python-check", "Type-check Python scripts and tests with ty").dependOn(&python_check.step);
