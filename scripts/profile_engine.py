@@ -125,7 +125,8 @@ def run(args):
                         profiler = Perf(command, args.output / f'{stem}.log')
                         try:
                             profiler.command('enable')
-                            sample = engine.search(f'nodes {args.nodes}')
+                            limit = f'depth {args.depth}' if args.depth is not None else f'nodes {args.nodes}'
+                            sample = engine.search(limit)
                             profiler.command('disable')
                         finally:
                             profiler.close()
@@ -154,22 +155,31 @@ def run(args):
         save(args.output / 'profile.json', report)
 
 
-def main():
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('engine', 'network', 'output'):
         p.add_argument('--' + name, type=pathlib.Path, required=True)
     p.add_argument('--positions', type=pathlib.Path, default=DEFAULT_CORPUS)
     p.add_argument('--position', action='append')
     p.add_argument('--perf', default='perf', help='perf executable, including a matching WSL tools binary')
-    p.add_argument('--nodes', type=int, default=5_000_000)
+    limits = p.add_mutually_exclusive_group()
+    limits.add_argument('--nodes', type=int, help='Node budget (default: 5000000)')
+    limits.add_argument('--depth', type=int, help='Fixed depth for equal-work cross-engine profiles')
     p.add_argument('--warmup-depth', type=int, default=12)
     p.add_argument('--hash', type=int, default=64)
     p.add_argument('--frequency', type=int, default=499)
     p.add_argument('--call-graph', action='store_true')
     p.add_argument('--cpu', type=int)
     p.add_argument('--harness-cpu', type=int)
+    return p
+
+
+def main():
+    p = parser()
     args = p.parse_args()
-    if min(args.nodes, args.warmup_depth, args.hash, args.frequency) < 1:
+    if args.nodes is None and args.depth is None:
+        args.nodes = 5_000_000
+    if min(value for value in (args.nodes, args.depth, args.warmup_depth, args.hash, args.frequency) if value is not None) < 1:
         p.error('Limits must be positive')
     run(args)
 

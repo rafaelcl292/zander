@@ -160,6 +160,14 @@ class BenchmarkLifecycleTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    def test_profile_limit_can_use_fixed_depth_instead_of_nodes(self):
+        required = ['--engine', 'engine', '--network', 'network', '--output', 'report']
+        args = profile_engine.parser().parse_args(required + ['--depth', '22'])
+        self.assertEqual(args.depth, 22)
+        self.assertIsNone(args.nodes)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            profile_engine.parser().parse_args(required + ['--depth', '22', '--nodes', '1000'])
+
     def test_counters_preserve_multiplexing_and_unavailable_events(self):
         with tempfile.TemporaryDirectory() as root:
             path = pathlib.Path(root) / 'stat.csv'

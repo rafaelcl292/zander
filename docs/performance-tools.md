@@ -108,6 +108,10 @@ python3 scripts/profile_engine.py \
 Omit `--position` to profile every corpus position, or repeat it to select a
 subset. Use `--perf /path/to/perf` for a locally installed WSL-compatible binary.
 No elevated privileges or machine settings are changed automatically.
+For cross-engine comparisons, use `--depth 22` instead of `--nodes` and verify
+search signatures across the two reports. Node budgets can stop at different
+polling boundaries even when fixed-depth searches match; equal budgets do not
+guarantee identical search work.
 
 Each position has two independent passes: grouped user-space cycles,
 instructions, branches and branch misses; then cycle sampling at 499 Hz.
