@@ -29,7 +29,8 @@ class Engine:
         self.errors: list[str] = []
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
-        threading.Thread(target=lambda: self.errors.extend(self.stderr.readlines()), daemon=True).start()
+        self.error_reader = threading.Thread(target=lambda: self.errors.extend(self.stderr.readlines()), daemon=True)
+        self.error_reader.start()
         try:
             self.send("uci")
             self.until("uciok")
@@ -135,10 +136,17 @@ class Engine:
             try:
                 self.send("quit")
                 self.process.wait(timeout=10)
-            except (BrokenPipeError, subprocess.TimeoutExpired):
+            except (OSError, subprocess.TimeoutExpired):
                 self.process.kill()
                 self.process.wait()
         self.reader.join(timeout=1)
+        self.error_reader.join(timeout=1)
+        for stream in (self.stdin, self.stdout, self.stderr):
+            try:
+                stream.close()
+            except OSError:
+                # The process may have exited with buffered input still pending.
+                pass
 
 
 def digest(path):

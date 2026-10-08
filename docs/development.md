@@ -88,6 +88,12 @@ Run Python harness regression tests without engine binaries or NNUE weights:
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
+## Performance experiments
+
+See [Performance tools](performance-tools.md) for controlled baseline/candidate/
+reference benchmarks, noise controls, separate profiling, isolated revision
+experiments and trace-replay kernel microbenchmarks.
+
 ## Compare engines
 
 See the [performance report](performance.md) for measured time, nodes, memory,

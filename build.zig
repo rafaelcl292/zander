@@ -22,6 +22,10 @@ pub fn build(b: *std.Build) void {
     const run = b.addRunArtifact(exe);
     run.addPassthruArgs();
     b.step("run", "Run the UCI engine or diagnostic CLI").dependOn(&run.step);
+    const micro_mod = b.createModule(.{ .root_source_file = b.path("tests/microbench.zig"), .target = target, .optimize = optimize });
+    micro_mod.addImport("zander", mod);
+    const micro = b.addExecutable(.{ .name = "zander-microbench", .root_module = micro_mod });
+    b.step("microbench-build", "Build the trace-replay kernel benchmark").dependOn(&b.addInstallArtifact(micro, .{}).step);
     const unit = b.addTest(.{ .root_module = mod });
     const test_step = b.step("test", "Run Zig unit tests");
     test_step.dependOn(&b.addRunArtifact(unit).step);
@@ -33,6 +37,9 @@ pub fn build(b: *std.Build) void {
     const python_check = b.addSystemCommand(&.{ "uvx", "ty==0.0.32", "check" });
     python_check.setCwd(b.path("."));
     b.step("python-check", "Type-check Python scripts and tests with ty").dependOn(&python_check.step);
+    const python_test = b.addSystemCommand(&.{ "python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py" });
+    python_test.setCwd(b.path("."));
+    b.step("python-test", "Run Python harness regression tests").dependOn(&python_test.step);
     // The C++ oracle is host-only; keep it outside the portable library.
     const cpp = b.addSystemCommand(&.{ "c++", "-std=c++17", "-O2", "-DNDEBUG", "-DIS_64BIT", "-c" });
     cpp.addFileArg(b.path("tests/oracle.cpp"));
