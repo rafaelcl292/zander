@@ -88,14 +88,34 @@ class Engine:
         elapsed = time.perf_counter_ns() - start
         infos = [line for line in lines if line.startswith("info depth ")]
         info = infos[-1] if infos else ""
-        def field(pattern, default=None):
+        def field(pattern):
             match = re.search(pattern, info)
-            return match.group(1) if match else default
-        raw_move = lines[-1].split()[1]
-        return {"move": "0000" if raw_move == "(none)" else raw_move, "raw_move": raw_move, "nodes": int(field(r"\bnodes (\d+)", 0)),
-                "depth": int(field(r"\bdepth (\d+)", 0)),
-                "score": field(r"\bscore ((?:cp|mate) -?\d+)"),
-                "pv": field(r"\bpv (.*)", ""), "elapsed_ns": elapsed}
+            return match.group(1) if match else None
+        bestmove = re.fullmatch(r"bestmove ([a-h][1-8][a-h][1-8][nbrq]?|0000|\(none\))(?: ponder [a-h][1-8][a-h][1-8][nbrq]?)?", lines[-1])
+        if bestmove is None:
+            raise RuntimeError(f"Malformed bestmove response: {lines[-1]}")
+        raw_move = bestmove.group(1)
+        # Stockfish omits nodes and PV when there are no legal root moves.
+        terminal = raw_move in ("0000", "(none)")
+        nodes = field(r"\bnodes (\d+)\b")
+        depth = field(r"\bdepth (\d+)\b")
+        score = field(r"\bscore ((?:cp|mate) -?\d+)\b")
+        pv = field(r"\bpv (.*)")
+        if depth is None or score is None or (not terminal and (nodes is None or not pv)):
+            raise RuntimeError(f"Incomplete search evidence: {lines[-8:]}")
+        if terminal:
+            if int(depth) != 0 or score not in ("cp 0", "mate 0") or pv:
+                raise RuntimeError(f"Inconsistent terminal search evidence: {lines[-8:]}")
+        else:
+            assert pv is not None
+            if pv.split()[0] != raw_move:
+                raise RuntimeError(f"Bestmove differs from principal variation: {lines[-8:]}")
+            requested_depth = re.fullmatch(r"depth (\d+)", limit)
+            if requested_depth and int(depth) < int(requested_depth.group(1)):
+                raise RuntimeError(f"Search stopped before requested {limit}: {info}")
+        return {"move": "0000" if terminal else raw_move, "raw_move": raw_move,
+                "nodes": int(nodes) if nodes is not None else 0, "depth": int(depth), "score": score,
+                "pv": pv or "", "elapsed_ns": elapsed}
 
     def referee(self, fen, moves):
         self.position(fen, moves)
@@ -157,8 +177,10 @@ def main():
         parser.error("Use positive limits and a nonnegative even game count")
     if args.require_identical and args.threads != 1:
         parser.error("Exact tree comparison requires one worker")
-    positions = [line.strip().split(";")[0] for line in pathlib.Path(args.positions).read_text().splitlines()
-                 if line.strip() and not line.startswith("#")]
+    positions = [line.split(";", 1)[0].strip() for line in pathlib.Path(args.positions).read_text().splitlines()]
+    positions = [line for line in positions if line and not line.startswith("#")]
+    if not positions:
+        parser.error("Positions file must contain at least one position")
     # Corpus entries contain a Chess960 flag; ordinary FEN-only files also work.
     positions = [(line.startswith("1|"), line.split("|", 1)[-1].strip()) for line in positions]
     report = {"platform": platform.platform(), "network_sha256": digest(args.network),
@@ -183,7 +205,7 @@ def main():
                     engine.new_game()
                     engine.position(fen)
                     samples[index].append(engine.search(f"depth {args.depth}"))
-            equivalent = all(all(sample[key] == samples[1][0][key] for key in ("move", "score", "pv", "nodes"))
+            equivalent = all(all(sample[key] == samples[1][0][key] for key in ("move", "score", "pv", "nodes", "depth"))
                              for group in samples for sample in group)
             timing = [statistics.median(sample["elapsed_ns"] for sample in group) for group in samples]
             report["benchmarks"].append({"fen": fen, "chess960": chess960, "samples": samples, "identical": equivalent,

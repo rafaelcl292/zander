@@ -107,9 +107,12 @@ python3 scripts/compare_engines.py \
   --output artifacts/comparison.json
 ```
 
-`--require-identical` checks move, score, principal variation, and node count
+`--require-identical` checks move, score, principal variation, node count, and depth
 across samples and requires one worker. Omit it when comparing configurations
 where exact search equivalence is not expected. Use `--help` for all options.
+Empty position corpora and incomplete search responses are rejected. Fixed-depth
+searches must reach the requested depth; terminal positions may report depth zero
+and omit the principal variation.
 
 The JSON report includes executable and network hashes, configuration, search
 samples, median elapsed times, and optional game results. A
