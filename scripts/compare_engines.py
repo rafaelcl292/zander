@@ -61,8 +61,8 @@ class Engine:
                 raise RuntimeError(f"Timeout awaiting {prefix}: {result[-8:]}; {self.errors}")
             try:
                 line = self.lines.get(timeout=remaining)
-            except queue.Empty:
-                raise RuntimeError(f"Timeout awaiting {prefix}: {result[-8:]}; {self.errors}")
+            except queue.Empty as error:
+                raise RuntimeError(f"Timeout awaiting {prefix}: {result[-8:]}; {self.errors}") from error
             if line is None:
                 raise RuntimeError(f"Engine exited: {self.executable}: {self.errors}")
             if line.startswith("info string error"):
@@ -220,7 +220,7 @@ def main():
                                           "median_elapsed_ns": timing, "reference_over_candidate": timing[1] / timing[0]})
             print(f"Benchmark {len(report['benchmarks'])}/{len(positions)} identical={equivalent}", flush=True)
         report["benchmark_peak_rss_bytes"] = dict(zip(
-            ("candidate", "reference"), (peak_rss_bytes(engine) for engine in clients)))
+            ("candidate", "reference"), (peak_rss_bytes(engine) for engine in clients), strict=True))
         if args.games:
             referee = Engine(args.reference, args.network, 1, 1)
             clients.append(referee)

@@ -1,0 +1,7 @@
+target-version = "py314"
+include = ["scripts/**/*.py", "tests/**/*.py"]
+extend-exclude = ["vendor", "artifacts"]
+
+[lint]
+# Basic syntax/name checks and bug-prone patterns; preserve existing formatting.
+select = ["E4", "E7", "E9", "F", "B"]

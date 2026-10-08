@@ -14,10 +14,11 @@ Run these commands from the repository root. Build steps are defined in
 | Network-dependent tests | Downloaded NNUE weights; fetching them requires Python and the submodule |
 | UCI integration tests | Python and NNUE weights |
 | Syzygy reference tests | Python, reference-test prerequisites, and regression tablebases |
-| Python type checking | `uvx`; the build pins `ty==0.0.32` |
+| Python linting and type checking | `uvx`; the build pins `ruff==0.16.8` and `ty==0.0.32` |
 
 Python helpers target 3.14.7, pinned in [.python-version](../.python-version).
-Type-checker configuration is in [ty.toml](../ty.toml).
+Type-checker configuration is in [ty.toml](../ty.toml); lint configuration is in
+[ruff.toml](../ruff.toml).
 
 ## Unit and differential tests
 
@@ -81,6 +82,12 @@ Format Zig sources with `zig build fmt`. To check without modifying files:
 zig build fmt-check
 zig build python-check
 ```
+
+`python-check` runs Ruff linting and ty type checking over `scripts/` and `tests/`.
+Use `zig build python-lint` to run only Ruff. The enabled lint rules check basic
+syntax, names, and bug-prone patterns without enforcing formatting. Ruff does
+not provide a general unreachable-code check; ty's editor-only unreachable-code
+hints do not fail this build step.
 
 Run Python harness regression tests without engine binaries or NNUE weights:
 

@@ -42,8 +42,8 @@ class Client:
         while True:
             try:
                 line = self.lines.get(timeout=max(0.01, deadline - time.monotonic()))
-            except queue.Empty:
-                raise AssertionError(f"Timeout awaiting {prefix}: {result}; stderr={self.errors}")
+            except queue.Empty as error:
+                raise AssertionError(f"Timeout awaiting {prefix}: {result}; stderr={self.errors}") from error
             assert line is not None, (prefix, result, self.errors, self.process.poll())
             result.append(line)
             if line.startswith(prefix):

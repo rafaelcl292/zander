@@ -180,13 +180,13 @@ def run(args) -> dict:
         save(args.output / 'summary.json', summary)
         (args.output / 'report.txt').write_text(render_text(summary))
         print(render_text(summary), end='')
-        return summary
     except BaseException as error:
         report['status'] = 'failed'
         report['error'] = f'{type(error).__name__}: {error}'
         raise
     finally:
         save(args.output / 'results.json', report)
+    return summary
 
 
 def parser() -> argparse.ArgumentParser:

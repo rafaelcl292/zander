@@ -36,7 +36,12 @@ pub fn build(b: *std.Build) void {
     b.step("fmt-check", "Check Zig source formatting").dependOn(&fmt_check.step);
     const python_check = b.addSystemCommand(&.{ "uvx", "ty==0.0.32", "check" });
     python_check.setCwd(b.path("."));
-    b.step("python-check", "Type-check Python scripts and tests with ty").dependOn(&python_check.step);
+    const python_lint = b.addSystemCommand(&.{ "uvx", "ruff==0.16.8", "check" });
+    python_lint.setCwd(b.path("."));
+    b.step("python-lint", "Lint Python scripts and tests with Ruff").dependOn(&python_lint.step);
+    const python_check_step = b.step("python-check", "Lint and type-check Python scripts and tests with Ruff and ty");
+    python_check_step.dependOn(&python_lint.step);
+    python_check_step.dependOn(&python_check.step);
     const python_test = b.addSystemCommand(&.{ "python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py" });
     python_test.setCwd(b.path("."));
     b.step("python-test", "Run Python harness regression tests").dependOn(&python_test.step);
