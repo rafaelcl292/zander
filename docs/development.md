@@ -82,6 +82,12 @@ zig build fmt-check
 zig build python-check
 ```
 
+Run Python harness regression tests without engine binaries or NNUE weights:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
+
 ## Compare engines
 
 See the [performance report](performance.md) for measured time, nodes, memory,

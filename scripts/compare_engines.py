@@ -55,8 +55,11 @@ class Engine:
         deadline = time.monotonic() + timeout
         result = []
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f"Timeout awaiting {prefix}: {result[-8:]}; {self.errors}")
             try:
-                line = self.lines.get(timeout=max(0.001, deadline - time.monotonic()))
+                line = self.lines.get(timeout=remaining)
             except queue.Empty:
                 raise RuntimeError(f"Timeout awaiting {prefix}: {result[-8:]}; {self.errors}")
             if line is None:
