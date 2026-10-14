@@ -25,7 +25,7 @@ zig build -Doptimize=ReleaseFast -Dnnue-backend=auto
 
 Add `zig-out/bin/zander` as a UCI engine in your chess GUI. If the GUI starts the
 engine from another directory, set `EvalFile` to the absolute path of
-`networks/nn-252f33942263.nnue`.
+`networks/nn-c9e480e92425.nnue`.
 
 Native builds and unit tests work without the Stockfish submodule or a C++
 compiler. The quick start includes the submodule because the network fetch
@@ -43,7 +43,7 @@ helper reads it to identify the pinned weights. Weights are downloaded separatel
 
 Zander derives from **Stockfish**, developed by the Stockfish team and
 contributors. The reference in [vendor/stockfish](vendor/stockfish) is pinned to
-commit [`49ea5ded38315cff8e67f4a677a9e7811612fbf6`](https://github.com/official-stockfish/Stockfish/tree/49ea5ded38315cff8e67f4a677a9e7811612fbf6).
+commit [`5c4cef0bfe61fb3249178b2bcf21f5673557efe7`](https://github.com/official-stockfish/Stockfish/tree/5c4cef0bfe61fb3249178b2bcf21f5673557efe7).
 
 Licensed under **GPL-3.0-or-later**. See [LICENSE](LICENSE) and
 [AUTHORS.stockfish](AUTHORS.stockfish).

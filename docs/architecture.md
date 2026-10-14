@@ -32,6 +32,13 @@ NNUE evaluation uses incremental accumulators and quantized inference. Scalar
 kernels remain selectable alongside portable vectors and runtime x86 dispatch.
 See [build options](usage.md#build-the-engine) for selecting a backend.
 
+SFNNv18 uses K32Q2 piece-square features, indexed by king position and opposing
+queen presence, alongside threat and pawn-pair features. Feature weights are
+signed 8-bit values and accumulators are 16-bit. The 32 output layer stacks are
+selected by piece count and each side's queen presence. Queen captures and
+promotions invalidate the affected perspective's accumulator; refresh caches
+are separated by king square and opposing queen presence.
+
 ## Verification boundaries
 
 Differential tests compare board transitions, move generation, evaluation,

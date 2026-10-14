@@ -65,13 +65,13 @@ pub const MovePicker = struct {
     pub fn init(pos: *const Position, tt_move: t.Move, depth: i32, histories: Histories, ply: usize) MovePicker {
         std.debug.assert(histories.continuation.len >= (if (depth > 0) @as(usize, 6) else 1));
         var picker: MovePicker = .{ .pos = pos, .histories = histories, .capture = histories.capture, .tt_move = tt_move, .stage = if (pos.st.checkers != 0) .evasion_tt else if (depth > 0) .main_tt else .qsearch_tt, .depth = depth, .ply = ply };
-        if (tt_move.data == 0 or !pos.pseudoLegal(tt_move)) picker.advance();
+        if (tt_move.data == 0 or !pos.legal(tt_move)) picker.advance();
         return picker;
     }
     pub fn initProbcut(pos: *const Position, tt_move: t.Move, threshold: i32, capture: *const h.CapturePieceToHistory) MovePicker {
         std.debug.assert(pos.st.checkers == 0);
         var picker: MovePicker = .{ .pos = pos, .capture = capture, .tt_move = tt_move, .stage = .probcut_tt, .threshold = threshold };
-        if (!tt_move.valid() or !pos.captureStage(tt_move) or !pos.pseudoLegal(tt_move)) picker.advance();
+        if (!tt_move.valid() or !pos.captureStage(tt_move) or !pos.legal(tt_move)) picker.advance();
         return picker;
     }
     fn advance(self: *MovePicker) void {
@@ -80,23 +80,16 @@ pub const MovePicker = struct {
     pub fn skipQuietMoves(self: *MovePicker) void {
         self.skip_quiets = true;
     }
-    fn attacksBy(self: *const MovePicker, pt: t.PieceType, color: t.Color) u64 {
-        var pieces = self.pos.piecesOf(color, pt);
-        if (pt == .pawn) return bb.pawnAttacks(color, pieces);
-        var result: u64 = 0;
-        while (pieces != 0) result |= self.pos.tables.attacks(pt, bb.popLsb(&pieces), self.pos.pieces());
-        return result;
-    }
     fn score(self: *MovePicker, comptime kind: mg.GenType) usize {
         var list: mg.MoveList = undefined;
         mg.generate(kind, self.pos, &list);
         const us = self.pos.side;
         var lesser: [7]u64 = @splat(0);
         if (kind == .quiets) {
-            lesser[2] = self.attacksBy(.pawn, us.opposite());
+            lesser[2] = self.pos.st.threats[@backingInt(t.PieceType.pawn)];
             lesser[3] = lesser[2];
-            lesser[4] = self.attacksBy(.knight, us.opposite()) | self.attacksBy(.bishop, us.opposite()) | lesser[2];
-            lesser[5] = self.attacksBy(.rook, us.opposite()) | lesser[4];
+            lesser[4] = self.pos.st.threats[@backingInt(t.PieceType.knight)] | self.pos.st.threats[@backingInt(t.PieceType.bishop)] | lesser[2];
+            lesser[5] = self.pos.st.threats[@backingInt(t.PieceType.rook)] | lesser[4];
         }
         std.debug.assert(self.cur + list.len <= self.moves.len);
         for (list.slice(), self.cur..) |move, i| {

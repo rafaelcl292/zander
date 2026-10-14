@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
         for (int step=0;step<9;++step) {
             auto& pawn=shared.pawn_entry(pos);
             for (int pc=0;pc<16;++pc) for (int to=0;to<64;++to) pawn[pc][to]=sample(55,pc*64+to,8192);
-            MoveList<LEGAL> legal(pos);
+            MoveList<ALL> legal(pos);
             for (int depth : {-1,0,1,2,4,8}) {
                 int ply=(depth+1)%6;
                 emit(pos,Move::none(),depth,ply,false,0,999);

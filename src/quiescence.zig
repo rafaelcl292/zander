@@ -147,7 +147,8 @@ pub const Worker = struct {
             ss.static_eval = best_value;
             if (probe.found and tt_value != t.value_none and !decisive(tt_value) and hasBound(probe.data.bound, tt_value > best_value)) best_value = tt_value;
             if (best_value >= beta) {
-                if (!decisive(best_value)) best_value = @divTrunc(441 * best_value + 583 * beta, 1024);
+                std.debug.assert(!decisive(best_value));
+                best_value = @divTrunc(441 * best_value + 583 * beta, 1024);
                 if (!probe.found) self.save(probe.writer, key, t.value_none, false, .lower, -2, .none, unadjusted_eval);
                 return best_value;
             }
@@ -161,7 +162,6 @@ pub const Worker = struct {
         while (true) {
             const move = picker.next();
             if (move.data == 0) break;
-            if (!pos.legal(move)) continue;
             const gives_check = pos.givesCheck(move);
             const capture = pos.captureStage(move);
             move_count += 1;

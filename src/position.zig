@@ -24,6 +24,7 @@ pub const StateInfo = struct {
     ep_square: Square = .none,
     key: u64 = 0,
     checkers: u64 = 0,
+    threats: [7]u64 = @splat(0),
     previous: ?*StateInfo = null,
     blockers_for_king: [2]u64 = @splat(0),
     pinners: [2]u64 = @splat(0),
@@ -124,7 +125,7 @@ pub const Position = struct {
         const rto = Square.make(if (kingside) 5 else 3, 0).relative(c);
         self.castling_path[cr] = (self.tables.between[@backingInt(rook)][@backingInt(rto)] | self.tables.between[@backingInt(k)][@backingInt(kto)]) & ~(bb.square(k) | bb.square(rook));
     }
-    fn setCheckInfo(self: *Position) void {
+    fn setExtraBitboards(self: *Position) void {
         for ([_]Color{ .white, .black }) |c| {
             const ci = @backingInt(c);
             const them = @backingInt(c.opposite());
@@ -142,6 +143,17 @@ pub const Position = struct {
                 }
             }
         }
+        self.st.threats = @splat(0);
+        const occupied = self.pieces() ^ bb.square(self.king(self.side));
+        for ([_]PieceType{ .pawn, .knight, .bishop, .rook, .queen, .king }) |pt| {
+            var pieces_bb = self.piecesOf(self.side.opposite(), pt);
+            var threats: u64 = 0;
+            if (pt == .pawn) threats = bb.pawnAttacks(self.side.opposite(), pieces_bb) else {
+                while (pieces_bb != 0) threats |= self.tables.attacks(pt, bb.popLsb(&pieces_bb), occupied);
+            }
+            self.st.threats[@backingInt(pt)] = threats;
+            self.st.threats[0] |= threats;
+        }
         const k = self.king(self.side.opposite());
         self.st.check_squares[1] = a.pseudo[@backingInt(self.side.opposite())][@backingInt(k)];
         self.st.check_squares[2] = a.pseudo[2][@backingInt(k)];
@@ -158,7 +170,7 @@ pub const Position = struct {
         self.st.pawn_key = self.keys.no_pawns;
         self.st.non_pawn_material = @splat(0);
         self.st.checkers = self.attackersTo(self.king(self.side), self.pieces()) & self.by_color[@backingInt(self.side.opposite())];
-        self.setCheckInfo();
+        self.setExtraBitboards();
         var occupied = self.pieces();
         while (occupied != 0) {
             const s = bb.popLsb(&occupied);
@@ -288,8 +300,8 @@ pub const Position = struct {
         return self.capture(m) or (m.kind() == .promotion and m.promotionType() == .queen);
     }
     /// TT moves may be corrupt; reject sentinel and unused promotion bits before
-    /// applying upstream pseudo-legality tests (which assert these preconditions).
-    pub fn pseudoLegal(self: *const Position, m: t.Move) bool {
+    /// applying upstream legality tests (which assert these preconditions).
+    pub fn legal(self: *const Position, m: t.Move) bool {
         if (!m.valid()) return false;
         const from = m.from();
         const to = m.to();
@@ -298,7 +310,7 @@ pub const Position = struct {
         if (m.kind() != .normal) {
             const mg = @import("movegen.zig");
             var moves: mg.MoveList = undefined;
-            if (self.st.checkers != 0) mg.generate(.evasions, self, &moves) else mg.generate(.non_evasions, self, &moves);
+            mg.generate(.legal, self, &moves);
             for (moves.slice()) |candidate| if (candidate.data == m.data) return true;
             return false;
         }
@@ -317,7 +329,8 @@ pub const Position = struct {
             if (bb.moreThanOne(self.st.checkers)) return false;
             if (self.tables.between[@backingInt(self.king(us))][@backingInt(bb.lsb(self.st.checkers))] & bb.square(to) == 0) return false;
         }
-        return true;
+        if (pc.pieceType() == .king) return self.st.threats[0] & bb.square(to) == 0;
+        return self.st.blockers_for_king[@backingInt(us)] & bb.square(from) == 0 or self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(us, .king) != 0;
     }
     /// Static exchange threshold test. Requires a pseudo-legal move.
     pub fn seeGe(self: *const Position, m: t.Move, threshold: i32) bool {
@@ -448,7 +461,7 @@ pub const Position = struct {
         while (b != 0) {
             const slider_sq = bb.popLsb(&b);
             const slider = self.pieceOn(slider_sq);
-            const ray = self.tables.ray_pass[@backingInt(slider_sq)][@backingInt(s)];
+            const ray = self.tables.inverse_ray_pass[@backingInt(s)][@backingInt(slider_sq)];
             const discovered = ray & slider_attacks & (self.pieces() ^ self.by_type[6]);
             std.debug.assert(!bb.moreThanOne(discovered));
             if (discovered != 0 and (ray & no_rays) != no_rays) {
@@ -641,7 +654,7 @@ pub const Position = struct {
         next.captured_piece = captured;
         next.checkers = if (gives_check) self.attackersTo(self.king(them), self.pieces()) & self.by_color[ui] else 0;
         self.side = them;
-        self.setCheckInfo();
+        self.setExtraBitboards();
         const end = @min(next.rule50, next.plies_from_null);
         if (end >= 4) {
             var prev = old.previous.?;
@@ -696,7 +709,7 @@ pub const Position = struct {
         next.plies_from_null = 0;
         next.captured_piece = .none;
         self.side = self.side.opposite();
-        self.setCheckInfo();
+        self.setExtraBitboards();
         next.repetition = 0;
     }
     pub fn undoNullMove(self: *Position) void {
@@ -705,23 +718,6 @@ pub const Position = struct {
         self.side = self.side.opposite();
     }
 
-    /// Requires a pseudo-legal move generated for this position.
-    pub fn legal(self: *const Position, m: t.Move) bool {
-        const from = m.from();
-        var to = m.to();
-        const us = self.side;
-        if (m.kind() == .castling) {
-            to = Square.make(if (@backingInt(to) > @backingInt(from)) 6 else 2, 0).relative(us);
-            const step: i16 = if (@backingInt(to) > @backingInt(from)) -1 else 1;
-            var sq: i16 = @backingInt(to);
-            while (sq != @backingInt(from)) : (sq += step) {
-                if (self.attackedBy(@fromBackingInt(@intCast(sq)), self.pieces(), us.opposite())) return false;
-            }
-            return !self.chess960 or self.st.blockers_for_king[@backingInt(us)] & bb.square(m.to()) == 0;
-        }
-        if (self.pieceOn(from).pieceType() == .king) return !self.attackedBy(to, self.pieces() ^ bb.square(from), us.opposite());
-        return self.st.blockers_for_king[@backingInt(us)] & bb.square(from) == 0 or self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(us, .king) != 0;
-    }
     pub fn writeFen(self: *const Position, writer: *std.Io.Writer) !void {
         for (0..8) |r| {
             var empty: u8 = 0;

@@ -10,21 +10,22 @@ const tile_registers = if (@import("builtin").target.cpu.arch == .aarch64) 16 el
 pub const combined_features = features.FullThreats.dimensions + features.PawnPairs.dimensions;
 pub const FeatureTransformer = struct {
     biases: [dimensions]i16 align(64),
-    weights: [features.HalfKA.dimensions][dimensions]i16 align(64),
+    weights: [features.K32Q2.dimensions][dimensions]i8 align(64),
     threat_weights: [combined_features][dimensions]i8 align(64),
     pub fn hash() u32 {
         var result: u32 = 0;
-        for ([_]u32{ features.FullThreats.hash_value, features.PawnPairs.hash_value, features.HalfKA.hash_value }) |h| result = ((result << 1) | (result >> 31)) ^ h;
+        for ([_]u32{ features.FullThreats.hash_value, features.PawnPairs.hash_value, features.K32Q2.hash_value }) |h| result = ((result << 1) | (result >> 31)) ^ h;
         return result ^ (dimensions * 2);
     }
     pub fn read(self: *FeatureTransformer, reader: *Reader) !void {
-        try reader.leb128(i16, &self.biases);
+        for (&self.biases) |*bias| bias.* = try reader.int(i16);
         const threats = features.FullThreats.dimensions;
         const threat_bytes = std.mem.sliceAsBytes(self.threat_weights[0..threats]);
         @memcpy(threat_bytes, try reader.take(threat_bytes.len));
         const pair_bytes = std.mem.sliceAsBytes(self.threat_weights[threats..]);
         @memcpy(pair_bytes, try reader.take(pair_bytes.len));
-        try reader.leb128(i16, @as([*]i16, @ptrCast(&self.weights))[0 .. features.HalfKA.dimensions * dimensions]);
+        const weights = std.mem.asBytes(&self.weights);
+        @memcpy(weights, try reader.take(weights.len));
     }
     pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u16) void {
         if (@import("backend").simd) return self.applyVector(add, false, acc, indices);
@@ -51,7 +52,7 @@ pub const FeatureTransformer = struct {
                 const weight: @Vector(lanes, i16) = if (threats)
                     @as(@Vector(lanes, i8), self.threat_weights[index][offset..][0..lanes].*)
                 else
-                    self.weights[index][offset..][0..lanes].*;
+                    @as(@Vector(lanes, i8), self.weights[index][offset..][0..lanes].*);
                 if (add) value +%= weight else value -%= weight;
             }
             acc[offset..][0..lanes].* = value;
@@ -128,7 +129,7 @@ pub const FeatureTransformer = struct {
                 const weight: @Vector(lanes, i16) = if (threats)
                     @as(@Vector(lanes, i8), row[start..][0..lanes].*)
                 else
-                    row[start..][0..lanes].*;
+                    @as(@Vector(lanes, i8), row[start..][0..lanes].*);
                 if (add) tile[i] +%= weight else tile[i] -%= weight;
             }
         }

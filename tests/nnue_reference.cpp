@@ -46,9 +46,9 @@ int main() {
     std::ostringstream compressed(std::ios::binary);
     std::array<i16, 8> short_values{-32768, -8192, -65, -1, 0, 64, 8192, 32767};
     std::array<i32, 8> long_values{INT32_MIN, -2097152, -8193, -1, 0, 8192, 2097152, INT32_MAX};
-    write_leb_128<i16>(compressed, short_values);
-    write_leb_128<i32>(compressed, long_values);
-    std::puts("pub const compressed = [_]u8{");
+    write_little_endian(compressed, short_values.data(), short_values.size());
+    write_little_endian(compressed, long_values.data(), long_values.size());
+    std::puts("pub const raw_parameters = [_]u8{");
     for (unsigned char b : compressed.str()) std::printf("%u,", unsigned(b));
     std::puts("};");
 }

@@ -2,6 +2,9 @@
 
 [Documentation home](../README.md) · [Benchmark procedure](development.md#compare-engines)
 
+The current port uses SFNNv18 and Stockfish `5c4cef0b`. The historical timing
+and memory measurements below predate that migration and do not measure it.
+
 **Search outputs match in the measured single-thread suites. Thread throughput
 increases, but this shallow suite does not establish long-search scaling.
 Playing strength remains unestablished.** The historical measurements below use Zander

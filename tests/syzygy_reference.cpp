@@ -2,7 +2,7 @@
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
 #include "../vendor/stockfish/src/movegen.cpp"
-#include "../vendor/stockfish/src/nnue/features/half_ka_v2_hm.cpp"
+#include "../vendor/stockfish/src/nnue/features/k32q2.cpp"
 #include "../vendor/stockfish/src/nnue/features/full_threats.cpp"
 #include "../vendor/stockfish/src/nnue/features/pp_3wide.cpp"
 #include "../vendor/stockfish/src/syzygy/tbprobe.h"
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
         auto dtz=Tablebases::probe_dtz(pos,&dtzState);
         const bool rule50=index%3!=0, rankDistance=index%2==0;
         Search::RootMoves roots;
-        if(index++%29==0) for(Move move:MoveList<LEGAL>(pos)) roots.emplace_back(move);
+        if(index++%29==0) for(Move move:MoveList<ALL>(pos)) roots.emplace_back(move);
         bool dtzOk=Tablebases::root_probe(pos,roots,rule50,rankDistance,[](){return false;});
         auto distance=roots;
         bool wdlOk=Tablebases::root_probe_wdl(pos,roots,rule50);

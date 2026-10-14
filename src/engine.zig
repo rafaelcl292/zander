@@ -12,7 +12,7 @@ const Group = @import("numa_group.zig").Group;
 const memory = @import("memory.zig");
 const Helper = @import("search_thread.zig").Helper;
 const notation = @import("notation.zig");
-pub const default_network = "networks/nn-252f33942263.nnue";
+pub const default_network = "networks/nn-c9e480e92425.nnue";
 pub const max_hash_mb: usize = if (@sizeOf(usize) == 8) 33554432 else 2048;
 pub fn maxThreads() usize {
     return @max(1024, 4 * (std.Thread.getCpuCount() catch 1));
@@ -456,6 +456,6 @@ pub const Engine = struct {
         defer self.position.undoMove(first);
         if (self.position.isDraw(1)) return;
         const probe = self.table.probe(self.position.key());
-        if (probe.found and self.position.pseudoLegal(probe.data.move) and self.position.legal(probe.data.move)) pv.append(probe.data.move);
+        if (probe.found and self.position.legal(probe.data.move) and self.position.legal(probe.data.move)) pv.append(probe.data.move);
     }
 };

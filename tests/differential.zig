@@ -70,7 +70,7 @@ test "attack tables match upstream for every relevant occupancy and square pair"
         for (0..64) |j| {
             try std.testing.expectEqual(sf_geometry(0, @intCast(i), @intCast(j)), tables.line[i][j]);
             try std.testing.expectEqual(sf_geometry(1, @intCast(i), @intCast(j)), tables.between[i][j]);
-            try std.testing.expectEqual(sf_geometry(2, @intCast(i), @intCast(j)), tables.ray_pass[i][j]);
+            try std.testing.expectEqual(sf_geometry(2, @intCast(i), @intCast(j)), tables.inverse_ray_pass[j][i]);
         }
         var occupied = z.types.makeKey(i);
         for (0..128) |_| {
@@ -131,20 +131,20 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         };
         try std.testing.expect(expected.valid);
         try expectQueries(&pos, expected);
-        var normal_pseudo: [4096]u16 = undefined;
+        var normal_legal: [4096]u16 = undefined;
         var normal_count: usize = 0;
         for (1..4096) |raw| {
-            if (pos.pseudoLegal(.{ .data = @intCast(raw) })) {
-                normal_pseudo[normal_count] = @intCast(raw);
+            if (pos.legal(.{ .data = @intCast(raw) })) {
+                normal_legal[normal_count] = @intCast(raw);
                 normal_count += 1;
             }
         }
-        try std.testing.expectEqualSlices(u16, expected.normal_pseudo, normal_pseudo[0..normal_count]);
+        try std.testing.expectEqualSlices(u16, expected.normal_legal, normal_legal[0..normal_count]);
         var list: z.movegen.MoveList = .{};
         z.movegen.generate(.legal, &pos, &list);
         try expectMoves(expected.legal, list.slice());
-        if (pos.st.checkers != 0) z.movegen.generate(.evasions, &pos, &list) else z.movegen.generate(.non_evasions, &pos, &list);
-        try expectMoves(expected.pseudo, list.slice());
+        z.movegen.generate(.legal, &pos, &list);
+        try expectMoves(expected.generated, list.slice());
         if (pos.st.checkers == 0) {
             z.movegen.generate(.captures, &pos, &list);
             try expectMoves(expected.captures, list.slice());
@@ -290,7 +290,7 @@ fn expectQueries(pos: *const z.position.Position, expected: @import("position_re
         var actual: u32 = @intFromBool(pos.capture(move));
         actual |= @as(u32, @intFromBool(pos.captureStage(move))) << 1;
         actual |= @as(u32, @intFromBool(pos.givesCheck(move))) << 2;
-        actual |= @as(u32, @intFromBool(pos.pseudoLegal(move))) << 3;
+        actual |= @as(u32, @intFromBool(pos.legal(move))) << 3;
         for ([_]i32{ -3000, -1276, -825, -208, -1, 0, 1, 208, 781, 825, 1276, 2538, 3000 }, 4..) |threshold, bit| {
             actual |= @as(u32, @intFromBool(pos.seeGe(move, threshold))) << @as(u5, @intCast(bit));
         }
@@ -371,7 +371,7 @@ fn expectActiveFeatures(pos: *const z.position.Position, expected: @import("posi
         var occupied = pos.pieces();
         while (occupied != 0) {
             const square = z.bitboard.popLsb(&occupied);
-            half.append(features.HalfKA.makeIndex(c, square, pos.pieceOn(square), pos.king(c)));
+            half.append(features.K32Q2.makeIndex(c, square, pos.pieceOn(square), pos.king(c), pos.piecesOf(c.opposite(), .queen) != 0));
         }
         var threats: features.ThreatList = .{};
         var pawns: features.ThreatList = .{};
@@ -391,7 +391,7 @@ fn expectChangedFeatures(pos: *const z.position.Position, expected: @import("pos
         var ta: features.ThreatList = .{};
         var pr: features.ThreatList = .{};
         var pa: features.ThreatList = .{};
-        features.HalfKA.appendChanged(c, pos.king(c), diff.piece, &hr, &ha);
+        features.K32Q2.appendChanged(c, pos.king(c), diff.piece, pos.piecesOf(c.opposite(), .queen) != 0, &hr, &ha);
         features.FullThreats.appendChanged(c, pos.king(c), &diff.threats, &tr, &ta);
         features.PawnPairs.appendChanged(c, pos.king(c), diff.before, diff.after, &pr, &pa);
         try std.testing.expectEqualSlices(u16, ref.half_removed, hr.slice());
@@ -400,7 +400,7 @@ fn expectChangedFeatures(pos: *const z.position.Position, expected: @import("pos
         try std.testing.expectEqualSlices(u16, ref.threats_added, ta.slice());
         try std.testing.expectEqualSlices(u16, ref.pawns_removed, pr.slice());
         try std.testing.expectEqualSlices(u16, ref.pawns_added, pa.slice());
-        try std.testing.expectEqual(ref.refresh, features.HalfKA.requiresRefresh(diff.piece, c));
+        try std.testing.expectEqual(ref.refresh, features.K32Q2.requiresRefresh(diff.piece, c));
     }
 }
 
@@ -408,8 +408,8 @@ test "NNUE index spaces match C++ across kings, pieces, threats and pawn pairs" 
     const f = z.nnue_features;
     var hashes: [3]u64 = @splat(14695981039346656037);
     for ([_]z.types.Color{ .white, .black }) |c| {
-        for (0..64) |k| for (0..64) |s| for (z.position_keys.pieces) |pc| {
-            hashes[0] = (hashes[0] ^ f.HalfKA.makeIndex(c, @fromBackingInt(@intCast(s)), pc, @fromBackingInt(@intCast(k)))) *% 1099511628211;
+        for (0..64) |k| for (0..64) |s| for (z.position_keys.pieces) |pc| for ([_]bool{ false, true }) |queen| {
+            hashes[0] = (hashes[0] ^ f.K32Q2.makeIndex(c, @fromBackingInt(@intCast(s)), pc, @fromBackingInt(@intCast(k)), queen)) *% 1099511628211;
         };
         // FullThreats and PP orientation depends only on king file half.
         for ([_]u8{ 0, 7 }) |k| {
@@ -434,7 +434,7 @@ test "NNUE index spaces match C++ across kings, pieces, threats and pawn pairs" 
     try std.testing.expectEqualSlices(u64, &@import("position_reference").index_checksums, &hashes);
 }
 
-test "NNUE scalar layers and compressed parameters match C++" {
+test "NNUE scalar layers and raw parameters match C++" {
     const reference = @import("nnue_reference");
     var reader: z.nnue_reader.Reader = .{ .bytes = &reference.parameters };
     var network: z.nnue_layers.Architecture = undefined;
@@ -449,14 +449,14 @@ test "NNUE scalar layers and compressed parameters match C++" {
         try std.testing.expectEqualSlices(i32, &case.fc1, &buffer.fc1);
         try std.testing.expectEqual(case.fc2, buffer.fc2[0]);
     }
-    reader = .{ .bytes = &reference.compressed };
+    reader = .{ .bytes = &reference.raw_parameters };
     var shorts: [8]i16 = undefined;
     var longs: [8]i32 = undefined;
-    try reader.leb128(i16, &shorts);
-    try reader.leb128(i32, &longs);
+    for (&shorts) |*v| v.* = try reader.int(i16);
+    for (&longs) |*v| v.* = try reader.int(i32);
     try std.testing.expectEqualSlices(i16, &.{ -32768, -8192, -65, -1, 0, 64, 8192, 32767 }, &shorts);
     try std.testing.expectEqualSlices(i32, &.{ std.math.minInt(i32), -2097152, -8193, -1, 0, 8192, 2097152, std.math.maxInt(i32) }, &longs);
-    try std.testing.expectEqual(reference.compressed.len, reader.offset);
+    try std.testing.expectEqual(reference.raw_parameters.len, reader.offset);
     reader = .{ .bytes = reference.parameters[0 .. reference.parameters.len - 1] };
     try std.testing.expectError(error.Truncated, network.read(&reader));
 }

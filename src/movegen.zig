@@ -4,7 +4,7 @@ const t = @import("types.zig");
 const bb = @import("bitboard.zig");
 const a = @import("attacks.zig");
 const Position = @import("position.zig").Position;
-pub const GenType = enum { captures, quiets, evasions, non_evasions, legal };
+pub const GenType = enum { captures, quiets, evasions, legal };
 pub const MoveList = struct {
     moves: [t.max_moves]t.Move = undefined,
     len: usize = 0,
@@ -72,12 +72,23 @@ fn pawnSplat(list: *MoveList, targets: u64, delta: i16) void {
     }
 }
 fn promotions(comptime kind: GenType, list: *MoveList, to: t.Square, delta: i16, enemy: bool) void {
-    const all = kind == .evasions or kind == .non_evasions;
+    const all = kind == .evasions;
     if (kind == .captures or all) list.append(t.Move.make(.promotion, offset(to, -delta), to, .queen));
     if ((kind == .captures and enemy) or (kind == .quiets and !enemy) or all) {
         for ([_]t.PieceType{ .rook, .bishop, .knight }) |pt| list.append(t.Move.make(.promotion, offset(to, -delta), to, pt));
     }
 }
+const diagonals = blk: {
+    @setEvalBranchQuota(20000);
+    var result: [2][64]u64 = @splat(@splat(0));
+    for (0..64) |k| for (0..64) |sq| {
+        const df = @as(i16, @intCast(sq % 8)) - @as(i16, @intCast(k % 8));
+        const dr = @as(i16, @intCast(sq / 8)) - @as(i16, @intCast(k / 8));
+        if (df == dr) result[0][k] |= @as(u64, 1) << @as(u6, @intCast(sq));
+        if (df == -dr) result[1][k] |= @as(u64, 1) << @as(u6, @intCast(sq));
+    };
+    break :blk result;
+};
 fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: u64) void {
     const us = pos.side;
     const them = us.opposite();
@@ -88,10 +99,15 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
     const left: i8 = if (us == .white) 7 else -7;
     const empty = ~pos.pieces();
     const enemies = if (kind == .evasions) pos.st.checkers else pos.by_color[@backingInt(them)];
+    const k = pos.king(us);
+    const pinned = pos.st.blockers_for_king[@backingInt(us)];
+    const pushable = ~pinned | (bb.file_a << k.file());
+    const can_right = ~pinned | diagonals[0][@backingInt(k)];
+    const can_left = ~pinned | diagonals[1][@backingInt(k)];
     const on7 = pos.piecesOf(us, .pawn) & rank7;
     const not7 = pos.piecesOf(us, .pawn) & ~rank7;
     if (kind != .captures) {
-        var b1 = bb.shift(not7, up) & empty;
+        var b1 = bb.shift(not7 & pushable, up) & empty;
         var b2 = bb.shift(b1 & rank3, up) & empty;
         if (kind == .evasions) {
             b1 &= target;
@@ -101,39 +117,37 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
         pawnSplat(list, b2, @as(i16, up) * 2);
     }
     if (on7 != 0) {
-        var b1 = bb.shift(on7, right) & enemies;
-        var b2 = bb.shift(on7, left) & enemies;
-        var b3 = bb.shift(on7, up) & empty;
+        var b1 = bb.shift(on7 & can_right, right) & enemies;
+        var b2 = bb.shift(on7 & can_left, left) & enemies;
+        var b3 = bb.shift(on7 & pushable, up) & empty;
         if (kind == .evasions) b3 &= target;
         while (b1 != 0) promotions(kind, list, bb.popLsb(&b1), right, true);
         while (b2 != 0) promotions(kind, list, bb.popLsb(&b2), left, true);
         while (b3 != 0) promotions(kind, list, bb.popLsb(&b3), up, false);
     }
-    if (kind == .captures or kind == .evasions or kind == .non_evasions) {
-        pawnSplat(list, bb.shift(not7, right) & enemies, right);
-        pawnSplat(list, bb.shift(not7, left) & enemies, left);
+    if (kind == .captures or kind == .evasions) {
+        pawnSplat(list, bb.shift(not7 & can_right, right) & enemies, right);
+        pawnSplat(list, bb.shift(not7 & can_left, left) & enemies, left);
         if (pos.st.ep_square != .none) {
             if (kind == .evasions and target & bb.square(offset(pos.st.ep_square, up)) != 0) return;
             var b = not7 & a.pseudo[@backingInt(them)][@backingInt(pos.st.ep_square)];
-            while (b != 0) list.append(t.Move.make(.en_passant, bb.popLsb(&b), pos.st.ep_square, .knight));
+            while (b != 0) {
+                const from = bb.popLsb(&b);
+                if (pinned & bb.square(from) == 0 or pos.tables.line[@backingInt(k)][@backingInt(from)] & bb.square(pos.st.ep_square) != 0)
+                    list.append(t.Move.make(.en_passant, from, pos.st.ep_square, .knight));
+            }
         }
     }
 }
-/// Preserves upstream scalar move order, including swap-removal of illegal moves.
-/// Initializes the list length and generated prefix; prior storage may be undefined.
+/// Preserves upstream scalar order: captures followed by quiets, unpinned before pinned.
 pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) void {
     if (kind == .legal) {
-        if (pos.st.checkers != 0) generate(.evasions, pos, list) else generate(.non_evasions, pos, list);
-        const pinned = pos.st.blockers_for_king[@backingInt(pos.side)] & pos.by_color[@backingInt(pos.side)];
-        const king = pos.king(pos.side);
-        var i: usize = 0;
-        while (i < list.len) {
-            const m = list.moves[i];
-            if ((pinned & bb.square(m.from()) != 0 or m.from() == king or m.kind() == .en_passant) and !pos.legal(m)) {
-                list.len -= 1;
-                list.moves[i] = list.moves[list.len];
-            } else i += 1;
-        }
+        if (pos.st.checkers != 0) return generate(.evasions, pos, list);
+        generate(.captures, pos, list);
+        var quiets: MoveList = undefined;
+        generate(.quiets, pos, &quiets);
+        @memcpy(list.moves[list.len..][0..quiets.len], quiets.slice());
+        list.len += quiets.len;
         return;
     }
     std.debug.assert((kind == .evasions) == (pos.st.checkers != 0));
@@ -144,25 +158,35 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
     if (kind != .evasions or !bb.moreThanOne(pos.st.checkers)) {
         target = switch (kind) {
             .evasions => pos.tables.between[@backingInt(k)][@backingInt(bb.lsb(pos.st.checkers))],
-            .non_evasions => ~pos.by_color[@backingInt(us)],
             .captures => pos.by_color[@backingInt(us.opposite())],
             .quiets => ~pos.pieces(),
             .legal => unreachable,
         };
         pawns(kind, pos, list, target);
         for ([_]t.PieceType{ .knight, .bishop, .rook, .queen }) |pt| {
-            var pieces = pos.piecesOf(us, pt);
+            const pinned = pos.st.blockers_for_king[@backingInt(us)];
+            var pieces = pos.piecesOf(us, pt) & ~pinned;
             while (pieces != 0) {
                 const from = bb.popLsb(&pieces);
                 splat(list, from, pos.tables.attacks(pt, from, pos.pieces()) & target);
             }
+            if (pt != .knight) {
+                pieces = pos.piecesOf(us, pt) & pinned;
+                while (pieces != 0) {
+                    const from = bb.popLsb(&pieces);
+                    splat(list, from, pos.tables.attacks(pt, from, pos.pieces()) & target & pos.tables.line[@backingInt(k)][@backingInt(from)]);
+                }
+            }
         }
     }
-    splat(list, k, a.pseudo[6][@backingInt(k)] & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target));
-    if (kind == .quiets or kind == .non_evasions) {
+    splat(list, k, a.pseudo[6][@backingInt(k)] & ~pos.st.threats[0] & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target));
+    if (kind == .quiets) {
         const shift: u3 = @intCast(@backingInt(us) * 2);
         for ([_]u8{ @as(u8, 1) << shift, @as(u8, 2) << shift }) |cr| {
-            if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0) list.append(t.Move.make(.castling, k, pos.castling_rook[cr], .knight));
+            const rook = pos.castling_rook[cr];
+            const to = t.Square.make(if (rook != .none and @backingInt(rook) > @backingInt(k)) 6 else 2, 0).relative(us);
+            if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0 and pos.tables.between[@backingInt(k)][@backingInt(to)] & pos.st.threats[0] == 0 and pos.st.blockers_for_king[@backingInt(us)] & bb.square(rook) == 0)
+                list.append(t.Move.make(.castling, k, rook, .knight));
         }
     }
 }

@@ -140,14 +140,14 @@ pub const Tables = struct {
     bishop: [0x1480]u64,
     line: [64][64]u64,
     between: [64][64]u64,
-    ray_pass: [64][64]u64,
+    inverse_ray_pass: [64][64]u64,
 
     pub fn init(self: *Tables) void {
         self.initMagics(.rook, &self.rook);
         self.initMagics(.bishop, &self.bishop);
         self.line = @splat(@splat(0));
         self.between = @splat(@splat(0));
-        self.ray_pass = @splat(@splat(0));
+        self.inverse_ray_pass = @splat(@splat(0));
         for (0..64) |a| {
             const s1: t.Square = @fromBackingInt(@intCast(a));
             for ([_]t.PieceType{ .bishop, .rook }) |pt| {
@@ -156,7 +156,7 @@ pub const Tables = struct {
                     if (pseudo[@backingInt(pt)][a] & bb.square(s2) != 0) {
                         self.line[a][b] = (self.attacks(pt, s1, 0) & self.attacks(pt, s2, 0)) | bb.square(s1) | bb.square(s2);
                         self.between[a][b] = self.attacks(pt, s1, bb.square(s2)) & self.attacks(pt, s2, bb.square(s1));
-                        self.ray_pass[a][b] = self.attacks(pt, s1, 0) & (self.attacks(pt, s2, bb.square(s1)) | bb.square(s2));
+                        self.inverse_ray_pass[b][a] = self.attacks(pt, s1, 0) & (self.attacks(pt, s2, bb.square(s1)) | bb.square(s2));
                     }
                     self.between[a][b] |= bb.square(s2);
                 }

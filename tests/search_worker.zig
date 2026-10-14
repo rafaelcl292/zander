@@ -112,13 +112,11 @@ test "single-worker search, histories and node state match pinned Stockfish" {
             try std.testing.expectEqual(expected, checksum);
         }
     }
-    var reductions: z.search_support.Reductions = .{};
-    reductions.init();
-    try std.testing.expectEqualSlices(i32, &@import("reference").reductions, reductions.values[1..]);
+    try std.testing.expectEqualSlices(i32, &@import("reference").reductions, z.search_support.reductions[1..]);
     for (@import("reference").reduction_cases) |case| {
         var checksum: u64 = 14695981039346656037;
         for (1..z.types.max_ply) |depth| for (1..z.types.max_moves) |move_number| {
-            const value = reductions.reduction(case.improving, depth, move_number, case.delta, case.root_delta);
+            const value = z.search_support.reduction(case.improving, depth, move_number);
             checksum = (checksum ^ @as(u32, @bitCast(value))) *% 1099511628211;
         };
         try std.testing.expectEqual(case.checksum, checksum);

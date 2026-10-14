@@ -63,11 +63,9 @@ pub const Worker = struct {
     previous_average: i32 = t.value_infinite,
     previous_time_reduction: f64 = 0.85,
     completed_depth: i32 = 0,
-    reductions: s.Reductions,
     tt_move_history: h.TTMoveHistory = .{ .value = 0 },
     root_depth: i32 = 0,
-    root_delta: i32 = 1,
-    root_score: i32 = 0,
+    seek_mate: bool = false,
     root_moves: []RootMove = &.{},
     pv_idx: usize = 0,
     pv_last: usize = 0,
@@ -75,9 +73,7 @@ pub const Worker = struct {
     nmp_min_ply: i32 = 0,
     last_iteration_pv: s.PV = .{},
     pub fn init(base: *QWorker) Worker {
-        var self: Worker = .{ .base = base, .reductions = .{} };
-        self.reductions.init();
-        return self;
+        return .{ .base = base };
     }
     pub const Limits = struct {
         depth: i32,
@@ -172,6 +168,7 @@ pub const Worker = struct {
                 const average = self.root_moves[self.pv_idx].average_score;
                 var alpha = @max(average - delta, -t.value_infinite);
                 var beta = @min(average + delta, t.value_infinite);
+                self.seek_mate = @abs(self.root_moves[self.pv_idx].score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
                 self.base.optimism[us] = div(114 * average, @as(i32, @intCast(@abs(average))) + 85);
                 self.base.optimism[us ^ 1] = -self.base.optimism[us];
                 var failed_high_count: i32 = 0;
@@ -302,7 +299,7 @@ pub const Worker = struct {
         self.base.prepare(pv);
         self.root_moves = &.{};
         self.root_depth = depth;
-        self.root_delta = beta - alpha;
+        self.seek_mate = false;
         self.nmp_min_ply = 0;
         return self.search(pv_node, pos, 7, alpha, beta, depth, cut_node);
     }
@@ -316,7 +313,6 @@ pub const Worker = struct {
     /// Search the selected root range. Frames and root records must be initialized.
     pub fn searchRoot(self: *Worker, pos: *p.Position, alpha: i32, beta: i32, depth: i32) i32 {
         std.debug.assert(self.pv_idx < self.pv_last and self.pv_last <= self.root_moves.len);
-        self.root_delta = beta - alpha;
         return self.searchNode(.root, pos, 7, alpha, beta, depth, false);
     }
     fn searchNode(self: *Worker, comptime node_type: NodeType, pos: *p.Position, frame: usize, initial_alpha: i32, initial_beta: i32, initial_depth: i32, cut_node: bool) i32 {
@@ -329,7 +325,7 @@ pub const Worker = struct {
         if (initial_depth <= 0) return w.search(pv_node, pos, frame, initial_alpha, initial_beta);
         std.debug.assert(self.root_depth > 0);
         // Upstream safety threshold; not a playing-strength tuning parameter.
-        const seek_mate = @abs(if (self.root_moves.len != 0) self.root_moves[self.pv_idx].score else self.root_score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
+        const seek_mate = self.seek_mate;
         if (self.thread_index == 0) {
             if (w.control) |control| control.poll(w.nodes);
         }
@@ -408,14 +404,14 @@ pub const Worker = struct {
                     if (prev_sq != .none and prev.move_count < 5 and !prior_capture) s.updateContinuationHistories(&w.frames, frame - 1, pos.pieceOn(prev_sq), prev_sq, -2210);
                 }
                 if (pos.st.rule50 < 96) {
-                    if (depth >= 7 and data.move.data != 0 and pos.pseudoLegal(data.move) and pos.legal(data.move) and !decisive(data.value)) {
+                    if (depth >= 7 and data.move.data != 0 and pos.legal(data.move) and !decisive(data.value)) {
                         pos.doMove(data.move, &state);
                         const next = w.table.probe(pos.key());
                         pos.undoMove(data.move);
                         if (next.data.value == t.value_none or (data.value >= beta) == (-next.data.value >= beta)) return data.value;
                     } else return data.value;
                 }
-            } else if (data.bound != .exact and bound(data.bound, data.value < beta) and depth > 5) probe.writer.penalize(1);
+            } else if (depth > 5) probe.writer.penalize(1);
         }
         if (!root_node and excluded.data == 0 and self.tb_config.cardinality != 0) {
             const pieces = @popCount(pos.pieces());
@@ -457,7 +453,8 @@ pub const Worker = struct {
             }
             if (cut_node and ss.static_eval + 50 * ss.prior_nmp_fail_high >= beta - 13 * depth - 47 * b(improving) + 365 and excluded.data == 0 and pos.st.non_pawn_material[us] != 0 and ss.ply >= self.nmp_min_ply and beta >= -2000) {
                 std.debug.assert(prev.current_move.data != t.Move.null_move.data);
-                const reduction = 7 + div(depth, 3) + @max(div(ss.static_eval - beta, 256), 0);
+                var reduction = 7 + div(depth, 3) + @max(div(ss.static_eval - beta, 256), 0);
+                reduction -= div(b(seek_mate) * reduction, 2);
                 w.doNullMove(pos, &state, frame);
                 const value = -self.search(false, pos, frame + 1, -beta, -beta + 1, depth - reduction, false);
                 w.undoNullMove(pos);
@@ -486,7 +483,7 @@ pub const Worker = struct {
                 while (true) {
                     const move = picker.next();
                     if (move.data == 0) break;
-                    if (move.data == excluded.data or !pos.legal(move)) continue;
+                    if (move.data == excluded.data) continue;
                     const capture = pos.captureStage(move);
                     std.debug.assert(capture);
                     w.doMoveCapture(pos, move, &state, capture, frame);
@@ -502,7 +499,7 @@ pub const Worker = struct {
             }
         }
         const small_prob_beta = beta + 428;
-        if (bound(data.bound, true) and data.depth >= depth - 4 and data.value >= small_prob_beta and !decisive(beta) and data.value != t.value_none and !decisive(data.value)) return small_prob_beta;
+        if (bound(data.bound, true) and data.depth >= depth - 4 and data.value >= small_prob_beta and !decisive(beta) and data.value != t.value_none and !decisive(data.value) and !seek_mate) return small_prob_beta;
         const cont = [_]*const h.PieceToHistory{ prev.continuation_history.?, w.frames[frame - 2].continuation_history.?, w.frames[frame - 3].continuation_history.?, w.frames[frame - 4].continuation_history.?, w.frames[frame - 5].continuation_history.?, w.frames[frame - 6].continuation_history.? };
         var picker = mp.MovePicker.init(pos, data.move, depth, .{ .main = w.main_history, .low_ply = w.low_ply_history, .capture = w.capture_history, .continuation = &cont, .shared = w.shared }, @intCast(ss.ply));
         var value = best_value;
@@ -510,7 +507,7 @@ pub const Worker = struct {
         while (true) {
             const move = picker.next();
             if (move.data == 0) break;
-            if (move.data == excluded.data or !pos.legal(move)) continue;
+            if (move.data == excluded.data) continue;
             if (root_node) {
                 var included = false;
                 for (self.root_moves[self.pv_idx..self.pv_last]) |*rm| {
@@ -531,7 +528,8 @@ pub const Worker = struct {
             const to = @backingInt(move.to());
             const check = pos.givesCheck(move);
             var new_depth = depth - 1;
-            var r = self.reductions.reduction(improving, @intCast(depth), @intCast(move_count), beta - alpha, self.root_delta);
+            var r = s.reduction(improving, @intCast(depth), @intCast(move_count));
+            if (pv_node) r -= 512;
             if (ss.tt_pv) r += 929;
             if (!root_node and pos.st.non_pawn_material[us] != 0 and !loss(best_value)) {
                 if (move_count >= div(3 + depth * depth, 2 - b(improving))) picker.skipQuietMoves();
@@ -589,6 +587,7 @@ pub const Worker = struct {
             r -= div(ss.stat_score * 439, 4096);
             if (!capture and !decisive(alpha)) r += 3 * std.math.clamp(alpha - eval, -64, 96);
             if (all_node) r += div(r * 276, 256 * depth + 268);
+            if (seek_mate and r > 0) r += div(if (check) -r else r, 4);
             if (depth >= 2 and move_count > 1) {
                 const d = @max(1, new_depth + @min(div(-r, 1024), @as(i32, if (ss.ply < 2 * self.root_depth) 2 else 0))) + b(pv_node);
                 ss.reduction = new_depth - d;

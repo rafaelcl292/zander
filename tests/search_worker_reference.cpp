@@ -10,7 +10,7 @@
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
 #include "../vendor/stockfish/src/movegen.cpp"
-#include "../vendor/stockfish/src/nnue/features/half_ka_v2_hm.cpp"
+#include "../vendor/stockfish/src/nnue/features/k32q2.cpp"
 #include "../vendor/stockfish/src/nnue/features/full_threats.cpp"
 #include "../vendor/stockfish/src/nnue/features/pp_3wide.cpp"
 #include "../vendor/stockfish/src/nnue/nnue_accumulator.cpp"
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
             }
         }
         if (step == (index==0?8:3)) break;
-        MoveList<LEGAL> legal(pos);
+        MoveList<ALL> legal(pos);
         if (!legal.size()) break;
         const Move cycle[] = {Move(SQ_B1,SQ_A3),Move(SQ_B8,SQ_A6),Move(SQ_A3,SQ_B1),Move(SQ_A6,SQ_B8)};
         Move move=index==0?cycle[step%4]:*(legal.begin()+rng.rand<uint64_t>()%legal.size());
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     while(std::getline(inputs,line)) {
         size_t index=root++; Position pos; StateInfo st;
         if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
-        MoveList<LEGAL> legal(pos); if(!legal.size()) continue;
+        MoveList<ALL> legal(pos); if(!legal.size()) continue;
         for(int variant=0;variant<4;++variant) {
             Search::Stack frames[8]{}; auto ss=frames+7;
             ss->ply=std::array{0,4,5,18}[variant]; ss->inCheck=variant==1;
@@ -132,13 +132,12 @@ int main(int argc, char** argv) {
     std::puts("};");
 
     std::puts("pub const reductions = [_]i32{");
-    for(size_t i=1;i<worker->reductions.size();++i) std::printf("%d,",worker->reductions[i]);
-    std::puts("};\npub const ReductionCase = struct { improving: bool, root_delta: i32, delta: i32, checksum: u64 };\npub const reduction_cases = [_]ReductionCase{");
-    for (bool improving : {false,true}) for(int rootDelta : {1,21,320,64002}) for(int delta : {0,1,20,rootDelta}) {
-        worker->rootDelta=rootDelta;
+    for(size_t i=1;i<reductions.size();++i) std::printf("%d,",reductions[i]);
+    std::puts("};\npub const ReductionCase = struct { improving: bool, checksum: u64 };\npub const reduction_cases = [_]ReductionCase{");
+    for (bool improving : {false,true}) {
         uint64_t hash=14695981039346656037ULL;
-        for(int d=1;d<MAX_PLY;++d) for(int mn=1;mn<MAX_MOVES;++mn) hash=(hash^uint32_t(worker->reduction(improving,d,mn,delta)))*1099511628211ULL;
-        std::printf(".{ .improving=%s,.root_delta=%d,.delta=%d,.checksum=%llu },\n",improving?"true":"false",rootDelta,delta,(unsigned long long)hash);
+        for(int d=1;d<MAX_PLY;++d) for(int mn=1;mn<MAX_MOVES;++mn) hash=(hash^uint32_t(worker->reduction(improving,d,mn)))*1099511628211ULL;
+        std::printf(".{ .improving=%s,.checksum=%llu },\n",improving?"true":"false",(unsigned long long)hash);
     }
     std::puts("};");
 
@@ -162,7 +161,7 @@ int main(int argc, char** argv) {
             std::printf(".{ .root=%zu,.move=%u,.frame=%s,.key=%llu,.nodes=%llu,.size=%zu,.current=%u,.continuation=%d,.correction=%d },\n",index,unsigned(move.raw()),withFrame?"true":"false",(unsigned long long)pos.key(),(unsigned long long)uint64_t(worker->nodes),worker->accumulatorStack.size,unsigned(ss->currentMove.raw()),continuation,correction);
             if(null) worker->undo_null_move(pos); else worker->undo_move(pos,move);
         };
-        for(Move move:MoveList<LEGAL>(pos)) { emit(move,true); emit(move,false); }
+        for(Move move:MoveList<ALL>(pos)) { emit(move,true); emit(move,false); }
         if(!pos.checkers()) emit(Move::null(),true);
     }
     std::puts("};");
@@ -170,8 +169,7 @@ int main(int argc, char** argv) {
     std::puts("pub const MainCase = struct { root: usize, depth: i32, mode: usize, warm: bool, score: i32, nodes: u64, sel_depth: i32, tt_checksum: u64, tt_history: i16, history_hashes: [7]u64 = .{0,0,0,0,0,0,0}, pv: []const u16 };\npub const main_cases = [_]MainCase{");
     inputs.clear(); inputs.seekg(0); root=0;
     worker->threadIdx=1; threads.stop=false;
-    // seekMate reads the root score even in diagnostic non-root searches.
-    // Match Zander's neutral root_score when no root move list is supplied.
+    // Diagnostic non-root searches start with mate seeking disabled.
     worker->rootMoves.emplace_back(Move::none());
     worker->rootMoves[0].score=VALUE_ZERO;
     worker->pvIdx=0;
@@ -183,7 +181,7 @@ int main(int argc, char** argv) {
             std::memset(tt.table,0,tt.clusterCount*sizeof(Cluster)); tt.generation8=0; tt.new_search();
             for(bool warm : {false,true}) {
                 worker->nodes=0; worker->selDepth=0; worker->nmpMinPly=0; worker->rootDepth=depth;
-                worker->rootDelta=mode==0?64002:1; worker->lastIterationIdxPV.clear();
+                worker->seekMate=false; worker->lastIterationIdxPV.clear();
                 worker->accumulatorStack.reset();
                 Search::Stack frames[MAX_PLY+10]{}; auto ss=frames+7;
                 for(int i=1;i<=7;++i) {
@@ -216,11 +214,11 @@ int main(int argc, char** argv) {
     while(std::getline(inputs,line)) {
         size_t index=root++; Position pos; StateInfo st;
         if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
-        if(MoveList<LEGAL>(pos).size()==0) continue;
+        if(MoveList<ALL>(pos).size()==0) continue;
         for(int depth : {1,4,8}) for(int mode=0;mode<3;++mode) {
             worker->clear(); worker->lowPlyHistory.fill(102);
             worker->rootMoves.clear();
-            for(Move m:MoveList<LEGAL>(pos)) worker->rootMoves.emplace_back(m);
+            for(Move m:MoveList<ALL>(pos)) worker->rootMoves.emplace_back(m);
             worker->pvIdx=mode==2 && worker->rootMoves.size()>1?1:0;
             worker->pvLast=worker->rootMoves.size();
             if(mode==2) worker->pvLast=std::min(worker->pvLast,worker->pvIdx+3);
@@ -229,7 +227,7 @@ int main(int argc, char** argv) {
                 worker->nodes=0; worker->selDepth=0; worker->nmpMinPly=0; worker->rootDepth=depth;
                 worker->bestMoveChanges=0; worker->lastIterationIdxPV.clear();
                 int alpha=mode==0?-32001:mode==1?99:-101, beta=mode==0?32001:mode==1?100:-100;
-                worker->rootDelta=beta-alpha; worker->accumulatorStack.reset();
+                worker->seekMate=false; worker->accumulatorStack.reset();
                 Search::Stack frames[MAX_PLY+10]{}; auto ss=frames+7;
                 for(int i=1;i<=7;++i) {
                     (ss-i)->continuationHistory=&worker->continuationHistory[0][0][NO_PIECE][0];
@@ -270,7 +268,7 @@ int main(int argc, char** argv) {
         size_t index=root++;
         if(worker->rootPos.set(line.substr(2),line[0]=='1',&worker->rootState)) continue;
         auto& pos=worker->rootPos;
-        if(MoveList<LEGAL>(pos).size()==0) continue;
+        if(MoveList<ALL>(pos).size()==0) continue;
         for(int depth : {1,4,8,12,16}) for(int mode=0;mode<3;++mode) {
             if(depth==12 && index!=0 && index!=6) continue;
             if(depth==16 && index!=35) continue;
@@ -280,7 +278,7 @@ int main(int argc, char** argv) {
             for(bool warm : {false,true}) {
                 worker->rootMoves.clear();
                 int candidate=0;
-                for(Move m:MoveList<LEGAL>(pos)) { if(mode!=2 || candidate++%2==0) worker->rootMoves.emplace_back(m); }
+                for(Move m:MoveList<ALL>(pos)) { if(mode!=2 || candidate++%2==0) worker->rootMoves.emplace_back(m); }
                 if(mode==2) std::reverse(worker->rootMoves.begin(),worker->rootMoves.end());
                 worker->nodes=0; worker->selDepth=0; worker->nmpMinPly=0; worker->rootDepth=0;
                 worker->bestMoveChanges=0; worker->accumulatorStack.reset();
@@ -340,7 +338,7 @@ int main(int argc, char** argv) {
     while(std::getline(inputs,line)) {
         size_t index=root++; Position pos; StateInfo st;
         if(pos.set(line.substr(2),line[0]=='1',&st)) continue;
-        for(Move move:MoveList<LEGAL>(pos)) std::printf(".{ .root=%zu,.move=%u,.text=\"%s\" },\n",index,unsigned(move.raw()),UCIEngine::move(move,pos.is_chess960()).c_str());
+        for(Move move:MoveList<ALL>(pos)) std::printf(".{ .root=%zu,.move=%u,.text=\"%s\" },\n",index,unsigned(move.raw()),UCIEngine::move(move,pos.is_chess960()).c_str());
     }
     std::puts("};");
 

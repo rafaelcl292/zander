@@ -91,10 +91,10 @@ pub fn lmrDivisor(depth: i32) i32 {
 }
 pub fn updateContinuationHistories(frames: []Stack, current: usize, pc: t.Piece, to: t.Square, bonus: i32) void {
     std.debug.assert(current >= 6 and current < frames.len);
-    const weights = [_]i32{ 520, 390, 145, 251, 66, 209 };
-    const multipliers = [_]i32{ 94, 103, 110, 106, 119, 126, 121 };
+    const weights = [_]i32{ 520, 390, 145, 251, 209 };
+    const multipliers = [_]i32{ 94, 103, 110, 106, 119, 126 };
     var positive_count: usize = 0;
-    for (weights, 1..) |weight, i| {
+    for (weights, [_]usize{ 1, 2, 3, 4, 6 }) |weight, i| {
         if (frames[current].in_check and i > 2) break;
         const prior = &frames[current - i];
         if (prior.current_move.valid()) {
@@ -105,14 +105,14 @@ pub fn updateContinuationHistories(frames: []Stack, current: usize, pc: t.Piece,
     }
 }
 
-pub const Reductions = struct {
-    values: [t.max_moves]i32 = @splat(0),
-    pub fn init(self: *Reductions) void {
-        for (self.values[1..], 1..) |*value, i| value.* = @trunc((2872.0 / 128.0) * @log(@as(f64, @floatFromInt(i))));
-    }
-    pub fn reduction(self: *const Reductions, improving: bool, depth: usize, move_number: usize, delta: i32, root_delta: i32) i32 {
-        std.debug.assert(depth > 0 and depth < self.values.len and move_number > 0 and move_number < self.values.len and root_delta > 0);
-        const scale = self.values[depth] * self.values[move_number];
-        return scale - @divTrunc(delta * 577, root_delta) + @divTrunc(@as(i32, if (improving) 0 else 1) * scale * 197, 512) + 982;
-    }
+pub const reductions = blk: {
+    @setEvalBranchQuota(10000);
+    var values: [t.max_moves]i32 = @splat(0);
+    for (values[1..], 1..) |*value, i| value.* = @trunc((2872.0 / 128.0) * @log(@as(f64, @floatFromInt(i))));
+    break :blk values;
 };
+pub fn reduction(improving: bool, depth: usize, move_number: usize) i32 {
+    std.debug.assert(depth > 0 and depth < reductions.len and move_number > 0 and move_number < reductions.len);
+    const scale = reductions[depth] * reductions[move_number];
+    return scale + @divTrunc(@as(i32, if (improving) 0 else 1) * scale * 197, 512) + 948;
+}

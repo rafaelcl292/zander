@@ -17,7 +17,7 @@ pub const CacheEntry = struct {
     piece_bb: u64 = 0,
 };
 pub const Caches = struct {
-    entries: [64][2]CacheEntry,
+    entries: [128][2]CacheEntry,
     pub fn clear(self: *Caches, ft: *const FT) void {
         for (&self.entries) |*row| for (row) |*entry| {
             entry.* = .{ .accumulation = ft.biases };
@@ -51,7 +51,7 @@ pub const Stack = struct {
         var i = self.size - 1;
         while (i > 0) : (i -= 1) {
             const state = &self.accumulators[i];
-            if (state.computed[@backingInt(c)] or f.HalfKA.requiresRefresh(state.dirties.piece, c)) return i;
+            if (state.computed[@backingInt(c)] or f.K32Q2.requiresRefresh(state.dirties.piece, c)) return i;
         }
         return 0;
     }
@@ -60,32 +60,32 @@ pub const Stack = struct {
         if (self.accumulators[last[0]].computed[0] and self.accumulators[last[1]].computed[1]) {
             const shared = @max(last[0], last[1]);
             for ([_]t.Color{ .white, .black }) |c| {
-                for (last[@backingInt(c)] + 1..shared + 1) |i| incremental(true, c, pos.king(c), ft, &self.accumulators[i], &self.accumulators[i - 1]);
+                for (last[@backingInt(c)] + 1..shared + 1) |i| incremental(true, c, pos.king(c), pos.piecesOf(c.opposite(), .queen) != 0, ft, &self.accumulators[i], &self.accumulators[i - 1]);
             }
             for (shared + 1..self.size) |i| {
-                incrementalBoth(.{ pos.king(.white), pos.king(.black) }, ft, &self.accumulators[i], &self.accumulators[i - 1]);
+                incrementalBoth(.{ pos.king(.white), pos.king(.black) }, .{ pos.piecesOf(.black, .queen) != 0, pos.piecesOf(.white, .queen) != 0 }, ft, &self.accumulators[i], &self.accumulators[i - 1]);
             }
         } else for ([_]t.Color{ .white, .black }) |c| {
             const begin = last[@backingInt(c)];
             if (self.accumulators[begin].computed[@backingInt(c)]) {
-                for (begin + 1..self.size) |i| incremental(true, c, pos.king(c), ft, &self.accumulators[i], &self.accumulators[i - 1]);
+                for (begin + 1..self.size) |i| incremental(true, c, pos.king(c), pos.piecesOf(c.opposite(), .queen) != 0, ft, &self.accumulators[i], &self.accumulators[i - 1]);
             } else {
                 const dp = self.latest().dirties.piece;
-                if (dp.pc == t.Piece.make(c, .king) and self.size > 1 and self.accumulators[self.size - 2].computed[@backingInt(c)] and @popCount(pos.pieces()) >= 15 and (@backingInt(dp.from) & 4) == (@backingInt(dp.to) & 4) and dp.add_sq == .none) {
+                if (dp.pc == t.Piece.make(c, .king) and self.size > 1 and self.accumulators[self.size - 2].computed[@backingInt(c)] and @popCount(pos.pieces()) >= 15 and (@backingInt(dp.from) & 4) == (@backingInt(dp.to) & 4) and dp.add_sq == .none and dp.remove_pc != t.Piece.make(c.opposite(), .queen)) {
                     hybrid(c, pos, ft, self.latest(), &self.accumulators[self.size - 2], cache);
                 } else {
                     refresh(c, pos, ft, self.latest(), cache);
                     var i = self.size - 1;
                     while (i > begin) {
                         i -= 1;
-                        incremental(false, c, pos.king(c), ft, &self.accumulators[i], &self.accumulators[i + 1]);
+                        incremental(false, c, pos.king(c), pos.piecesOf(c.opposite(), .queen) != 0, ft, &self.accumulators[i], &self.accumulators[i + 1]);
                     }
                 }
             }
         }
     }
 };
-fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
+fn incremental(comptime forward: bool, c: t.Color, king: t.Square, opponent_has_queen: bool, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
     const side = @backingInt(c);
     const diff = if (forward) &target.dirties else &computed.dirties;
     // Match the reference list constructor: initialize the length only.
@@ -102,7 +102,7 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT
     var ta: f.ThreatList = undefined;
     ta.len = 0;
     ta.prefetch_base = &ft.threat_weights;
-    f.HalfKA.appendChanged(c, king, diff.piece, if (forward) &pr else &pa, if (forward) &pa else &pr);
+    f.K32Q2.appendChanged(c, king, diff.piece, opponent_has_queen, if (forward) &pr else &pa, if (forward) &pa else &pr);
     f.FullThreats.appendChanged(c, king, &diff.threats, if (forward) &tr else &ta, if (forward) &ta else &tr);
     f.PawnPairs.appendChanged(c, king, diff.before, diff.after, if (forward) &tr else &ta, if (forward) &ta else &tr);
     if (@import("backend").simd) {
@@ -117,9 +117,9 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, ft: *const FT
     target.computed[side] = true;
 }
 
-fn incrementalBoth(kings: [2]t.Square, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
+fn incrementalBoth(kings: [2]t.Square, queens: [2]bool, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
     if (!@import("backend").simd) {
-        inline for (0..2) |side| incremental(true, @fromBackingInt(@intCast(side)), kings[side], ft, target, computed);
+        inline for (0..2) |side| incremental(true, @fromBackingInt(@intCast(side)), kings[side], queens[side], ft, target, computed);
         return;
     }
     var pr: [2]f.SmallList = undefined;
@@ -140,7 +140,7 @@ fn incrementalBoth(kings: [2]t.Square, ft: *const FT, target: *Accumulator, comp
     f.FullThreats.appendChangedBoth(kings, &diff.threats, &tr, &ta);
     f.PawnPairs.appendChangedBoth(kings, diff.before, diff.after, &tr, &ta);
     inline for (0..2) |side| {
-        f.HalfKA.appendChanged(@fromBackingInt(@intCast(side)), kings[side], diff.piece, &pr[side], &pa[side]);
+        f.K32Q2.appendChanged(@fromBackingInt(@intCast(side)), kings[side], diff.piece, queens[side], &pr[side], &pa[side]);
         ft.applyCombined(&computed.accumulation[side], &target.accumulation[side], pr[side].slice(), pa[side].slice(), tr[side].slice(), ta[side].slice());
         target.computed[side] = true;
     }
@@ -161,29 +161,30 @@ fn changedPieces(old: *const [64]t.Piece, new: *const [64]t.Piece) u64 {
     };
     return bits;
 }
-fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, c: t.Color, king: t.Square, removed: *f.SmallList, added: *f.SmallList) void {
+fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, c: t.Color, king: t.Square, opponent_has_queen: bool, removed: *f.SmallList, added: *f.SmallList) void {
     const bits = changedPieces(&entry.pieces, pieces);
     var r = bits & entry.piece_bb;
     while (r != 0) {
         const sq = bb.popLsb(&r);
-        removed.append(f.HalfKA.makeIndex(c, sq, entry.pieces[@backingInt(sq)], king));
+        removed.append(f.K32Q2.makeIndex(c, sq, entry.pieces[@backingInt(sq)], king, opponent_has_queen));
     }
     var a = bits & occupied;
     while (a != 0) {
         const sq = bb.popLsb(&a);
-        added.append(f.HalfKA.makeIndex(c, sq, pieces[@backingInt(sq)], king));
+        added.append(f.K32Q2.makeIndex(c, sq, pieces[@backingInt(sq)], king, opponent_has_queen));
     }
 }
 fn refresh(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator, cache: *Caches) void {
     const side = @backingInt(c);
-    const entry = &cache.entries[@backingInt(pos.king(c))][side];
+    const queen = pos.piecesOf(c.opposite(), .queen) != 0;
+    const entry = &cache.entries[@as(usize, @backingInt(pos.king(c))) + @as(usize, if (queen) 64 else 0)][side];
     var removed: f.SmallList = undefined;
     removed.len = 0;
     removed.prefetch_base = null;
     var added: f.SmallList = undefined;
     added.len = 0;
     added.prefetch_base = null;
-    changed(entry, &pos.board, pos.pieces(), c, pos.king(c), &removed, &added);
+    changed(entry, &pos.board, pos.pieces(), c, pos.king(c), queen, &removed, &added);
     entry.pieces = pos.board;
     entry.piece_bb = pos.pieces();
     var active: f.ThreatList = undefined;
@@ -212,8 +213,10 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     }
     previous_pieces[@backingInt(dp.from)] = dp.pc;
     previous_bb |= bb.square(dp.from);
-    const old_entry = &cache.entries[@backingInt(dp.from)][side];
-    const new_entry = &cache.entries[@backingInt(dp.to)][side];
+    const queen = pos.piecesOf(c.opposite(), .queen) != 0;
+    const queen_offset: usize = if (queen) 64 else 0;
+    const old_entry = &cache.entries[@as(usize, @backingInt(dp.from)) + queen_offset][side];
+    const new_entry = &cache.entries[@as(usize, @backingInt(dp.to)) + queen_offset][side];
     var old_removed: f.SmallList = undefined;
     old_removed.len = 0;
     old_removed.prefetch_base = null;
@@ -226,8 +229,8 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     var new_added: f.SmallList = undefined;
     new_added.len = 0;
     new_added.prefetch_base = null;
-    changed(old_entry, &previous_pieces, previous_bb, c, dp.from, &old_removed, &old_added);
-    changed(new_entry, &pos.board, pos.pieces(), c, dp.to, &new_removed, &new_added);
+    changed(old_entry, &previous_pieces, previous_bb, c, dp.from, queen, &old_removed, &old_added);
+    changed(new_entry, &pos.board, pos.pieces(), c, dp.to, queen, &new_removed, &new_added);
     var removed: f.ThreatList = undefined;
     removed.len = 0;
     removed.prefetch_base = &ft.threat_weights;

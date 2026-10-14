@@ -25,9 +25,9 @@ pub fn IndexList(comptime capacity: usize) type {
 pub const SmallList = IndexList(32);
 pub const ThreatList = IndexList(256);
 
-pub const HalfKA = struct {
-    pub const hash_value: u32 = 0x7f234cb8;
-    pub const dimensions: u32 = 22528;
+pub const K32Q2 = struct {
+    pub const hash_value: u32 = 0x32b5e284;
+    pub const dimensions: u32 = 45056;
     const offsets align(64) = blk: {
         @setEvalBranchQuota(30000);
         var table: [2][64][16]u16 = @splat(@splat(@splat(0)));
@@ -39,22 +39,24 @@ pub const HalfKA = struct {
             const orient: u16 = @as(u16, if (king.file() < 4) 7 else 0) ^ (56 * @as(u16, @intCast(side)));
             for (all_pieces) |pc| {
                 const piece_offset: u16 = if (pc.pieceType() == .king) 640 else (@as(u16, @backingInt(pc.pieceType())) - 1) * 128 + @as(u16, @intFromBool(pc.color() != perspective)) * 64;
-                table[side][square][@backingInt(pc)] = piece_offset + bucket * 704 + orient;
+                table[side][square][@backingInt(pc)] = piece_offset + bucket * 1408 + orient;
             }
         };
         break :blk table;
     };
-    pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square) u32 {
-        return @as(u32, @backingInt(s)) ^ offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)];
+    pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square, opponent_has_queen: bool) u32 {
+        return @as(u32, @backingInt(s)) ^ (offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)] + @as(u16, if (opponent_has_queen) 704 else 0));
     }
     pub fn requiresRefresh(diff: dirty.DirtyPiece, perspective: t.Color) bool {
-        return diff.pc == t.Piece.make(perspective, .king);
+        return diff.pc == t.Piece.make(perspective, .king) or
+            (diff.remove_sq != .none and diff.remove_pc == t.Piece.make(perspective.opposite(), .queen)) or
+            (diff.add_sq != .none and diff.add_pc == t.Piece.make(perspective.opposite(), .queen));
     }
-    pub fn appendChanged(perspective: t.Color, king: t.Square, diff: dirty.DirtyPiece, removed: *SmallList, added: *SmallList) void {
-        removed.append(makeIndex(perspective, diff.from, diff.pc, king));
-        if (diff.to != .none) added.append(makeIndex(perspective, diff.to, diff.pc, king));
-        if (diff.remove_sq != .none) removed.append(makeIndex(perspective, diff.remove_sq, diff.remove_pc, king));
-        if (diff.add_sq != .none) added.append(makeIndex(perspective, diff.add_sq, diff.add_pc, king));
+    pub fn appendChanged(perspective: t.Color, king: t.Square, diff: dirty.DirtyPiece, opponent_has_queen: bool, removed: *SmallList, added: *SmallList) void {
+        removed.append(makeIndex(perspective, diff.from, diff.pc, king, opponent_has_queen));
+        if (diff.to != .none) added.append(makeIndex(perspective, diff.to, diff.pc, king, opponent_has_queen));
+        if (diff.remove_sq != .none) removed.append(makeIndex(perspective, diff.remove_sq, diff.remove_pc, king, opponent_has_queen));
+        if (diff.add_sq != .none) added.append(makeIndex(perspective, diff.add_sq, diff.add_pc, king, opponent_has_queen));
     }
 };
 fn orientation(perspective: t.Color, king: t.Square) u8 {
