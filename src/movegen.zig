@@ -179,13 +179,13 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
             }
         }
     }
-    splat(list, k, a.pseudo[6][@backingInt(k)] & ~pos.st.threats[0] & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target));
+    splat(list, k, a.pseudo[6][@backingInt(k)] & ~pos.threatsBy(.none) & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target));
     if (kind == .quiets) {
         const shift: u3 = @intCast(@backingInt(us) * 2);
         for ([_]u8{ @as(u8, 1) << shift, @as(u8, 2) << shift }) |cr| {
             const rook = pos.castling_rook[cr];
             const to = t.Square.make(if (rook != .none and @backingInt(rook) > @backingInt(k)) 6 else 2, 0).relative(us);
-            if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0 and pos.tables.between[@backingInt(k)][@backingInt(to)] & pos.st.threats[0] == 0 and pos.st.blockers_for_king[@backingInt(us)] & bb.square(rook) == 0)
+            if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0 and pos.tables.between[@backingInt(k)][@backingInt(to)] & pos.threatsBy(.none) == 0 and pos.st.blockers_for_king[@backingInt(us)] & bb.square(rook) == 0)
                 list.append(t.Move.make(.castling, k, rook, .knight));
         }
     }

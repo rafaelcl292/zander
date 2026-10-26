@@ -573,7 +573,7 @@ const Session = struct {
             if (i == args.len) return error.MissingGoValue;
             const value = args[i];
             i += 1;
-            if (std.mem.eql(u8, key, "depth")) limits.depth = try integer(i32, value, 1, t.max_ply - 1) else if (std.mem.eql(u8, key, "nodes")) time_limits.nodes = try integer(u64, value, 0, std.math.maxInt(i64)) else if (std.mem.eql(u8, key, "movetime")) time_limits.move_time = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "wtime")) time_limits.time[0] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "btime")) time_limits.time[1] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "winc")) time_limits.increment[0] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "binc")) time_limits.increment[1] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "movestogo")) time_limits.moves_to_go = try integer(i32, value, 0, 100000) else if (std.mem.eql(u8, key, "mate")) time_limits.mate = try integer(i32, value, 0, t.max_ply / 2) else return error.UnknownGoOption;
+            if (std.mem.eql(u8, key, "depth")) limits.depth = try integer(i32, value, 1, t.max_ply - 1) else if (std.mem.eql(u8, key, "nodes")) time_limits.nodes = try integer(u64, value, 0, std.math.maxInt(i64)) else if (std.mem.eql(u8, key, "movetime")) time_limits.move_time = try parseTime(value) else if (std.mem.eql(u8, key, "wtime")) time_limits.time[0] = try parseTime(value) else if (std.mem.eql(u8, key, "btime")) time_limits.time[1] = try parseTime(value) else if (std.mem.eql(u8, key, "winc")) time_limits.increment[0] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "binc")) time_limits.increment[1] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "movestogo")) time_limits.moves_to_go = try integer(i32, value, 0, 100000) else if (std.mem.eql(u8, key, "mate")) time_limits.mate = try integer(i32, value, 0, t.max_ply / 2) else return error.UnknownGoOption;
         }
         limits.search_moves = requested[0..count];
         self.engine.worker.skill_level = self.skill_level;
@@ -584,6 +584,10 @@ const Session = struct {
         std.debug.assert(!self.searching and !self.exiting);
         self.searching = true;
         self.wake_condition.broadcast(self.engine.io);
+    }
+    fn parseTime(value: []const u8) !i64 {
+        const parsed = try integer(i64, value, std.math.minInt(i64), 1_000_000_000_000);
+        return if (parsed < 0) 1 else parsed;
     }
     fn isGoKeyword(word: []const u8) bool {
         for ([_][]const u8{ "infinite", "ponder", "searchmoves", "depth", "nodes", "movetime", "wtime", "btime", "winc", "binc", "movestogo", "mate" }) |key| if (std.mem.eql(u8, word, key)) {

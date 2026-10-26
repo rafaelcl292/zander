@@ -143,6 +143,20 @@ pub const Position = struct {
                 }
             }
         }
+        self.st.threats[0] = 0;
+        const k = self.king(self.side.opposite());
+        self.st.check_squares[1] = a.pseudo[@backingInt(self.side.opposite())][@backingInt(k)];
+        self.st.check_squares[2] = a.pseudo[2][@backingInt(k)];
+        self.st.check_squares[3] = self.tables.attacks(.bishop, k, self.pieces());
+        self.st.check_squares[4] = self.tables.attacks(.rook, k, self.pieces());
+        self.st.check_squares[5] = self.st.check_squares[3] | self.st.check_squares[4];
+        self.st.check_squares[6] = 0;
+    }
+    pub fn threatsBy(self: *const Position, pt: PieceType) u64 {
+        if (self.st.threats[0] == 0) self.computeThreats();
+        return self.st.threats[@backingInt(pt)];
+    }
+    fn computeThreats(self: *const Position) void {
         self.st.threats = @splat(0);
         const occupied = self.pieces() ^ bb.square(self.king(self.side));
         for ([_]PieceType{ .pawn, .knight, .bishop, .rook, .queen, .king }) |pt| {
@@ -154,13 +168,6 @@ pub const Position = struct {
             self.st.threats[@backingInt(pt)] = threats;
             self.st.threats[0] |= threats;
         }
-        const k = self.king(self.side.opposite());
-        self.st.check_squares[1] = a.pseudo[@backingInt(self.side.opposite())][@backingInt(k)];
-        self.st.check_squares[2] = a.pseudo[2][@backingInt(k)];
-        self.st.check_squares[3] = self.tables.attacks(.bishop, k, self.pieces());
-        self.st.check_squares[4] = self.tables.attacks(.rook, k, self.pieces());
-        self.st.check_squares[5] = self.st.check_squares[3] | self.st.check_squares[4];
-        self.st.check_squares[6] = 0;
     }
     fn setState(self: *Position) void {
         self.st.key = 0;
@@ -329,7 +336,7 @@ pub const Position = struct {
             if (bb.moreThanOne(self.st.checkers)) return false;
             if (self.tables.between[@backingInt(self.king(us))][@backingInt(bb.lsb(self.st.checkers))] & bb.square(to) == 0) return false;
         }
-        if (pc.pieceType() == .king) return self.st.threats[0] & bb.square(to) == 0;
+        if (pc.pieceType() == .king) return self.threatsBy(.none) & bb.square(to) == 0;
         return self.st.blockers_for_king[@backingInt(us)] & bb.square(from) == 0 or self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(us, .king) != 0;
     }
     /// Static exchange threshold test. Requires a pseudo-legal move.

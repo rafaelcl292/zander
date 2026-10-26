@@ -106,7 +106,7 @@ pub const Worker = struct {
     fn hasBound(bound: tt.Bound, lower: bool) bool {
         return @backingInt(bound) & @backingInt(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
     }
-    pub fn save(self: *Worker, writer: *tt.Entry, key: u64, value: i32, is_pv: bool, bound: tt.Bound, depth: i32, move: t.Move, eval: i32) void {
+    pub fn save(self: *Worker, writer: tt.Writer, key: u64, value: i32, is_pv: bool, bound: tt.Bound, depth: i32, move: t.Move, eval: i32) void {
         writer.save(key, .{ .move = move, .value = value, .eval = eval, .depth = depth, .bound = bound, .is_pv = is_pv }, self.table.generation);
     }
     pub fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, beta: i32) i32 {

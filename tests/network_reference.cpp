@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
         }
         // Exercise every legal first move, including promotions and Chess960 castling.
         for (auto m : MoveList<ALL>(pos)) {
-            pos.do_move(m, states[1], pos.gives_check(m), stack->push(), nullptr, nullptr);
+            pos.do_move(m, states[1], pos.gives_check(m), stack->push(), nullptr);
             emit(m,false,true);
             pos.undo_move(m); stack->pop(); emit(m,true,false);
         }
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
         for (size_t i=0; i<48; ++i) {
             MoveList<ALL> legal(pos); if (!legal.size()) break;
             Move m = *(legal.begin() + rng.rand<uint64_t>() % legal.size());
-            pos.do_move(m, states[i+1], pos.gives_check(m), stack->push(), nullptr, nullptr);
+            pos.do_move(m, states[i+1], pos.gives_check(m), stack->push(), nullptr);
             moves.push_back(m); emit(m,false,i%3==2 || i==47);
         }
         while (!moves.empty()) {

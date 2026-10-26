@@ -313,9 +313,7 @@ test "TT layout, probe, replacement, aging and hashfull match C++ trace" {
         if (i % 37 == 0) table.newSearch();
         const probe = table.probe(event.key);
         try std.testing.expectEqual(event.found, probe.found);
-        const base = &table.clusters[table.clusterIndex(event.key)].entries[0];
-        const slot = (@intFromPtr(probe.writer) - @intFromPtr(base)) / @sizeOf(z.tt.Entry);
-        try std.testing.expectEqual(event.slot, slot);
+        try std.testing.expectEqual(event.slot, probe.writer.index);
         try std.testing.expectEqualSlices(i32, &event.before, &ttData(probe.data));
         const signed_i: i32 = @intCast(i);
         probe.writer.save(event.key, .{
@@ -331,7 +329,8 @@ test "TT layout, probe, replacement, aging and hashfull match C++ trace" {
         try std.testing.expectEqual(event.generation, table.generation);
         for ([_]i32{ 0, 3, 31 }, event.hashfull) |age, expected| try std.testing.expectEqual(expected, table.hashfull(age));
     }
-    var entry: z.tt.Entry = std.mem.zeroes(z.tt.Entry);
+    var cluster: z.tt.Cluster = std.mem.zeroes(z.tt.Cluster);
+    const entry: z.tt.Writer = .{ .cluster = &cluster, .index = 0 };
     const commands = [_]struct { key: u64, value: i32, bound: z.tt.Bound, depth: i32, move: u16, eval: i32, generation: u8 }{
         .{ .key = 1, .value = 31900, .bound = .lower, .depth = 12, .move = 123, .eval = 7, .generation = 0 },
         .{ .key = 1, .value = 20, .bound = .lower, .depth = 1, .move = 0, .eval = 8, .generation = 0 },

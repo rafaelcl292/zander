@@ -83,7 +83,7 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
             for (auto move : MoveList<ALL>(pos)) {
                 StateInfo next;
                 Dirties dirties;
-                pos.do_move(move, next, pos.gives_check(move), dirties, nullptr, nullptr);
+                pos.do_move(move, next, pos.gives_check(move), dirties, nullptr);
                 emit_snapshot(pos, false, move.raw(), &dirties);
                 pos.undo_move(move);
             }
@@ -100,7 +100,7 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
                 Move move = legal.begin()[rng.rand<uint64_t>() % legal.size()];
                 moves[count] = move;
                 Dirties dirties;
-                pos.do_move(move, states[count++], pos.gives_check(move), dirties, nullptr, nullptr);
+                pos.do_move(move, states[count++], pos.gives_check(move), dirties, nullptr);
                 emit_snapshot(pos, false, move.raw(), &dirties);
             }
             while (count) pos.undo_move(moves[--count]);
@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 12; ++i) {
         const Move move = cycle[i % 4];
         Dirties dirties;
-        pos.do_move(move, states[i + 1], pos.gives_check(move), dirties, nullptr, nullptr);
+        pos.do_move(move, states[i + 1], pos.gives_check(move), dirties, nullptr);
         emit_snapshot(pos, false, move.raw(), &dirties);
     }
     std::puts("};");

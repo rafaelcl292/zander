@@ -26,7 +26,10 @@ production executable does not link against it.
 Search combines iterative deepening, alpha-beta and quiescence search,
 aspiration windows, move ordering, pruning, and a shared transposition table.
 Persistent workers reuse caches and caller-owned recursive search storage,
-without general-purpose allocation in the recursive search path.
+without general-purpose allocation in the recursive search path. Each 32-byte
+transposition-table cluster holds three entries and three packed 21-bit key
+fragments, accessed with relaxed atomics. Opponent threat bitboards are computed
+on demand and cached in the position state.
 
 NNUE evaluation uses incremental accumulators and quantized inference. Scalar
 kernels remain selectable alongside portable vectors and runtime x86 dispatch.

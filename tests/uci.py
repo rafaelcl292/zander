@@ -218,6 +218,11 @@ def main():
             start = time.monotonic()
             client.search(command)
             assert time.monotonic() - start < 5, command
+        for command in ("go movetime -1", "go wtime -100 btime 100", "go wtime 100 btime -100 depth 2"):
+            start = time.monotonic()
+            lines = client.search(command)
+            assert not any("info string error" in line for line in lines), lines
+            assert time.monotonic() - start < 5, command
         client.send("go infinite depth 1")
         client.until("info depth 1")
         client.quiet_bestmove()

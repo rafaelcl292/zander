@@ -22,22 +22,23 @@ int main() {
         if (i % 37 == 0) table->new_search();
         const uint64_t key = i < 3000 ? (uint64_t(i % 16) << 54) | uint64_t(i % 7) : rng.rand<uint64_t>();
         auto [found, data, writer] = table->probe(key);
-        std::printf(".{.key=%llu,.found=%s,.slot=%td,.before=", (unsigned long long)key, found ? "true" : "false", writer.entry - table->first_entry(key));
+        std::printf(".{.key=%llu,.found=%s,.slot=%d,.before=", (unsigned long long)key, found ? "true" : "false", writer.index);
         emit_data(data);
         const int value = i % 11 == 0 ? 31900 : i % 4000 - 2000;
         writer.write(key, value, i % 3 == 0, Bound(i % 4), i % 32 - 2, Move(uint16_t(i % 5 == 0 ? 0 : 1 + i % 4094)), i % 2000 - 1000, table->generation());
         if (i % 7 == 0) writer.penalize(i % 17);
-        std::printf(",.after="); emit_data(writer.entry->read());
+        std::printf(",.after="); emit_data(writer.cluster->entry[writer.index].read());
         std::printf(",.generation=%u,.hashfull=.{%d,%d,%d}},\n", unsigned(table->generation()), table->hashfull(0), table->hashfull(3), table->hashfull(31));
     }
     std::puts("};\npub const edge_cases = [_][6]i32{");
-    TTEntry entry{};
-    const auto record = [&]() { emit_data(entry.read()); std::puts(","); };
-    entry.save(1, 31900, false, BOUND_LOWER, 12, Move(123), 7, 0); record();
-    entry.save(1, 20, false, BOUND_LOWER, 1, Move::none(), 8, 0); record();
-    entry.save(1, 20, false, BOUND_EXACT, -2, Move::none(), 8, 0); record();
-    entry.save(2, -31900, false, BOUND_UPPER, 5, Move::none(), 9, 31); record();
-    entry.save(2, 100, false, BOUND_UPPER, 0, Move(42), 10, 0); record();
-    TTWriter writer(&entry); writer.penalize(300); record();
+    Cluster cluster{};
+    TTWriter entry(&cluster, 0);
+    const auto record = [&]() { emit_data(cluster.entry[0].read()); std::puts(","); };
+    entry.write(1, 31900, false, BOUND_LOWER, 12, Move(123), 7, 0); record();
+    entry.write(1, 20, false, BOUND_LOWER, 1, Move::none(), 8, 0); record();
+    entry.write(1, 20, false, BOUND_EXACT, -2, Move::none(), 8, 0); record();
+    entry.write(2, -31900, false, BOUND_UPPER, 5, Move::none(), 9, 31); record();
+    entry.write(2, 100, false, BOUND_UPPER, 0, Move(42), 10, 0); record();
+    entry.penalize(300); record();
     std::puts("};");
 }

@@ -8,7 +8,7 @@ test "persistent engine retains state and replaces resources transactionally" {
     const original_clusters = engine.clusters.ptr;
     try engine.prepareSearch(.{ .depth = 4, .multi_pv = 3 }, .{}, 10, false);
     const result = try engine.runSearch();
-    // Stockfish 5c4cef0b, SFNNv18, startpos at depth 4 with MultiPV 3.
+    // Stockfish ff3a6c50, SFNNv18, startpos at depth 4 with MultiPV 3.
     try std.testing.expectEqual(@as(u64, 1377), result.nodes);
     var text: [6]u8 = undefined;
     try std.testing.expectEqualStrings("d2d4", z.notation.moveText(result.best_move, false, &text));

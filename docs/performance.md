@@ -2,8 +2,11 @@
 
 [Documentation home](../README.md) · [Benchmark procedure](development.md#compare-engines)
 
-The current port uses SFNNv18 and Stockfish `5c4cef0b`. The historical timing
-and memory measurements below predate that migration and do not measure it.
+The current port uses SFNNv18 and Stockfish `ff3a6c50`. The historical timing
+and memory measurements below predate this reference update and do not measure
+its performance. The update matched the reference on all 27 comparison positions
+at depth 6 with one worker (move, score, PV, nodes, and depth). This checks search
+equivalence for that corpus; it does not establish speed or playing strength.
 
 **Search outputs match in the measured single-thread suites. Thread throughput
 increases, but this shallow suite does not establish long-search scaling.

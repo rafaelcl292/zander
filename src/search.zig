@@ -144,7 +144,6 @@ pub const Worker = struct {
         const us = @backingInt(pos.side);
         while (self.root_depth < limits.depth and !self.base.stopped()) {
             self.root_depth += 1;
-            total_changes /= 2;
             if (self.base.control) |control| {
                 if (!control.increase_depth.load(.monotonic)) search_again += 1;
             }
@@ -168,8 +167,9 @@ pub const Worker = struct {
                 const average = self.root_moves[self.pv_idx].average_score;
                 var alpha = @max(average - delta, -t.value_infinite);
                 var beta = @min(average + delta, t.value_infinite);
-                self.seek_mate = @abs(self.root_moves[self.pv_idx].score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
-                self.base.optimism[us] = div(114 * average, @as(i32, @intCast(@abs(average))) + 85);
+                const seek_mate_score = if (self.pv_idx != 0) self.root_moves[self.pv_idx].previous_score else self.root_moves[self.pv_idx].score;
+                self.seek_mate = seek_mate_score != -t.value_infinite and @abs(seek_mate_score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
+                self.base.optimism[us] = div(456 * average, @as(i32, @intCast(@abs(average))) + 85);
                 self.base.optimism[us ^ 1] = -self.base.optimism[us];
                 var failed_high_count: i32 = 0;
                 if (self.pv_idx == 0) fail_high_recovery = @max(0, fail_high_recovery - 2);
@@ -227,11 +227,6 @@ pub const Worker = struct {
             }
             if (self.thread_index != 0) continue;
             if (skill.enabled() and skill.timeToPick(self.root_depth)) _ = skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
-            const changes = if (self.base.control) |control|
-                (if (control.read_changes) |read| read(control.node_context) else self.best_move_changes)
-            else
-                self.best_move_changes;
-            total_changes += @floatFromInt(changes);
             if (self.base.control) |control| {
                 const best_score = self.root_moves[0].score;
                 if (control.limits.mate != 0 and !control.stopped() and @abs(best_score) >= s.mate_in_max_ply and t.value_mate - @as(i32, @intCast(@abs(best_score))) <= 2 * control.limits.mate) control.requestStop();
@@ -240,17 +235,20 @@ pub const Worker = struct {
                     const falling = std.math.clamp((11.48 + 2.30 * @as(f64, @floatFromInt(self.previous_average - iteration_value)) + 1.1 * @as(f64, @floatFromInt(iter_values[iter_index] - iteration_value))) / 100.0, 0.576, 1.728);
                     time_reduction = std.math.clamp(interpolate(@floatFromInt(self.root_depth - last_best_depth), 4.96, 18.79, 0.639, 1.712), 0.629, 1.544);
                     const reduction = (1.468 + self.previous_time_reduction) / (2.284 * time_reduction);
+                    total_changes /= 2;
+                    const changes = if (control.read_changes) |read| read(control.node_context) else self.best_move_changes;
+                    total_changes += @floatFromInt(changes);
+                    self.best_move_changes = 0;
                     const instability = 1.077 + 2.229 * total_changes / @as(f64, @floatFromInt(control.worker_count));
                     const high_effort = std.math.clamp(interpolate(@floatFromInt(effort), 75800, 104510, 0.969, 0.714), 0.693, 0.838);
                     var total_time = @as(f64, @floatFromInt(control.budget.optimum)) * falling * reduction * instability * high_effort;
-                    if (count == 1) total_time = @min(500, total_time);
+                    if (count == 1) total_time = @min(500.0 * @as(f64, @floatFromInt(@max(control.limits.npmsec, 1))), total_time);
                     const elapsed: f64 = @floatFromInt(control.searchElapsed(control.totalNodes(self.base.nodes)));
                     if (elapsed > @min(total_time, @as(f64, @floatFromInt(control.budget.maximum))) or self.root_moves[multi_pv - 1].score >= t.value_mate - 3 or best_score == -t.value_mate + 2) {
                         if (control.ponder.load(.acquire)) control.stop_on_ponderhit = true else control.requestStop();
                     } else control.increase_depth.store(control.ponder.load(.acquire) or elapsed <= total_time * 0.50, .monotonic);
                 }
             }
-            self.best_move_changes = 0;
             iter_values[iter_index] = iteration_value;
             iter_index = (iter_index + 1) & 3;
         }

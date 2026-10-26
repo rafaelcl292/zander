@@ -7,24 +7,7 @@ const mg = @import("movegen.zig");
 const position = @import("position.zig");
 const Position = position.Position;
 const ExtMove = struct { move: t.Move, value: i32 };
-const Stage = enum {
-    main_tt,
-    capture_init,
-    good_capture,
-    quiet_init,
-    good_quiet,
-    bad_capture,
-    bad_quiet,
-    evasion_tt,
-    evasion_init,
-    evasion,
-    probcut_tt,
-    probcut_init,
-    probcut,
-    qsearch_tt,
-    qcapture_init,
-    qcapture,
-};
+const Stage = enum { tt, init_first, good_capture, good_quiet, bad_moves, qsearch, evasion, probcut };
 fn partialSort(moves: []ExtMove, limit: i32) void {
     if (moves.len < 2) return;
     var sorted_end: usize = 0;
@@ -52,6 +35,7 @@ pub const MovePicker = struct {
     capture: *const h.CapturePieceToHistory,
     tt_move: t.Move,
     stage: Stage,
+    first_stage: Stage,
     threshold: i32 = 0,
     depth: i32 = 0,
     ply: usize = 0,
@@ -59,26 +43,22 @@ pub const MovePicker = struct {
     cur: usize = 0,
     end_cur: usize = 0,
     end_bad_captures: usize = 0,
-    end_captures: usize = 0,
-    end_generated: usize = 0,
+    end_bad_moves: usize = 0,
     moves: [t.max_moves]ExtMove = undefined,
     pub fn init(pos: *const Position, tt_move: t.Move, depth: i32, histories: Histories, ply: usize) MovePicker {
         std.debug.assert(histories.continuation.len >= (if (depth > 0) @as(usize, 6) else 1));
-        var picker: MovePicker = .{ .pos = pos, .histories = histories, .capture = histories.capture, .tt_move = tt_move, .stage = if (pos.st.checkers != 0) .evasion_tt else if (depth > 0) .main_tt else .qsearch_tt, .depth = depth, .ply = ply };
-        if (tt_move.data == 0 or !pos.legal(tt_move)) picker.advance();
-        return picker;
+        return .{ .pos = pos, .histories = histories, .capture = histories.capture, .tt_move = tt_move, .first_stage = if (pos.st.checkers != 0) .evasion else if (depth > 0) .good_capture else .qsearch, .stage = if (tt_move.data != 0 and pos.legal(tt_move)) .tt else .init_first, .depth = depth, .ply = ply };
     }
     pub fn initProbcut(pos: *const Position, tt_move: t.Move, threshold: i32, capture: *const h.CapturePieceToHistory) MovePicker {
         std.debug.assert(pos.st.checkers == 0);
-        var picker: MovePicker = .{ .pos = pos, .capture = capture, .tt_move = tt_move, .stage = .probcut_tt, .threshold = threshold };
-        if (!tt_move.valid() or !pos.captureStage(tt_move) or !pos.legal(tt_move)) picker.advance();
-        return picker;
-    }
-    fn advance(self: *MovePicker) void {
-        self.stage = @fromBackingInt(@intCast(@backingInt(self.stage) + 1));
+        return .{ .pos = pos, .capture = capture, .tt_move = tt_move, .stage = if (tt_move.valid() and pos.captureStage(tt_move) and pos.legal(tt_move)) .tt else .init_first, .first_stage = .probcut, .threshold = threshold };
     }
     pub fn skipQuietMoves(self: *MovePicker) void {
         self.skip_quiets = true;
+        if (self.stage == .bad_moves or self.stage == .good_quiet) {
+            self.end_cur = self.end_bad_captures;
+            self.end_bad_moves = self.end_bad_captures;
+        }
     }
     fn score(self: *MovePicker, comptime kind: mg.GenType) usize {
         var list: mg.MoveList = undefined;
@@ -86,10 +66,10 @@ pub const MovePicker = struct {
         const us = self.pos.side;
         var lesser: [7]u64 = @splat(0);
         if (kind == .quiets) {
-            lesser[2] = self.pos.st.threats[@backingInt(t.PieceType.pawn)];
+            lesser[2] = self.pos.threatsBy(.pawn);
             lesser[3] = lesser[2];
-            lesser[4] = self.pos.st.threats[@backingInt(t.PieceType.knight)] | self.pos.st.threats[@backingInt(t.PieceType.bishop)] | lesser[2];
-            lesser[5] = self.pos.st.threats[@backingInt(t.PieceType.rook)] | lesser[4];
+            lesser[4] = self.pos.threatsBy(.knight) | self.pos.threatsBy(.bishop) | lesser[2];
+            lesser[5] = self.pos.threatsBy(.rook) | lesser[4];
         }
         std.debug.assert(self.cur + list.len <= self.moves.len);
         for (list.slice(), self.cur..) |move, i| {
@@ -119,7 +99,7 @@ pub const MovePicker = struct {
         }
         return self.cur + list.len;
     }
-    const Filter = enum { all, good_capture, good_quiet, bad_quiet, probcut };
+    const Filter = enum { all, good_capture, good_quiet, probcut };
     fn select(self: *MovePicker, comptime filter: Filter) t.Move {
         while (self.cur < self.end_cur) {
             const i = self.cur;
@@ -129,71 +109,53 @@ pub const MovePicker = struct {
             const accept = switch (filter) {
                 .all => true,
                 .good_quiet => m.value > -14000,
-                .bad_quiet => m.value <= -14000,
                 .probcut => self.pos.seeGe(m.move, self.threshold),
                 .good_capture => self.pos.seeGe(m.move, @divTrunc(-m.value, 18)),
             };
             if (accept) return m.move;
-            if (filter == .good_capture) {
-                std.mem.swap(ExtMove, &self.moves[self.end_bad_captures], &self.moves[i]);
-                self.end_bad_captures += 1;
+            if (filter == .good_capture or filter == .good_quiet) {
+                self.moves[self.end_bad_moves] = m;
+                self.end_bad_moves += 1;
             }
         }
         return .none;
     }
     pub fn next(self: *MovePicker) t.Move {
         while (true) switch (self.stage) {
-            .main_tt, .evasion_tt, .qsearch_tt, .probcut_tt => {
-                self.advance();
+            .tt => {
+                self.stage = .init_first;
                 return self.tt_move;
             },
-            .capture_init, .probcut_init, .qcapture_init => {
+            .init_first => {
                 self.cur = 0;
-                self.end_bad_captures = 0;
-                self.end_cur = self.score(.captures);
-                self.end_captures = self.end_cur;
-                partialSort(self.moves[self.cur..self.end_cur], std.math.minInt(i32));
-                self.advance();
+                self.end_bad_moves = 0;
+                self.end_cur = if (self.first_stage == .evasion) self.score(.evasions) else self.score(.captures);
+                partialSort(self.moves[0..self.end_cur], std.math.minInt(i32));
+                self.stage = self.first_stage;
             },
             .good_capture => {
                 const move = self.select(.good_capture);
                 if (move.data != 0) return move;
-                self.advance();
-            },
-            .quiet_init => {
+                self.end_bad_captures = self.end_bad_moves;
                 if (!self.skip_quiets) {
+                    self.cur = self.end_bad_moves;
                     self.end_cur = self.score(.quiets);
-                    self.end_generated = self.end_cur;
                     partialSort(self.moves[self.cur..self.end_cur], -3560 * self.depth);
-                }
-                self.advance();
+                    self.stage = .good_quiet;
+                } else self.prepareBadMoves();
             },
             .good_quiet => {
-                if (!self.skip_quiets) {
-                    const move = self.select(.good_quiet);
-                    if (move.data != 0) return move;
-                }
-                self.cur = 0;
-                self.end_cur = self.end_bad_captures;
-                self.advance();
-            },
-            .bad_capture => {
-                const move = self.select(.all);
+                const move = self.select(.good_quiet);
                 if (move.data != 0) return move;
-                self.cur = self.end_captures;
-                self.end_cur = self.end_generated;
-                self.advance();
+                self.prepareBadMoves();
             },
-            .bad_quiet => return if (self.skip_quiets) .none else self.select(.bad_quiet),
-            .evasion_init => {
-                self.cur = 0;
-                self.end_cur = self.score(.evasions);
-                self.end_generated = self.end_cur;
-                partialSort(self.moves[0..self.end_cur], std.math.minInt(i32));
-                self.advance();
-            },
-            .evasion, .qcapture => return self.select(.all),
+            .bad_moves, .evasion, .qsearch => return self.select(.all),
             .probcut => return self.select(.probcut),
         };
+    }
+    fn prepareBadMoves(self: *MovePicker) void {
+        self.cur = 0;
+        self.end_cur = self.end_bad_moves;
+        self.stage = .bad_moves;
     }
 };

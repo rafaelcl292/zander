@@ -43,7 +43,7 @@ helper reads it to identify the pinned weights. Weights are downloaded separatel
 
 Zander derives from **Stockfish**, developed by the Stockfish team and
 contributors. The reference in [vendor/stockfish](vendor/stockfish) is pinned to
-commit [`5c4cef0bfe61fb3249178b2bcf21f5673557efe7`](https://github.com/official-stockfish/Stockfish/tree/5c4cef0bfe61fb3249178b2bcf21f5673557efe7).
+commit [`ff3a6c508ed731f0dcf253f4ddf646df19a62f84`](https://github.com/official-stockfish/Stockfish/tree/ff3a6c508ed731f0dcf253f4ddf646df19a62f84).
 
 Licensed under **GPL-3.0-or-later**. See [LICENSE](LICENSE) and
 [AUTHORS.stockfish](AUTHORS.stockfish).

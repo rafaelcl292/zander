@@ -162,20 +162,22 @@ pub const FullThreats = struct {
             index1: [16][16][2]u32 = @splat(@splat(@splat(0))),
             index2: [8][64][64]u16 = @splat(@splat(@splat(0))),
         } = .{};
+        var counts: [8]u32 = @splat(0);
+        for (1..7) |pt| {
+            for (0..64) |from| {
+                for (0..64) |to| {
+                    const pseudo = attacks.pseudo[if (pt == 1) @as(usize, if (to < from) 1 else 0) else pt][from];
+                    result.index2[pt][from][to] = @intCast(counts[pt] + @popCount(((@as(u64, 1) << @as(u6, @intCast(to))) - 1) & pseudo));
+                }
+                if (pt != 1 or (from >= 8 and from <= 55)) counts[pt] += @popCount(attacks.pseudo[if (pt == 1) 0 else pt][from]);
+            }
+        }
         var cumulative: u32 = 0;
-        var counts: [16]u32 = @splat(0);
         var bases: [16]u32 = @splat(0);
         for (all_pieces) |pc| {
             const p = @backingInt(pc);
-            for (0..64) |from| {
-                const pseudo = attacks.pseudo[if (pc.pieceType() == .pawn) @backingInt(pc.color()) else @backingInt(pc.pieceType())][from];
-                const offset = counts[p];
-                const geometry = if (p == 9) 0 else p & 7;
-                if (pc.pieceType() != .pawn or (from >= 8 and from <= 55)) counts[p] += @popCount(pseudo);
-                for (0..64) |to| result.index2[geometry][from][to] = @intCast(offset + @popCount(((@as(u64, 1) << @as(u6, @intCast(to))) - 1) & pseudo));
-            }
             bases[p] = cumulative;
-            cumulative += valid_targets[p] * counts[p];
+            cumulative += valid_targets[p] * counts[p & 7];
         }
         std.debug.assert(cumulative == dimensions);
         for (all_pieces) |attacker| {
@@ -186,7 +188,7 @@ pub const FullThreats = struct {
                 const qt = attacked.pieceType();
                 const mapped = mapping[@backingInt(pt) - 1][@backingInt(qt) - 1];
                 const semi_excluded = pt == qt and ((p ^ q) == 8 or pt != .pawn);
-                const feature = if (mapped < 0) dimensions else bases[p] + (@as(u32, @backingInt(attacked.color())) * (valid_targets[p] / 2) + @as(u32, @intCast(mapped))) * counts[p];
+                const feature = if (mapped < 0) dimensions else bases[p] + (@as(u32, @backingInt(attacked.color())) * (valid_targets[p] / 2) + @as(u32, @intCast(mapped))) * counts[p & 7];
                 result.index1[p][q] = .{ feature, if (mapped < 0 or semi_excluded) dimensions else feature };
             }
         }
@@ -198,10 +200,7 @@ pub const FullThreats = struct {
         const dest = @backingInt(to) ^ orient;
         const pc = @backingInt(attacker) ^ (8 * @backingInt(perspective));
         const target = @backingInt(attacked) ^ (8 * @backingInt(perspective));
-        // Geometry is color-independent except for pawn attack directions.
-        // Fold each square offset into the geometry table at compile time.
-        const geometry = if (pc == 9) 0 else pc & 7;
-        return lookup.index1[pc][target][@intFromBool(f < dest)] + lookup.index2[geometry][f][dest];
+        return lookup.index1[pc][target][@intFromBool(f < dest)] + lookup.index2[pc & 7][f][dest];
     }
     fn appendIfValid(list: *ThreatList, index: u32) void {
         std.debug.assert(list.len < list.items.len and index <= std.math.maxInt(u16));
@@ -241,21 +240,30 @@ pub const FullThreats = struct {
         }
     }
     pub fn appendChanged(perspective: t.Color, king: t.Square, diff: *const dirty.DirtyThreats, removed: *ThreatList, added: *ThreatList) void {
+        const orient = orientation(perspective, king);
+        const pair_swap: u8 = 0x88 * @backingInt(perspective);
         for (diff.list[0..diff.len]) |entry| {
             const raw = entry.data;
-            const index = makeIndex(perspective, @fromBackingInt(@intCast((raw >> 20) & 15)), @fromBackingInt(@intCast(raw & 255)), @fromBackingInt(@intCast((raw >> 8) & 255)), @fromBackingInt(@intCast((raw >> 16) & 15)), king);
+            const from = @as(u8, @truncate(raw)) ^ orient;
+            const to = @as(u8, @truncate(raw >> 8)) ^ orient;
+            const pair: u8 = @truncate(raw >> 16);
+            const oriented = pair ^ pair_swap;
+            const index = lookup.index1[oriented >> 4][oriented & 15][@intFromBool(from < to)] + lookup.index2[(pair >> 4) & 7][from][to];
             appendIfValid(if (raw >> 31 != 0) added else removed, index);
         }
     }
     pub fn appendChangedBoth(kings: [2]t.Square, diff: *const dirty.DirtyThreats, removed: *[2]ThreatList, added: *[2]ThreatList) void {
+        const orient = [2]u8{ orientation(.white, kings[0]), orientation(.black, kings[1]) };
         for (diff.list[0..diff.len]) |entry| {
             const raw = entry.data;
-            const attacker: t.Piece = @fromBackingInt(@intCast((raw >> 20) & 15));
-            const from: t.Square = @fromBackingInt(@intCast(raw & 255));
-            const to: t.Square = @fromBackingInt(@intCast((raw >> 8) & 255));
-            const attacked: t.Piece = @fromBackingInt(@intCast((raw >> 16) & 15));
+            const from: u8 = @truncate(raw);
+            const to: u8 = @truncate(raw >> 8);
+            const pair: u8 = @truncate(raw >> 16);
             inline for (0..2) |side| {
-                const index = makeIndex(@fromBackingInt(@intCast(side)), attacker, from, to, attacked, kings[side]);
+                const f = from ^ orient[side];
+                const dest = to ^ orient[side];
+                const oriented = pair ^ @as(u8, 0x88 * side);
+                const index = lookup.index1[oriented >> 4][oriented & 15][@intFromBool(f < dest)] + lookup.index2[(pair >> 4) & 7][f][dest];
                 appendIfValid(if (raw >> 31 != 0) &added[side] else &removed[side], index);
             }
         }
