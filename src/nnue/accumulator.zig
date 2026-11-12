@@ -36,12 +36,13 @@ pub const Stack = struct {
     pub fn latest(self: *Stack) *Accumulator {
         return &self.accumulators[self.size - 1];
     }
+    /// Reserve a child slot. The caller must populate the returned deltas with
+    /// Position.doMoveWithDirties before evaluating the new position.
     pub fn push(self: *Stack, pos: *const Position) *dirty.Dirties {
         std.debug.assert(self.size < self.accumulators.len);
         self.latest().blocks = .{ f.K32H3.block(pos, .white), f.K32H3.block(pos, .black) };
         const state = &self.accumulators[self.size];
         state.computed = @splat(false);
-        state.dirties.reset();
         self.size += 1;
         return &state.dirties;
     }

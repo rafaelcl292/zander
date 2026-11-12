@@ -531,7 +531,8 @@ pub const Position = struct {
     pub fn doMoveWithDirties(self: *Position, m: t.Move, next: *StateInfo, dirties: ?*dirty.Dirties) void {
         const dts: ?*dirty.DirtyThreats = if (dirties) |d| &d.threats else null;
         if (dirties) |d| {
-            d.reset();
+            // The piece delta and both pawn snapshots are fully assigned below.
+            d.threats.len = 0;
             d.before = .{ self.piecesOf(.white, .pawn), self.piecesOf(.black, .pawn) };
         }
         std.debug.assert(next != self.st);
@@ -548,6 +549,14 @@ pub const Position = struct {
             .plies_from_null = old.plies_from_null + 1,
             .ep_square = old.ep_square,
             .previous = old,
+            // Recomputed before any read, like the reference's uncopied suffix.
+            // Preserve zeroes in the unused check-square slots and lazy cache.
+            .key = undefined,
+            .checkers = undefined,
+            .blockers_for_king = undefined,
+            .pinners = undefined,
+            .check_squares = .{ 0, undefined, undefined, undefined, undefined, undefined, undefined, 0 },
+            .captured_piece = undefined,
         };
         self.st = next;
         self.game_ply += 1;
