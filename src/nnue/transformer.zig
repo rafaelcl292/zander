@@ -78,6 +78,8 @@ pub const FeatureTransformer = struct {
     pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, to: *[dimensions]i16, removed: []const u32, added: []const u32, threats_removed: []const u16, threats_added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const registers = tile_registers;
+        const removed_prefix = if (paired.enabled) self.preparePairedPrefix(removed, threats_removed) else {};
+        const added_prefix = if (paired.enabled) self.preparePairedPrefix(added, threats_added) else {};
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * registers) {
             // A contiguous tile view avoids independent offset calculations for
@@ -85,8 +87,8 @@ pub const FeatureTransformer = struct {
             const Tile = [registers]@Vector(lanes, i16);
             var tile = @as(*align(@alignOf(i16)) const Tile, @ptrCast(&from[offset])).*;
             if (paired.enabled) {
-                self.applyMixed(false, &tile, offset, removed, threats_removed);
-                self.applyMixed(true, &tile, offset, added, threats_added);
+                self.applyPairedPrefix(false, &tile, offset, removed_prefix);
+                self.applyPairedPrefix(true, &tile, offset, added_prefix);
             } else {
                 self.applyIncrementalPsq(false, lanes, &tile, offset, removed);
                 self.applyIncrementalPsq(true, lanes, &tile, offset, added);
@@ -192,18 +194,25 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    inline fn applyMixed(self: *const FeatureTransformer, comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, psq: []const u32, threats: []const u16) void {
+    const PairedPrefix = struct {
+        first: *const [dimensions]i8,
+        second: ?*const [dimensions]i8,
+        threats: []const u16,
+    };
+    fn preparePairedPrefix(self: *const FeatureTransformer, psq: []const u32, threats: []const u16) PairedPrefix {
         std.debug.assert(psq.len == 1 or psq.len == 2);
-        var first_threat: usize = 0;
-        if (psq.len == 2) {
-            applyPair(add, tile, offset, &self.weights[psq[0]], &self.weights[psq[1]]);
-        } else if (threats.len != 0) {
-            applyPair(add, tile, offset, &self.weights[psq[0]], &self.threat_weights[threats[0]]);
-            first_threat = 1;
+        const first = &self.weights[psq[0]];
+        if (psq.len == 2) return .{ .first = first, .second = &self.weights[psq[1]], .threats = threats };
+        if (threats.len != 0) return .{ .first = first, .second = &self.threat_weights[threats[0]], .threats = threats[1..] };
+        return .{ .first = first, .second = null, .threats = threats };
+    }
+    inline fn applyPairedPrefix(self: *const FeatureTransformer, comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, prefix: PairedPrefix) void {
+        if (prefix.second) |second| {
+            applyPair(add, tile, offset, prefix.first, second);
         } else {
-            applySingle(add, tile, offset, &self.weights[psq[0]]);
+            applySingle(add, tile, offset, prefix.first);
         }
-        self.applyTile(add, true, 16, tile, offset, threats[first_threat..]);
+        self.applyTile(add, true, 16, tile, offset, prefix.threats);
     }
     pub fn writeWeights(writer: *std.Io.Writer, rows: anytype) !void {
         if (!paired.enabled) return writer.writeAll(std.mem.sliceAsBytes(rows));
@@ -360,4 +369,38 @@ test "vector feature transformation matches scalar clipping and lane order" {
             try std.testing.expectEqual(@import("layers.zig").Architecture.nonzeroMasks(&vector), masks);
         }
     }
+}
+
+// Exercise every prefix shape, odd/even threat tails and modular overflow.
+test "prepared paired prefixes match scalar rows across list lengths and tiles" {
+    if (!paired.enabled) return error.SkipZigTest;
+    const ft = try std.testing.allocator.create(FeatureTransformer);
+    defer std.testing.allocator.destroy(ft);
+    for (0..4) |row| {
+        for (&ft.weights[row], 0..) |*value, lane| value.* = @bitCast(@as(u8, @truncate(row * 71 + lane * 13)));
+        paired.permute(&ft.weights[row]);
+    }
+    for (0..6) |row| {
+        for (&ft.threat_weights[row], 0..) |*value, lane| value.* = @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97)));
+        paired.permute(&ft.threat_weights[row]);
+    }
+    const removed = [_]u32{ 0, 2 };
+    const added = [_]u32{ 1, 3 };
+    const threats_removed = [_]u16{ 0, 1, 2, 3, 4, 5 };
+    const threats_added = [_]u16{ 5, 4, 2, 2, 1, 0 };
+    var from: [dimensions]i16 = undefined;
+    const edges = [_]i16{ -32768, 32767, 0, -1, 1, 32700, -32700 };
+    for (&from, 0..) |*value, lane| value.* = edges[lane % edges.len];
+    var actual: [dimensions]i16 = undefined;
+    for (1..3) |r| for (1..3) |a| for (0..7) |tr| for (0..7) |ta| {
+        ft.applyCombined(&from, &actual, removed[0..r], added[0..a], threats_removed[0..tr], threats_added[0..ta]);
+        for (actual, 0..) |value, lane| {
+            var expected = from[lane];
+            for (removed[0..r]) |row| expected -%= @as(i8, @bitCast(@as(u8, @truncate(row * 71 + lane * 13))));
+            for (added[0..a]) |row| expected +%= @as(i8, @bitCast(@as(u8, @truncate(row * 71 + lane * 13))));
+            for (threats_removed[0..tr]) |row| expected -%= @as(i8, @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97))));
+            for (threats_added[0..ta]) |row| expected +%= @as(i8, @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97))));
+            try std.testing.expectEqual(expected, value);
+        }
+    };
 }
