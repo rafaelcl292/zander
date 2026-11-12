@@ -80,6 +80,8 @@ pub const FeatureTransformer = struct {
         const registers = tile_registers;
         const removed_prefix = if (paired.enabled) self.preparePairedPrefix(removed, threats_removed) else {};
         const added_prefix = if (paired.enabled) self.preparePairedPrefix(added, threats_added) else {};
+        const removed_psq = if (!paired.enabled) self.preparePsqPrefix(removed) else {};
+        const added_psq = if (!paired.enabled) self.preparePsqPrefix(added) else {};
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * registers) {
             // A contiguous tile view avoids independent offset calculations for
@@ -90,8 +92,8 @@ pub const FeatureTransformer = struct {
                 self.applyPairedPrefix(false, &tile, offset, removed_prefix);
                 self.applyPairedPrefix(true, &tile, offset, added_prefix);
             } else {
-                self.applyIncrementalPsq(false, lanes, &tile, offset, removed);
-                self.applyIncrementalPsq(true, lanes, &tile, offset, added);
+                applyPsqPrefix(false, lanes, &tile, offset, removed_psq);
+                applyPsqPrefix(true, lanes, &tile, offset, added_psq);
                 self.applyTile(false, true, lanes, &tile, offset, threats_removed);
                 self.applyTile(true, true, lanes, &tile, offset, threats_added);
             }
@@ -136,12 +138,17 @@ pub const FeatureTransformer = struct {
             inline for (0..tile_registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
         }
     }
-    inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u32) void {
-        // Upstream apply_psq_features<sign, true>: every incremental move
-        // removes and adds one or two piece-square features.
+    const PsqPrefix = struct {
+        first: *const [dimensions]i8,
+        second: ?*const [dimensions]i8,
+    };
+    fn preparePsqPrefix(self: *const FeatureTransformer, indices: []const u32) PsqPrefix {
         std.debug.assert(indices.len == 1 or indices.len == 2);
-        self.applyTile(add, false, lanes, tile, offset, indices[0..1]);
-        if (indices.len == 2) self.applyTile(add, false, lanes, tile, offset, indices[1..2]);
+        return .{ .first = &self.weights[indices[0]], .second = if (indices.len == 2) &self.weights[indices[1]] else null };
+    }
+    inline fn applyPsqPrefix(comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, prefix: PsqPrefix) void {
+        applyRow(add, lanes, tile, offset, prefix.first);
+        if (prefix.second) |second| applyRow(add, lanes, tile, offset, second);
     }
     inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: anytype) void {
         if (paired.enabled) {
@@ -154,27 +161,24 @@ pub const FeatureTransformer = struct {
             if (i < indices.len) applySingle(add, tile, offset, if (threats) &self.threat_weights[indices[i]] else &self.weights[indices[i]]);
             return;
         }
-        for (indices) |index| {
-            const row = if (threats) self.threat_weights[index][offset..][0 .. tile_registers * lanes] else self.weights[index][offset..][0 .. tile_registers * lanes];
-            if (comptime @import("builtin").target.cpu.arch == .aarch64 and lanes == 8) {
-                // One 128-bit weight load feeds both halves of the tile.
-                // AArch64 widening operations can consume either byte half.
-                inline for (0..tile_registers / 2) |i| {
-                    const weights: @Vector(16, i8) = row[i * 16 ..][0..16].*;
-                    const values = @import("arm.zig").updateAccumulatorPair(add, tile[i * 2], tile[i * 2 + 1], weights);
-                    tile[i * 2] = values[0];
-                    tile[i * 2 + 1] = values[1];
-                }
-                continue;
+        for (indices) |index| applyRow(add, lanes, tile, offset, if (threats) &self.threat_weights[index] else &self.weights[index]);
+    }
+    inline fn applyRow(comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, weights: *const [dimensions]i8) void {
+        const row = weights[offset..][0 .. tile_registers * lanes];
+        if (comptime @import("builtin").target.cpu.arch == .aarch64 and lanes == 8) {
+            // Both halves share one full weight-vector load.
+            inline for (0..tile_registers / 2) |i| {
+                const weight_bytes: @Vector(16, i8) = row[i * 16 ..][0..16].*;
+                const values = @import("arm.zig").updateAccumulatorPair(add, tile[i * 2], tile[i * 2 + 1], weight_bytes);
+                tile[i * 2] = values[0];
+                tile[i * 2 + 1] = values[1];
             }
-            inline for (0..tile_registers) |i| {
-                const start = i * lanes;
-                const weight: @Vector(lanes, i16) = if (threats)
-                    @as(@Vector(lanes, i8), row[start..][0..lanes].*)
-                else
-                    @as(@Vector(lanes, i8), row[start..][0..lanes].*);
-                if (add) tile[i] +%= weight else tile[i] -%= weight;
-            }
+            return;
+        }
+        inline for (0..tile_registers) |i| {
+            const start = i * lanes;
+            const weight: @Vector(lanes, i16) = @as(@Vector(lanes, i8), row[start..][0..lanes].*);
+            if (add) tile[i] +%= weight else tile[i] -%= weight;
         }
     }
     inline fn applySingle(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, row: *const [dimensions]i8) void {
@@ -372,17 +376,16 @@ test "vector feature transformation matches scalar clipping and lane order" {
 }
 
 // Exercise every prefix shape, odd/even threat tails and modular overflow.
-test "prepared paired prefixes match scalar rows across list lengths and tiles" {
-    if (!paired.enabled) return error.SkipZigTest;
+test "incremental prefixes match scalar rows across list lengths and tiles" {
     const ft = try std.testing.allocator.create(FeatureTransformer);
     defer std.testing.allocator.destroy(ft);
     for (0..4) |row| {
         for (&ft.weights[row], 0..) |*value, lane| value.* = @bitCast(@as(u8, @truncate(row * 71 + lane * 13)));
-        paired.permute(&ft.weights[row]);
+        if (paired.enabled) paired.permute(&ft.weights[row]);
     }
     for (0..6) |row| {
         for (&ft.threat_weights[row], 0..) |*value, lane| value.* = @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97)));
-        paired.permute(&ft.threat_weights[row]);
+        if (paired.enabled) paired.permute(&ft.threat_weights[row]);
     }
     const removed = [_]u32{ 0, 2 };
     const added = [_]u32{ 1, 3 };
