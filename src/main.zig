@@ -1,7 +1,7 @@
 const std = @import("std");
 const z = @import("zander");
 const usage =
-    \\Zander — incremental Stockfish port in Zig 0.17.0
+    \\Zander — incremental Stockfish port in Zig 0.17.1
     \\Usage:
     \\  zander perft <depth: 0..8> [--chess960] ["FEN"]
     \\  zander eval <network.nnue> [--chess960] ["FEN"]
