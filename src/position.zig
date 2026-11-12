@@ -159,7 +159,7 @@ pub const Position = struct {
     fn computeThreats(self: *const Position) void {
         self.st.threats = @splat(0);
         const occupied = self.pieces() ^ bb.square(self.king(self.side));
-        for ([_]PieceType{ .pawn, .knight, .bishop, .rook, .queen, .king }) |pt| {
+        inline for ([_]PieceType{ .pawn, .knight, .bishop, .rook, .queen, .king }) |pt| {
             var pieces_bb = self.piecesOf(self.side.opposite(), pt);
             var threats: u64 = 0;
             if (pt == .pawn) threats = bb.pawnAttacks(self.side.opposite(), pieces_bb) else {
