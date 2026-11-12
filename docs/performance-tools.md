@@ -21,6 +21,14 @@ interfere: keep the host idle and finish compilation before measuring. On SMT
 machines, choose engine and harness CPUs on different physical cores and leave
 the engine's sibling idle. WSL host activity is outside this lock's control.
 
+Sequence dependent jobs by waiting for the benchmark process to exit successfully,
+then check that `results.json` has `status: complete`. Acquiring the measurement
+lock does not establish completion: `bench.py` releases it before analysis and
+final report publication. `protocol.json` retains its initial `running` status.
+If an SSH connection or observer fails, inspect the original process and results
+before scheduling another run; the remote benchmark may still be running or may
+have finished successfully. Preserve its evidence and the observer failure log.
+
 ## Controlled benchmark
 
 ```sh
