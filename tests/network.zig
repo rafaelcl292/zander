@@ -10,7 +10,13 @@ test "real NNUE loading and incremental evaluation match pinned Stockfish" {
     try std.testing.expectEqualStrings(z.nnue_network.default_sha256, &std.fmt.bytesToHex(digest, .lower));
     const network = try allocator.create(z.nnue_network.Network);
     defer allocator.destroy(network);
-    _ = try network.load(bytes);
+    const description = try network.load(bytes);
+    // Internal SIMD layouts must never leak into the portable network format.
+    const serialized = try allocator.alloc(u8, bytes.len);
+    defer allocator.free(serialized);
+    var writer = std.Io.Writer.fixed(serialized);
+    try network.save(&writer, description);
+    try std.testing.expectEqualSlices(u8, bytes, writer.buffered());
     const stack = try allocator.create(z.nnue_accumulator.Stack);
     defer allocator.destroy(stack);
     const cache = try allocator.create(z.nnue_accumulator.Caches);

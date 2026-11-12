@@ -54,9 +54,9 @@ pub const Network = struct {
         const ft = &self.transformer;
         for (ft.biases) |bias| try out.int(writer, i16, bias);
         const threats = features.FullThreats.dimensions;
-        try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[0..threats]));
-        try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[threats..]));
-        try writer.writeAll(std.mem.asBytes(&ft.weights));
+        try FeatureTransformer.writeWeights(writer, ft.threat_weights[0..threats]);
+        try FeatureTransformer.writeWeights(writer, ft.threat_weights[threats..]);
+        try FeatureTransformer.writeWeights(writer, &ft.weights);
         for (self.layers[0..self.stored_layer_stacks]) |*layer| {
             try out.int(writer, u32, Architecture.hash());
             inline for (.{ "fc0", "fc1", "fc2" }) |name| {

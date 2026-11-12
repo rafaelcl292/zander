@@ -1,5 +1,6 @@
 // Derived from Stockfish nnue_feature_transformer.h; GPL-3.0-or-later.
 const std = @import("std");
+const paired = @import("paired.zig");
 const layout = @import("layout.zig");
 const features = @import("features.zig");
 const Reader = @import("reader.zig").Reader;
@@ -26,6 +27,10 @@ pub const FeatureTransformer = struct {
         @memcpy(pair_bytes, try reader.take(pair_bytes.len));
         const weights = std.mem.asBytes(&self.weights);
         @memcpy(weights, try reader.take(weights.len));
+        if (paired.enabled) {
+            for (&self.weights) |*row| paired.permute(row);
+            for (&self.threat_weights) |*row| paired.permute(row);
+        }
     }
     pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u32) void {
         if (@import("backend").simd) return self.applyVector(add, false, acc, indices);
@@ -45,6 +50,16 @@ pub const FeatureTransformer = struct {
     }
     fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, indices: anytype) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
+        if (paired.enabled) {
+            var start: usize = 0;
+            while (start < dimensions) : (start += lanes * tile_registers) {
+                const Tile = [tile_registers]@Vector(lanes, i16);
+                var tile = @as(*align(2) const Tile, @ptrCast(&acc[start])).*;
+                self.applyTile(add, threats, lanes, &tile, start, indices);
+                @as(*align(2) Tile, @ptrCast(&acc[start])).* = tile;
+            }
+            return;
+        }
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes) {
             var value: @Vector(lanes, i16) = acc[offset..][0..lanes].*;
@@ -69,10 +84,15 @@ pub const FeatureTransformer = struct {
             // every vector. Accumulators only need their existing i16 alignment.
             const Tile = [registers]@Vector(lanes, i16);
             var tile = @as(*align(@alignOf(i16)) const Tile, @ptrCast(&from[offset])).*;
-            self.applyIncrementalPsq(false, lanes, &tile, offset, removed);
-            self.applyIncrementalPsq(true, lanes, &tile, offset, added);
-            self.applyTile(false, true, lanes, &tile, offset, threats_removed);
-            self.applyTile(true, true, lanes, &tile, offset, threats_added);
+            if (paired.enabled) {
+                self.applyMixed(false, &tile, offset, removed, threats_removed);
+                self.applyMixed(true, &tile, offset, added, threats_added);
+            } else {
+                self.applyIncrementalPsq(false, lanes, &tile, offset, removed);
+                self.applyIncrementalPsq(true, lanes, &tile, offset, added);
+                self.applyTile(false, true, lanes, &tile, offset, threats_removed);
+                self.applyTile(true, true, lanes, &tile, offset, threats_added);
+            }
             @as(*align(@alignOf(i16)) Tile, @ptrCast(&to[offset])).* = tile;
         }
     }
@@ -122,6 +142,16 @@ pub const FeatureTransformer = struct {
         if (indices.len == 2) self.applyTile(add, false, lanes, tile, offset, indices[1..2]);
     }
     inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: anytype) void {
+        if (paired.enabled) {
+            var i: usize = 0;
+            while (i + 1 < indices.len) : (i += 2) {
+                const a = if (threats) &self.threat_weights[indices[i]] else &self.weights[indices[i]];
+                const b = if (threats) &self.threat_weights[indices[i + 1]] else &self.weights[indices[i + 1]];
+                applyPair(add, tile, offset, a, b);
+            }
+            if (i < indices.len) applySingle(add, tile, offset, if (threats) &self.threat_weights[indices[i]] else &self.weights[indices[i]]);
+            return;
+        }
         for (indices) |index| {
             const row = if (threats) self.threat_weights[index][offset..][0 .. tile_registers * lanes] else self.weights[index][offset..][0 .. tile_registers * lanes];
             inline for (0..tile_registers) |i| {
@@ -132,6 +162,44 @@ pub const FeatureTransformer = struct {
                     @as(@Vector(lanes, i8), row[start..][0..lanes].*);
                 if (add) tile[i] +%= weight else tile[i] -%= weight;
             }
+        }
+    }
+    inline fn applySingle(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, row: *const [dimensions]i8) void {
+        inline for (0..tile_registers / 2) |i| {
+            const values = paired.single(row[offset + i * 32 ..][0..32]);
+            inline for (0..2) |half| {
+                if (add) tile[i * 2 + half] +%= values[half] else tile[i * 2 + half] -%= values[half];
+            }
+        }
+    }
+    inline fn applyPair(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, a: *const [dimensions]i8, b: *const [dimensions]i8) void {
+        inline for (0..tile_registers / 2) |i| {
+            const start = offset + i * 32;
+            const values = paired.sum(a[start..][0..32], b[start..][0..32]);
+            inline for (0..2) |half| {
+                if (add) tile[i * 2 + half] +%= values[half] else tile[i * 2 + half] -%= values[half];
+            }
+        }
+    }
+    inline fn applyMixed(self: *const FeatureTransformer, comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, psq: []const u32, threats: []const u16) void {
+        std.debug.assert(psq.len == 1 or psq.len == 2);
+        var first_threat: usize = 0;
+        if (psq.len == 2) {
+            applyPair(add, tile, offset, &self.weights[psq[0]], &self.weights[psq[1]]);
+        } else if (threats.len != 0) {
+            applyPair(add, tile, offset, &self.weights[psq[0]], &self.threat_weights[threats[0]]);
+            first_threat = 1;
+        } else {
+            applySingle(add, tile, offset, &self.weights[psq[0]]);
+        }
+        self.applyTile(add, true, 16, tile, offset, threats[first_threat..]);
+    }
+    pub fn writeWeights(writer: *std.Io.Writer, rows: anytype) !void {
+        if (!paired.enabled) return writer.writeAll(std.mem.sliceAsBytes(rows));
+        for (rows) |row| {
+            var canonical = row;
+            paired.permute(&canonical);
+            try writer.writeAll(std.mem.asBytes(&canonical));
         }
     }
     pub fn transform(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8) void {
