@@ -33,6 +33,7 @@ pub const nnue_reader = @import("nnue/reader.zig");
 test {
     _ = worker_memory;
     _ = @import("nnue/transformer.zig");
+    _ = @import("nnue/paired.zig");
     _ = nnue_accumulator;
     _ = @import("numa_windows.zig");
     _ = @import("nnue/dispatch.zig");
