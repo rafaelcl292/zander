@@ -60,9 +60,25 @@ int main(int argc, char** argv) {
         }
         // Exercise every legal first move, including promotions and Chess960 castling.
         for (auto m : MoveList<ALL>(pos)) {
+            const auto before = Features::K32H3::block_state(pos);
             pos.do_move(m, states[1], pos.gives_check(m), stack->push(pos), nullptr);
             emit(m,false,true);
+            Move delayedReply = Move::none();
+            if (before != Features::K32H3::block_state(pos)) {
+                MoveList<ALL> replies(pos);
+                if (replies.size()) delayedReply = *replies.begin();
+            }
             pos.undo_move(m); stack->pop(); emit(m,true,false);
+            if (delayedReply != Move::none()) {
+                // Reuse the child slot, defer the block-changing move, then
+                // evaluate its descendant and unwind through both positions.
+                pos.do_move(m, states[1], pos.gives_check(m), stack->push(pos), nullptr);
+                emit(m,false,false);
+                pos.do_move(delayedReply, states[2], pos.gives_check(delayedReply), stack->push(pos), nullptr);
+                emit(delayedReply,false,true);
+                pos.undo_move(delayedReply); stack->pop(); emit(delayedReply,true,true);
+                pos.undo_move(m); stack->pop(); emit(m,true,true);
+            }
         }
         PRNG rng(20260919); std::vector<Move> moves;
         for (size_t i=0; i<48; ++i) {

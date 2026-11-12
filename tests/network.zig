@@ -36,6 +36,7 @@ test "real NNUE loading and incremental evaluation match pinned Stockfish" {
     var pos: z.position.Position = undefined;
     var states: [50]z.position.StateInfo = undefined;
     var ply: usize = 0;
+    var deferred_blocks: [2][3][3]bool = @splat(@splat(@splat(false)));
     for (reference.events, 0..) |event, event_index| {
         if (event.root != root) {
             root = event.root;
@@ -49,8 +50,13 @@ test "real NNUE loading and incremental evaluation match pinned Stockfish" {
             stack.pop();
             ply -= 1;
         } else {
+            const before = [2]u8{ z.nnue_features.K32H3.block(&pos, .white), z.nnue_features.K32H3.block(&pos, .black) };
             ply += 1;
             pos.doMoveWithDirties(.{ .data = event.move }, &states[ply], stack.push(&pos));
+            if (!event.evaluate) inline for (.{ z.types.Color.white, z.types.Color.black }, 0..) |color, side| {
+                const after = z.nnue_features.K32H3.block(&pos, color);
+                deferred_blocks[side][before[side]][after] = true;
+            };
         }
         if (!event.evaluate) continue;
         errdefer std.debug.print("NNUE event {d}, root {d}, ply {d}\n", .{ event_index, root, ply });
@@ -66,6 +72,11 @@ test "real NNUE loading and incremental evaluation match pinned Stockfish" {
             try std.testing.expectEqual(expected, network.evaluateAdjusted(&pos, stack, cache, optimism));
         };
     }
+    // Captures and promotions must exercise every block transition while
+    // evaluation is deferred, for both perspectives.
+    for (deferred_blocks) |side| for (side, 0..) |row, before| {
+        for (row, 0..) |covered, after| if (before != after) try std.testing.expect(covered);
+    };
     try std.testing.expectError(error.UnsupportedVersion, network.load(&.{ 0, 0, 0, 0 }));
     try std.testing.expect(!network.initialized);
 }
