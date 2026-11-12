@@ -370,13 +370,13 @@ fn expectActiveFeatures(pos: *const z.position.Position, expected: @import("posi
         var occupied = pos.pieces();
         while (occupied != 0) {
             const square = z.bitboard.popLsb(&occupied);
-            half.append(features.K32Q2.makeIndex(c, square, pos.pieceOn(square), pos.king(c), pos.piecesOf(c.opposite(), .queen) != 0));
+            half.append(features.K32H3.makeIndex(c, square, pos.pieceOn(square), pos.king(c), features.K32H3.block(pos, c)));
         }
         var threats: features.ThreatList = .{};
         var pawns: features.ThreatList = .{};
         features.FullThreats.appendActive(c, pos, &threats);
         features.PawnPairs.appendActive(c, pos, &pawns);
-        try std.testing.expectEqualSlices(u16, ref.half, half.slice());
+        try std.testing.expectEqualSlices(u32, ref.half, half.slice());
         try std.testing.expectEqualSlices(u16, ref.threats, threats.slice());
         try std.testing.expectEqualSlices(u16, ref.pawns, pawns.slice());
     }
@@ -390,16 +390,16 @@ fn expectChangedFeatures(pos: *const z.position.Position, expected: @import("pos
         var ta: features.ThreatList = .{};
         var pr: features.ThreatList = .{};
         var pa: features.ThreatList = .{};
-        features.K32Q2.appendChanged(c, pos.king(c), diff.piece, pos.piecesOf(c.opposite(), .queen) != 0, &hr, &ha);
+        features.K32H3.appendChanged(c, pos.king(c), diff.piece, features.K32H3.block(pos, c), &hr, &ha);
         features.FullThreats.appendChanged(c, pos.king(c), &diff.threats, &tr, &ta);
         features.PawnPairs.appendChanged(c, pos.king(c), diff.before, diff.after, &pr, &pa);
-        try std.testing.expectEqualSlices(u16, ref.half_removed, hr.slice());
-        try std.testing.expectEqualSlices(u16, ref.half_added, ha.slice());
+        try std.testing.expectEqualSlices(u32, ref.half_removed, hr.slice());
+        try std.testing.expectEqualSlices(u32, ref.half_added, ha.slice());
         try std.testing.expectEqualSlices(u16, ref.threats_removed, tr.slice());
         try std.testing.expectEqualSlices(u16, ref.threats_added, ta.slice());
         try std.testing.expectEqualSlices(u16, ref.pawns_removed, pr.slice());
         try std.testing.expectEqualSlices(u16, ref.pawns_added, pa.slice());
-        try std.testing.expectEqual(ref.refresh, features.K32Q2.requiresRefresh(diff.piece, c));
+        try std.testing.expectEqual(ref.refresh, features.K32H3.requiresRefresh(diff.piece, c, ref.block_before, features.K32H3.block(pos, c)));
     }
 }
 
@@ -407,8 +407,8 @@ test "NNUE index spaces match C++ across kings, pieces, threats and pawn pairs" 
     const f = z.nnue_features;
     var hashes: [3]u64 = @splat(14695981039346656037);
     for ([_]z.types.Color{ .white, .black }) |c| {
-        for (0..64) |k| for (0..64) |s| for (z.position_keys.pieces) |pc| for ([_]bool{ false, true }) |queen| {
-            hashes[0] = (hashes[0] ^ f.K32Q2.makeIndex(c, @fromBackingInt(@intCast(s)), pc, @fromBackingInt(@intCast(k)), queen)) *% 1099511628211;
+        for (0..64) |k| for (0..64) |s| for (z.position_keys.pieces) |pc| for ([_]u8{ 0, 1, 2 }) |queen| {
+            hashes[0] = (hashes[0] ^ f.K32H3.makeIndex(c, @fromBackingInt(@intCast(s)), pc, @fromBackingInt(@intCast(k)), queen)) *% 1099511628211;
         };
         // FullThreats and PP orientation depends only on king file half.
         for ([_]u8{ 0, 7 }) |k| {

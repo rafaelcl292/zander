@@ -57,14 +57,12 @@ pub const Writer = struct {
     pub fn save(self: Writer, key: u64, data: Data, generation: u8) void {
         const entry = &self.cluster.entries[self.index];
         const shift: u6 = @intCast(21 * self.index);
-        var keys = @atomicLoad(u64, &self.cluster.keys, .monotonic);
-        const old_key = (keys >> shift) & key_mask;
-        const key21 = key & key_mask;
-        if (data.move.data != 0 or key21 != old_key) @atomicStore(u16, &entry.move16, data.move.data, .monotonic);
-        if (data.bound == .exact or key21 != old_key or data.depth - depth_none + 2 * @as(i32, @intFromBool(data.is_pv)) > @as(i32, @atomicLoad(u8, &entry.depth8, .monotonic)) - 4 or entry.relativeAge(generation) != 0) {
+        const keys = @atomicLoad(u64, &self.cluster.keys, .monotonic);
+        const key_diff = ((keys >> shift) ^ key) & key_mask;
+        if (data.move.data != 0 or key_diff != 0) @atomicStore(u16, &entry.move16, data.move.data, .monotonic);
+        if (data.bound == .exact or key_diff != 0 or data.depth - depth_none + 2 * @as(i32, @intFromBool(data.is_pv)) > @as(i32, @atomicLoad(u8, &entry.depth8, .monotonic)) - 4 or entry.relativeAge(generation) != 0) {
             std.debug.assert(data.depth > depth_none and data.depth - depth_none < 256 and generation <= 31);
-            keys = (keys & ~(key_mask << shift)) | (key21 << shift);
-            @atomicStore(u64, &self.cluster.keys, keys, .monotonic);
+            @atomicStore(u64, &self.cluster.keys, keys ^ (key_diff << shift), .monotonic);
             @atomicStore(u8, &entry.depth8, @intCast(data.depth - depth_none), .monotonic);
             @atomicStore(u8, &entry.gen_bound8, generation | (@backingInt(data.bound) << 5) | (@as(u8, @intFromBool(data.is_pv)) << 7), .monotonic);
             @atomicStore(i16, &entry.value16, @intCast(data.value), .monotonic);
@@ -111,12 +109,17 @@ pub const Table = struct {
         // Later lanes may contain borrow artifacts; only the first match counts.
         const matches = (key_xors -% key_lsb) & ~key_xors & key_msb;
         if (matches != 0) {
-            const index = @ctz(matches) / 21;
+            const index = (@ctz(matches) >> 4) - 1;
             return .{ .found = entries[index].occupied(), .data = entries[index].read(), .writer = .{ .cluster = cluster, .index = index } };
         }
         var replace: usize = 0;
+        var replace_value = @as(i32, @atomicLoad(u8, &entries[0].depth8, .monotonic)) - 8 * @as(i32, entries[0].relativeAge(self.generation));
         for (1..3) |i| {
-            if (@as(i32, @atomicLoad(u8, &entries[replace].depth8, .monotonic)) - 8 * @as(i32, entries[replace].relativeAge(self.generation)) > @as(i32, @atomicLoad(u8, &entries[i].depth8, .monotonic)) - 8 * @as(i32, entries[i].relativeAge(self.generation))) replace = i;
+            const value = @as(i32, @atomicLoad(u8, &entries[i].depth8, .monotonic)) - 8 * @as(i32, entries[i].relativeAge(self.generation));
+            if (replace_value > value) {
+                replace = i;
+                replace_value = value;
+            }
         }
         return .{ .found = false, .data = .{ .move = t.Move.none, .value = t.value_none, .eval = t.value_none, .depth = depth_none, .bound = .none, .is_pv = false }, .writer = .{ .cluster = cluster, .index = replace } };
     }

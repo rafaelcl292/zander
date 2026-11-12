@@ -69,7 +69,7 @@ pub const Worker = struct {
         }
         self.nodes += 1;
         if (self.publish_nodes) self.published_nodes.store(self.nodes, .monotonic);
-        const dirties = self.accumulators.push();
+        const dirties = self.accumulators.push(pos);
         pos.doMoveWithDirties(move, state, dirties);
         self.table.prefetch(pos.key());
         self.shared.prefetch(pos, dirties.piece.pc, if (dirties.piece.to == .none) move.to() else dirties.piece.to);

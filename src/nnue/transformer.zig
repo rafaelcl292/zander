@@ -10,11 +10,11 @@ const tile_registers = if (@import("builtin").target.cpu.arch == .aarch64) 16 el
 pub const combined_features = features.FullThreats.dimensions + features.PawnPairs.dimensions;
 pub const FeatureTransformer = struct {
     biases: [dimensions]i16 align(64),
-    weights: [features.K32Q2.dimensions][dimensions]i8 align(64),
+    weights: [features.K32H3.dimensions][dimensions]i8 align(64),
     threat_weights: [combined_features][dimensions]i8 align(64),
     pub fn hash() u32 {
         var result: u32 = 0;
-        for ([_]u32{ features.FullThreats.hash_value, features.PawnPairs.hash_value, features.K32Q2.hash_value }) |h| result = ((result << 1) | (result >> 31)) ^ h;
+        for ([_]u32{ features.FullThreats.hash_value, features.PawnPairs.hash_value, features.K32H3.hash_value }) |h| result = ((result << 1) | (result >> 31)) ^ h;
         return result ^ (dimensions * 2);
     }
     pub fn read(self: *FeatureTransformer, reader: *Reader) !void {
@@ -27,7 +27,7 @@ pub const FeatureTransformer = struct {
         const weights = std.mem.asBytes(&self.weights);
         @memcpy(weights, try reader.take(weights.len));
     }
-    pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u16) void {
+    pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u32) void {
         if (@import("backend").simd) return self.applyVector(add, false, acc, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
@@ -43,7 +43,7 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, indices: []const u16) void {
+    fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, indices: anytype) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes) {
@@ -60,7 +60,7 @@ pub const FeatureTransformer = struct {
     }
     /// Reference apply_combined: retain one tile in registers through all
     /// feature removals/additions, then write the destination once.
-    pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, to: *[dimensions]i16, removed: []const u16, added: []const u16, threats_removed: []const u16, threats_added: []const u16) void {
+    pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, to: *[dimensions]i16, removed: []const u32, added: []const u32, threats_removed: []const u16, threats_added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const registers = tile_registers;
         var offset: usize = 0;
@@ -78,7 +78,7 @@ pub const FeatureTransformer = struct {
     }
     /// Reference cache refresh: store updated PSQ values to the cache before
     /// adding active threats to the same register tile for the live position.
-    pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, to: *[dimensions]i16, removed: []const u16, added: []const u16, active: []const u16) void {
+    pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, to: *[dimensions]i16, removed: []const u32, added: []const u32, active: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * tile_registers) {
@@ -93,7 +93,7 @@ pub const FeatureTransformer = struct {
     }
     /// Hybrid king refresh: update only the new PSQ cache, then correct the
     /// previous live accumulator in registers before applying threat changes.
-    pub fn applyHybrid(self: *const FeatureTransformer, new_cache: anytype, old_cache: anytype, from: *const [dimensions]i16, to: *[dimensions]i16, new_removed: []const u16, new_added: []const u16, old_removed: []const u16, old_added: []const u16, removed: []const u16, added: []const u16) void {
+    pub fn applyHybrid(self: *const FeatureTransformer, new_cache: anytype, old_cache: anytype, from: *const [dimensions]i16, to: *[dimensions]i16, new_removed: []const u32, new_added: []const u32, old_removed: []const u32, old_added: []const u32, removed: []const u16, added: []const u16) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * tile_registers) {
@@ -114,14 +114,14 @@ pub const FeatureTransformer = struct {
             inline for (0..tile_registers) |i| to[offset + i * lanes ..][0..lanes].* = tile[i];
         }
     }
-    inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
+    inline fn applyIncrementalPsq(self: *const FeatureTransformer, comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u32) void {
         // Upstream apply_psq_features<sign, true>: every incremental move
         // removes and adds one or two piece-square features.
         std.debug.assert(indices.len == 1 or indices.len == 2);
         self.applyTile(add, false, lanes, tile, offset, indices[0..1]);
         if (indices.len == 2) self.applyTile(add, false, lanes, tile, offset, indices[1..2]);
     }
-    inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: []const u16) void {
+    inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: anytype) void {
         for (indices) |index| {
             const row = if (threats) self.threat_weights[index][offset..][0 .. tile_registers * lanes] else self.weights[index][offset..][0 .. tile_registers * lanes];
             inline for (0..tile_registers) |i| {

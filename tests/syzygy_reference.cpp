@@ -2,7 +2,7 @@
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
 #include "../vendor/stockfish/src/movegen.cpp"
-#include "../vendor/stockfish/src/nnue/features/k32q2.cpp"
+#include "../vendor/stockfish/src/nnue/features/k32h3.cpp"
 #include "../vendor/stockfish/src/nnue/features/full_threats.cpp"
 #include "../vendor/stockfish/src/nnue/features/pp_3wide.cpp"
 #include "../vendor/stockfish/src/syzygy/tbprobe.h"

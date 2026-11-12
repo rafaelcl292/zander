@@ -152,6 +152,8 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expectEqual(@as(usize, 1), accumulators.size);
     }
     var search = z.search.Worker.init(worker);
+    // The C++ diagnostic searches use worker 1; NMP now depends on parity.
+    search.thread_index = 1;
     for (@import("reference").main_cases, 0..) |case, case_index| {
         errdefer std.debug.print("Main search case {d}, root {d}, depth {d}, mode {d}, warm {any}\n", .{ case_index, case.root, case.depth, case.mode, case.warm });
         var pos: z.position.Position = undefined;
@@ -250,6 +252,7 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         try std.testing.expect(pos.st == &state);
         try std.testing.expectEqual(@as(usize, 1), accumulators.size);
     }
+    search.thread_index = 0;
     for (@import("reference").iteration_cases, 0..) |case, case_index| {
         errdefer std.debug.print("Iteration case {d}, root {d}, depth {d}, mode {d}, warm {any}\n", .{ case_index, case.root, case.depth, case.mode, case.warm });
         var pos: z.position.Position = undefined;

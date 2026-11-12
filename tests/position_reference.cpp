@@ -3,7 +3,7 @@
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
 #include "../vendor/stockfish/src/movegen.cpp"
-#include "../vendor/stockfish/src/nnue/features/k32q2.cpp"
+#include "../vendor/stockfish/src/nnue/features/k32h3.cpp"
 #include "../vendor/stockfish/src/nnue/features/full_threats.cpp"
 #include "../vendor/stockfish/src/nnue/features/pp_3wide.cpp"
 #include <cstdio>
@@ -20,7 +20,7 @@ uint64_t perft(Position& pos, unsigned depth) {
     }
     return total;
 }
-void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Dirties* changes = nullptr) {
+void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Dirties* changes = nullptr, Eval::NNUE::Features::K32H3::BlockState before = {}) {
         std::printf(".{ .valid = true, .fen = \"%s\", .data = &.{\n", pos.fen().c_str());
         const auto emit = [](uint64_t n) { std::printf("%llu,", (unsigned long long)n); };
         for (int i = 0; i < 64; ++i) emit(pos.piece_on(Square(i)));
@@ -83,8 +83,9 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
             for (auto move : MoveList<ALL>(pos)) {
                 StateInfo next;
                 Dirties dirties;
+                const auto before = Eval::NNUE::Features::K32H3::block_state(pos);
                 pos.do_move(move, next, pos.gives_check(move), dirties, nullptr);
-                emit_snapshot(pos, false, move.raw(), &dirties);
+                emit_snapshot(pos, false, move.raw(), &dirties, before);
                 pos.undo_move(move);
             }
         }
@@ -100,8 +101,9 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
                 Move move = legal.begin()[rng.rand<uint64_t>() % legal.size()];
                 moves[count] = move;
                 Dirties dirties;
+                const auto before = Eval::NNUE::Features::K32H3::block_state(pos);
                 pos.do_move(move, states[count++], pos.gives_check(move), dirties, nullptr);
-                emit_snapshot(pos, false, move.raw(), &dirties);
+                emit_snapshot(pos, false, move.raw(), &dirties, before);
             }
             while (count) pos.undo_move(moves[--count]);
         }
@@ -134,7 +136,7 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
             std::puts(".{ .half = &.{");
             for (Bitboard b = pos.pieces(); b;) {
                 const Square s = pop_lsb(b);
-                std::printf("%u,", unsigned(K32Q2::make_index(c, s, pos.piece_on(s), king, bool(pos.pieces(~c, QUEEN)))));
+                std::printf("%u,", unsigned(K32H3::make_index(c, s, pos.piece_on(s), king) + K32H3::block_offset(K32H3::block(pos, c))));
             }
             std::puts("}, .threats = &.{");
             FullThreats::IndexList threats;
@@ -142,21 +144,21 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
             std::puts("}, .pawns = &.{");
             PP_3Wide::IndexList pawns;
             PP_3Wide::append_active_indices(c, pos, pawns); list(pawns);
-            K32Q2::IndexList hr, ha;
+            K32H3::IndexList hr, ha;
             FullThreats::IndexList tr, ta;
             PP_3Wide::IndexList pr, pa;
             if (changes) {
-                K32Q2::append_changed_indices(c, king, changes->dirtyPiece, bool(pos.pieces(~c, QUEEN)), hr, ha);
+                K32H3::append_changed_indices(c, king, changes->dirtyPiece, hr, ha);
                 FullThreats::append_changed_indices(c, king, changes->dirtyThreats, tr, ta);
                 PP_3Wide::append_changed_indices(c, king, changes->dirtyPawnPairs, pr, pa);
             }
-            std::puts("}, .half_removed = &.{"); list(hr);
-            std::puts("}, .half_added = &.{"); list(ha);
+            std::puts("}, .half_removed = &.{"); for (auto index : hr) std::printf("%u,", index + K32H3::block_offset(K32H3::block(pos, c)));
+            std::puts("}, .half_added = &.{"); for (auto index : ha) std::printf("%u,", index + K32H3::block_offset(K32H3::block(pos, c)));
             std::puts("}, .threats_removed = &.{"); list(tr);
             std::puts("}, .threats_added = &.{"); list(ta);
             std::puts("}, .pawns_removed = &.{"); list(pr);
             std::puts("}, .pawns_added = &.{"); list(pa);
-            std::printf("}, .refresh = %s },\n", changes && K32Q2::requires_refresh(changes->dirtyPiece, c) ? "true" : "false");
+            std::printf("}, .block_before = %u, .refresh = %s },\n", before[c], changes && K32H3::requires_refresh(changes->dirtyPiece, c, before[c], K32H3::block(pos, c)) ? "true" : "false");
         }
         std::printf("}, .move = %u, .nodes = %llu },\n", unsigned(incoming), (unsigned long long)(children ? perft(pos, 3) : 0));
 }
@@ -169,8 +171,8 @@ int main(int argc, char** argv) {
     uint64_t hashes[3] = {14695981039346656037ULL, 14695981039346656037ULL, 14695981039346656037ULL};
     const auto mix = [&](int i, uint32_t value) { hashes[i] = (hashes[i] ^ value) * 1099511628211ULL; };
     for (Color c : {WHITE, BLACK}) {
-        for (int k = 0; k < 64; ++k) for (int s = 0; s < 64; ++s) for (auto pc : Pieces) for (bool q : {false, true})
-            mix(0, K32Q2::make_index(c, Square(s), pc, Square(k), q));
+        for (int k = 0; k < 64; ++k) for (int s = 0; s < 64; ++s) for (auto pc : Pieces) for (int q : {0, 1, 2})
+            mix(0, K32H3::make_index(c, Square(s), pc, Square(k)) + K32H3::block_offset(q));
         for (Square k : {SQ_A1, SQ_H1}) {
             for (auto pc : Pieces) for (int from = 0; from < 64; ++from) {
                 Bitboard targets = type_of(pc) == PAWN ? Attacks::PseudoAttacks[color_of(pc)][from] : Attacks::PseudoAttacks[type_of(pc)][from];
@@ -195,7 +197,7 @@ int main(int argc, char** argv) {
     std::puts("};\npub const cuckoo_moves = [_]u16{");
     for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
     std::puts("};");
-    std::puts("pub const FeatureSet = struct { half: []const u16, threats: []const u16, pawns: []const u16, half_removed: []const u16, half_added: []const u16, threats_removed: []const u16, threats_added: []const u16, pawns_removed: []const u16, pawns_added: []const u16, refresh: bool }; ");
+    std::puts("pub const FeatureSet = struct { half: []const u32, threats: []const u16, pawns: []const u16, half_removed: []const u32, half_added: []const u32, threats_removed: []const u16, threats_added: []const u16, pawns_removed: []const u16, pawns_added: []const u16, block_before: u8, refresh: bool }; ");
     std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, legal: []const u16 = &.{}, generated: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, prefetch_keys: []const u64 = &.{}, draw_flags: []const u8 = &.{}, normal_legal: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, features: []const FeatureSet = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");
     if (argc != 2) return 1;
     std::ifstream input(argv[1]);
@@ -218,8 +220,9 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 12; ++i) {
         const Move move = cycle[i % 4];
         Dirties dirties;
+        const auto before = Eval::NNUE::Features::K32H3::block_state(pos);
         pos.do_move(move, states[i + 1], pos.gives_check(move), dirties, nullptr);
-        emit_snapshot(pos, false, move.raw(), &dirties);
+        emit_snapshot(pos, false, move.raw(), &dirties, before);
     }
     std::puts("};");
 }

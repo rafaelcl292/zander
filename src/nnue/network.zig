@@ -6,14 +6,18 @@ const Architecture = @import("layers.zig").Architecture;
 const accumulator = @import("accumulator.zig");
 const Position = @import("../position.zig").Position;
 const t = @import("../types.zig");
-pub const default_name = "nn-c9e480e92425.nnue";
-pub const default_sha256 = "c9e480e92425f887df6ab9b05c6180fbd762b07879df9d9845f1aa75440caa73";
+pub const default_name = "nn-68752b755c93.nnue";
+pub const default_sha256 = "68752b755c93e419e714829c4aac1bbd66e9509a96cf175be28a00164b6d7f21";
 pub const Network = struct {
     transformer: FeatureTransformer,
-    layers: [32]Architecture,
+    layers: [192]Architecture,
+    layer_stack_fallback: [192]u16,
+    layer_stack_index: [192]u16,
+    stored_layer_stacks: u32 = 0,
     initialized: bool = false,
+    pub const layer_stack_table_hash: u32 = 0x5a7ab1e5;
     pub const version: u32 = 0x6a448afa;
-    pub const hash: u32 = FeatureTransformer.hash() ^ Architecture.hash();
+    pub const hash: u32 = FeatureTransformer.hash() ^ Architecture.hash() ^ layer_stack_table_hash;
     /// Allocate this object in final storage before loading. The description
     /// borrows from bytes; weights are copied into the network's own arrays.
     pub fn load(self: *Network, bytes: []const u8) ![]const u8 {
@@ -22,9 +26,10 @@ pub const Network = struct {
         if (try reader.int(u32) != version) return error.UnsupportedVersion;
         if (try reader.int(u32) != hash) return error.ArchitectureMismatch;
         const description = try reader.take(try reader.int(u32));
+        try self.readLayerStacks(&reader);
         if (try reader.int(u32) != FeatureTransformer.hash()) return error.ArchitectureMismatch;
         try self.transformer.read(&reader);
-        for (&self.layers) |*layer| {
+        for (self.layers[0..self.stored_layer_stacks]) |*layer| {
             if (try reader.int(u32) != Architecture.hash()) return error.ArchitectureMismatch;
             try layer.read(&reader);
         }
@@ -41,6 +46,10 @@ pub const Network = struct {
         try out.int(writer, u32, hash);
         try out.int(writer, u32, @intCast(description.len));
         try writer.writeAll(description);
+        try out.int(writer, u32, layer_stack_table_hash);
+        try out.int(writer, u32, 192);
+        try out.int(writer, u32, self.stored_layer_stacks);
+        for (self.layer_stack_fallback) |fallback| try out.int(writer, u16, fallback);
         try out.int(writer, u32, FeatureTransformer.hash());
         const ft = &self.transformer;
         for (ft.biases) |bias| try out.int(writer, i16, bias);
@@ -48,7 +57,7 @@ pub const Network = struct {
         try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[0..threats]));
         try writer.writeAll(std.mem.sliceAsBytes(ft.threat_weights[threats..]));
         try writer.writeAll(std.mem.asBytes(&ft.weights));
-        for (&self.layers) |*layer| {
+        for (self.layers[0..self.stored_layer_stacks]) |*layer| {
             try out.int(writer, u32, Architecture.hash());
             inline for (.{ "fc0", "fc1", "fc2" }) |name| {
                 const affine = &@field(layer, name);
@@ -57,12 +66,43 @@ pub const Network = struct {
             }
         }
     }
+    fn readLayerStacks(self: *Network, reader: *Reader) !void {
+        if (try reader.int(u32) != layer_stack_table_hash or try reader.int(u32) != 192) return error.ArchitectureMismatch;
+        self.stored_layer_stacks = try reader.int(u32);
+        if (self.stored_layer_stacks == 0 or self.stored_layer_stacks > 192) return error.InvalidLayerStacks;
+        for (&self.layer_stack_fallback) |*fallback| {
+            fallback.* = try reader.int(u16);
+            if (fallback.* >= 192) return error.InvalidLayerStacks;
+        }
+        var stored: u16 = 0;
+        for (self.layer_stack_fallback, 0..) |fallback, index| {
+            if (fallback == index) {
+                self.layer_stack_index[index] = stored;
+                stored += 1;
+            }
+        }
+        if (stored != self.stored_layer_stacks) return error.InvalidLayerStacks;
+        for (self.layer_stack_fallback, 0..) |fallback, index| {
+            if (self.layer_stack_fallback[fallback] != fallback) return error.InvalidLayerStacks;
+            self.layer_stack_index[index] = self.layer_stack_index[fallback];
+        }
+    }
+    pub fn layerStack(self: *const Network, pos: *const Position) usize {
+        const band: usize = (@popCount(pos.pieces()) - 1) / 4;
+        const queens: usize = @as(usize, if (pos.piecesOf(pos.side, .queen) != 0) 2 else 0) + @intFromBool(pos.piecesOf(pos.side.opposite(), .queen) != 0);
+        const pawns = pos.by_type[1];
+        const queen_side: u64 = 0x0f0f0f0f0f0f0f0f;
+        const layout: usize = if (pawns == 0) 2 else if (pawns & queen_side != 0 and pawns & ~queen_side != 0) 0 else 1;
+        const officers = pos.pieces() & ~(pawns | pos.by_type[6]);
+        const many: usize = @intFromBool(@max(@popCount(officers & pos.by_color[0]), @popCount(officers & pos.by_color[1])) >= 2);
+        return self.layer_stack_index[((band * 4 + queens) * 3 + layout) * 2 + many];
+    }
     pub fn evaluate(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) i32 {
         std.debug.assert(self.initialized);
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
         const side = @backingInt(pos.side);
-        const bucket = ((@popCount(pos.pieces()) - 1) / 4) * 4 + @as(usize, if (pos.piecesOf(pos.side, .queen) != 0) 2 else 0) + @as(usize, @intFromBool(pos.piecesOf(pos.side.opposite(), .queen) != 0));
+        const bucket = self.layerStack(pos);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
         if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
@@ -70,15 +110,15 @@ pub const Network = struct {
         const positional = self.layers[bucket].propagatePreparedMasked(&transformed, &masks, &buffer);
         return @divTrunc(positional, 16);
     }
-    pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [32]i32 {
+    pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [192]i32 {
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
         const side = @backingInt(pos.side);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
         if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
-        var result: [32]i32 = undefined;
-        for (&self.layers, &result) |*layer, *out| {
+        var result: [192]i32 = @splat(0);
+        for (self.layers[0..self.stored_layer_stacks], result[0..self.stored_layer_stacks]) |*layer, *out| {
             var buffer: Architecture.Buffer = undefined;
             out.* = @divTrunc(layer.propagatePreparedMasked(&transformed, &masks, &buffer), 16);
         }
@@ -101,3 +141,39 @@ pub const Network = struct {
         return @intCast(std.math.clamp(value, -max, max));
     }
 };
+
+test "layer stack table validates counts, bounds and fallback roots" {
+    const network = try std.testing.allocator.create(Network);
+    defer std.testing.allocator.destroy(network);
+    var bytes: [12 + 192 * 2]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], Network.layer_stack_table_hash, .little);
+    std.mem.writeInt(u32, bytes[4..8], 192, .little);
+    std.mem.writeInt(u32, bytes[8..12], 1, .little);
+    @memset(bytes[12..], 0);
+    var reader: Reader = .{ .bytes = &bytes };
+    try network.readLayerStacks(&reader);
+    for (network.layer_stack_index) |index| try std.testing.expectEqual(@as(u16, 0), index);
+
+    // A root later in the table must be resolved before its earlier aliases.
+    for (0..192) |index| std.mem.writeInt(u16, bytes[12 + index * 2 ..][0..2], 191, .little);
+    reader.offset = 0;
+    try network.readLayerStacks(&reader);
+    for (network.layer_stack_index) |index| try std.testing.expectEqual(@as(u16, 0), index);
+
+    std.mem.writeInt(u16, bytes[12..14], 192, .little);
+    reader.offset = 0;
+    try std.testing.expectError(error.InvalidLayerStacks, network.readLayerStacks(&reader));
+    // A fallback chain must not be accepted as a direct root reference.
+    std.mem.writeInt(u16, bytes[12..14], 1, .little);
+    reader.offset = 0;
+    try std.testing.expectError(error.InvalidLayerStacks, network.readLayerStacks(&reader));
+    std.mem.writeInt(u16, bytes[12..14], 191, .little);
+    for ([_]u32{ 0, 2, 193 }) |count| {
+        std.mem.writeInt(u32, bytes[8..12], count, .little);
+        reader.offset = 0;
+        try std.testing.expectError(error.InvalidLayerStacks, network.readLayerStacks(&reader));
+    }
+    std.mem.writeInt(u32, bytes[8..12], 1, .little);
+    reader = .{ .bytes = bytes[0 .. bytes.len - 1] };
+    try std.testing.expectError(error.Truncated, network.readLayerStacks(&reader));
+}

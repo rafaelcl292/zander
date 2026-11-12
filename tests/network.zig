@@ -44,7 +44,7 @@ test "real NNUE loading and incremental evaluation match pinned Stockfish" {
             ply -= 1;
         } else {
             ply += 1;
-            pos.doMoveWithDirties(.{ .data = event.move }, &states[ply], stack.push());
+            pos.doMoveWithDirties(.{ .data = event.move }, &states[ply], stack.push(&pos));
         }
         if (!event.evaluate) continue;
         errdefer std.debug.print("NNUE event {d}, root {d}, ply {d}\n", .{ event_index, root, ply });

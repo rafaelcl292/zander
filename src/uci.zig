@@ -390,12 +390,12 @@ const Session = struct {
                 self.engine.accumulators.reset();
                 const network = self.engine.network.?;
                 const trace = network.trace(pos, self.engine.accumulators, self.engine.caches);
-                const bucket = (@popCount(pos.pieces()) - 1) / 4;
+                const bucket = network.layerStack(pos);
                 const border = "+------------+------------+\n";
                 try self.writer.print("NNUE network contributions (Normalized, {s} to move)\n{s}", .{ if (pos.side == .white) "White" else "Black", border });
                 try self.writer.writeAll("|   Bucket   | Evaluation |\n");
                 try self.writer.writeAll(border);
-                for (trace, 0..) |value, index| {
+                for (trace[0..network.stored_layer_stacks], 0..) |value, index| {
                     try self.writer.print("|  {d}         |  ", .{index});
                     try self.writer.print("{c}{d:6.2}   |  ", .{ @as(u8, if (value < 0) '-' else if (value > 0) '+' else ' '), @as(f64, @floatFromInt(@abs(notation.centipawns(value, pos)))) / 100.0 });
                     if (index == bucket) try self.writer.writeAll("<-- this bucket is used");

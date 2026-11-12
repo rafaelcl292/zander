@@ -7,7 +7,7 @@
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
 #include "../vendor/stockfish/src/movegen.cpp"
-#include "../vendor/stockfish/src/nnue/features/k32q2.cpp"
+#include "../vendor/stockfish/src/nnue/features/k32h3.cpp"
 #include "../vendor/stockfish/src/nnue/features/full_threats.cpp"
 #include "../vendor/stockfish/src/nnue/features/pp_3wide.cpp"
 #include "../vendor/stockfish/src/nnue/nnue_accumulator.cpp"
@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     auto stack = std::make_unique<AccumulatorStack>();
     auto cache = std::make_unique<AccumulatorCaches>(*net);
     Attacks::init(); Position::init();
-    std::puts("pub const Event = struct { root: usize, move: u16 = 0, pop: bool = false, evaluate: bool = false, checksum: u64 = 0, positional: i32 = 0, trace: [32]i32 = @splat(0), adjusted: [3]i32 = .{0,0,0} };\npub const events = [_]Event{");
+    std::puts("pub const Event = struct { root: usize, move: u16 = 0, pop: bool = false, evaluate: bool = false, checksum: u64 = 0, positional: i32 = 0, trace: [192]i32 = @splat(0), adjusted: [3]i32 = .{0,0,0} };\npub const events = [_]Event{");
     std::ifstream inputs(argv[2]); std::string line; size_t root = 0;
     while (std::getline(inputs, line)) {
         const size_t index = root++;
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
         }
         // Exercise every legal first move, including promotions and Chess960 castling.
         for (auto m : MoveList<ALL>(pos)) {
-            pos.do_move(m, states[1], pos.gives_check(m), stack->push(), nullptr);
+            pos.do_move(m, states[1], pos.gives_check(m), stack->push(pos), nullptr);
             emit(m,false,true);
             pos.undo_move(m); stack->pop(); emit(m,true,false);
         }
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
         for (size_t i=0; i<48; ++i) {
             MoveList<ALL> legal(pos); if (!legal.size()) break;
             Move m = *(legal.begin() + rng.rand<uint64_t>() % legal.size());
-            pos.do_move(m, states[i+1], pos.gives_check(m), stack->push(), nullptr);
+            pos.do_move(m, states[i+1], pos.gives_check(m), stack->push(pos), nullptr);
             moves.push_back(m); emit(m,false,i%3==2 || i==47);
         }
         while (!moves.empty()) {

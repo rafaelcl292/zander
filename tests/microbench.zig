@@ -82,7 +82,7 @@ noinline fn replay(engine: *z.engine.Engine, mode: Mode, moves: []const z.types.
                 },
             }
             if (ply < moves.len) {
-                if (mode == .nnue) pos.doMoveWithDirties(moves[ply], &states[ply], engine.accumulators.push()) else pos.doMove(moves[ply], &states[ply]);
+                if (mode == .nnue) pos.doMoveWithDirties(moves[ply], &states[ply], engine.accumulators.push(pos)) else pos.doMove(moves[ply], &states[ply]);
             }
         }
         var ply = moves.len;

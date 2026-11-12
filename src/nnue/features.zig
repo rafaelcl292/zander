@@ -6,28 +6,30 @@ const attacks = @import("../attacks.zig");
 const Position = @import("../position.zig").Position;
 const dirty = @import("../dirty.zig");
 const all_pieces = @import("../position_keys.zig").pieces;
-pub fn IndexList(comptime capacity: usize) type {
+pub fn IndexList(comptime capacity: usize, comptime Index: type) type {
     return struct {
-        items: [capacity]u16 = undefined,
+        items: [capacity]Index = undefined,
         len: usize = 0,
         prefetch_base: ?[*]const [1024]i8 = null,
         pub fn append(self: *@This(), index: u32) void {
-            std.debug.assert(self.len < capacity and index <= std.math.maxInt(u16));
+            std.debug.assert(self.len < capacity and index <= std.math.maxInt(Index));
             if (self.prefetch_base) |base| @import("../prefetch.zig").readLow(&base[index]);
             self.items[self.len] = @intCast(index);
             self.len += 1;
         }
-        pub fn slice(self: *const @This()) []const u16 {
+        pub fn slice(self: *const @This()) []const Index {
             return self.items[0..self.len];
         }
     };
 }
-pub const SmallList = IndexList(32);
-pub const ThreatList = IndexList(256);
+// PSQ lists include the material-block offset: 67,584 rows require u32.
+// Threat and pawn-pair indices still fit in u16.
+pub const SmallList = IndexList(32, u32);
+pub const ThreatList = IndexList(256, u16);
 
-pub const K32Q2 = struct {
-    pub const hash_value: u32 = 0x32b5e284;
-    pub const dimensions: u32 = 45056;
+pub const K32H3 = struct {
+    pub const hash_value: u32 = 0xab005cef;
+    pub const dimensions: u32 = 67584;
     const offsets align(64) = blk: {
         @setEvalBranchQuota(30000);
         var table: [2][64][16]u16 = @splat(@splat(@splat(0)));
@@ -39,28 +41,29 @@ pub const K32Q2 = struct {
             const orient: u16 = @as(u16, if (king.file() < 4) 7 else 0) ^ (56 * @as(u16, @intCast(side)));
             for (all_pieces) |pc| {
                 const piece_offset: u16 = if (pc.pieceType() == .king) 640 else (@as(u16, @backingInt(pc.pieceType())) - 1) * 128 + @as(u16, @intFromBool(pc.color() != perspective)) * 64;
-                table[side][square][@backingInt(pc)] = piece_offset + bucket * 1408 + orient;
+                table[side][square][@backingInt(pc)] = piece_offset + bucket * 704 + orient;
             }
         };
         break :blk table;
     };
-    pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square, opponent_has_queen: bool) u32 {
-        return @as(u32, @backingInt(s)) ^ (offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)] + @as(u16, if (opponent_has_queen) 704 else 0));
+    pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square, block_index: u8) u32 {
+        return @as(u32, @backingInt(s)) ^ (offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)] + @as(u32, block_index) * 22528);
     }
-    pub fn requiresRefresh(diff: dirty.DirtyPiece, perspective: t.Color) bool {
-        return diff.pc == t.Piece.make(perspective, .king) or
-            (diff.remove_sq != .none and diff.remove_pc == t.Piece.make(perspective.opposite(), .queen)) or
-            (diff.add_sq != .none and diff.add_pc == t.Piece.make(perspective.opposite(), .queen));
+    pub fn block(pos: *const Position, perspective: t.Color) u8 {
+        return if (pos.piecesOf(perspective.opposite(), .queen) != 0) 2 else @intFromBool(pos.by_type[4] | pos.by_type[5] != 0);
     }
-    pub fn appendChanged(perspective: t.Color, king: t.Square, diff: dirty.DirtyPiece, opponent_has_queen: bool, removed: *SmallList, added: *SmallList) void {
-        removed.append(makeIndex(perspective, diff.from, diff.pc, king, opponent_has_queen));
-        if (diff.to != .none) added.append(makeIndex(perspective, diff.to, diff.pc, king, opponent_has_queen));
-        if (diff.remove_sq != .none) removed.append(makeIndex(perspective, diff.remove_sq, diff.remove_pc, king, opponent_has_queen));
-        if (diff.add_sq != .none) added.append(makeIndex(perspective, diff.add_sq, diff.add_pc, king, opponent_has_queen));
+    pub fn requiresRefresh(diff: dirty.DirtyPiece, perspective: t.Color, before: u8, after: u8) bool {
+        return diff.pc == t.Piece.make(perspective, .king) or before != after;
+    }
+    pub fn appendChanged(perspective: t.Color, king: t.Square, diff: dirty.DirtyPiece, block_index: u8, removed: *SmallList, added: *SmallList) void {
+        removed.append(makeIndex(perspective, diff.from, diff.pc, king, block_index));
+        if (diff.to != .none) added.append(makeIndex(perspective, diff.to, diff.pc, king, block_index));
+        if (diff.remove_sq != .none) removed.append(makeIndex(perspective, diff.remove_sq, diff.remove_pc, king, block_index));
+        if (diff.add_sq != .none) added.append(makeIndex(perspective, diff.add_sq, diff.add_pc, king, block_index));
     }
 };
 fn orientation(perspective: t.Color, king: t.Square) u8 {
-    return @as(u8, if (king.file() < 4) 0 else 7) ^ (56 * @backingInt(perspective));
+    return @as(u8, if (king.file() < 4) 7 else 0) ^ (56 * @backingInt(perspective));
 }
 // Match the reference PawnPairBB: geometry depends only on the square.
 const pawn_pairs = blk: {
@@ -76,7 +79,7 @@ fn pawnPair(s: t.Square) u64 {
     return pawn_pairs[@backingInt(s)];
 }
 pub const PawnPairs = struct {
-    pub const hash_value: u32 = 0x86f2b1dd;
+    pub const hash_value: u32 = 0x5c80fa69;
     pub const dimensions: u32 = 4560;
     pub const index_base: u32 = FullThreats.dimensions;
     pub fn makeIndex(perspective: t.Color, color: t.Color, from: t.Square, to: t.Square, paired: t.Color, king: t.Square) u32 {
@@ -87,25 +90,9 @@ pub const PawnPairs = struct {
         return hi * (hi - 1) / 2 + @min(id_a, id_b) + index_base;
     }
     pub fn appendActive(perspective: t.Color, pos: *const Position, active: *ThreatList) void {
-        const king = pos.king(perspective);
-        const white = pos.piecesOf(.white, .pawn);
-        const black = pos.piecesOf(.black, .pawn);
-        var b = white;
-        while (b != 0) {
-            const from = bb.popLsb(&b);
-            const band = pawnPair(from);
-            var ww = band & b;
-            while (ww != 0) active.append(makeIndex(perspective, .white, from, bb.popLsb(&ww), .white, king));
-            var wb = band & black;
-            while (wb != 0) active.append(makeIndex(perspective, .white, from, bb.popLsb(&wb), .black, king));
-        }
-        b = black;
-        while (b != 0) {
-            const from = bb.popLsb(&b);
-            var partners = pawnPair(from) & b;
-            while (partners != 0) active.append(makeIndex(perspective, .black, from, bb.popLsb(&partners), .black, king));
-        }
+        generate(perspective, pos.king(perspective), pos.piecesOf(.white, .pawn), pos.piecesOf(.black, .pawn), pos.piecesOf(.white, .pawn), pos.piecesOf(.black, .pawn), active);
     }
+
     fn generate(perspective: t.Color, king: t.Square, updated_white: u64, updated_black: u64, white: u64, black: u64, out: *ThreatList) void {
         const unchanged = (white | black) & ~(updated_white | updated_black);
         var updated = updated_white | updated_black;
@@ -148,7 +135,7 @@ pub const PawnPairs = struct {
 };
 
 pub const FullThreats = struct {
-    pub const hash_value: u32 = 0x2e6b9d04;
+    pub const hash_value: u32 = 0x2c41eaea;
     pub const dimensions: u32 = 59808;
     const valid_targets = [_]u32{ 0, 4, 10, 8, 8, 10, 0, 0, 0, 4, 10, 8, 8, 10, 0, 0 };
     const mapping = [_][6]i32{

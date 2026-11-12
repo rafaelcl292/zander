@@ -167,7 +167,7 @@ pub const Worker = struct {
                 const average = self.root_moves[self.pv_idx].average_score;
                 var alpha = @max(average - delta, -t.value_infinite);
                 var beta = @min(average + delta, t.value_infinite);
-                const seek_mate_score = if (self.pv_idx != 0) self.root_moves[self.pv_idx].previous_score else self.root_moves[self.pv_idx].score;
+                const seek_mate_score = self.root_moves[self.pv_idx].previous_score;
                 self.seek_mate = seek_mate_score != -t.value_infinite and @abs(seek_mate_score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
                 self.base.optimism[us] = div(456 * average, @as(i32, @intCast(@abs(average))) + 85);
                 self.base.optimism[us ^ 1] = -self.base.optimism[us];
@@ -451,7 +451,7 @@ pub const Worker = struct {
             }
             if (cut_node and ss.static_eval + 50 * ss.prior_nmp_fail_high >= beta - 13 * depth - 47 * b(improving) + 365 and excluded.data == 0 and pos.st.non_pawn_material[us] != 0 and ss.ply >= self.nmp_min_ply and beta >= -2000) {
                 std.debug.assert(prev.current_move.data != t.Move.null_move.data);
-                var reduction = 7 + div(depth, 3) + @max(div(ss.static_eval - beta, 256), 0);
+                var reduction = 7 + div(depth, 3) + @max(div(ss.static_eval - beta, 256), 0) - @as(i32, @intCast(self.thread_index & 1));
                 reduction -= div(b(seek_mate) * reduction, 2);
                 w.doNullMove(pos, &state, frame);
                 const value = -self.search(false, pos, frame + 1, -beta, -beta + 1, depth - reduction, false);
