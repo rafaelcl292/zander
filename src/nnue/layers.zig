@@ -279,8 +279,12 @@ test "block sparse affine preserves signed extremes, zero blocks and wrapping su
     var input: [1024]u8 = undefined;
     var scalar: [32]i32 = undefined;
     var sparse: [32]i32 = undefined;
-    for (0..16) |pattern| {
-        for (&input, 0..) |*value, i| value.* = if (pattern == 0) 0 else if (pattern == 1) 127 else if ((i / 4) % pattern == 0) @truncate(rng.next() & 127) else 0;
+    for (0..22) |pattern| {
+        // Include zero through five active blocks in each mask word, covering
+        // short groups and every tail of kernels that process multiple blocks.
+        for (&input, 0..) |*value, i| value.* = if (pattern >= 16)
+            (if ((i / 4) % 64 < pattern - 16) 127 else 0)
+        else if (pattern == 0) 0 else if (pattern == 1) 127 else if ((i / 4) % pattern == 0) @truncate(rng.next() & 127) else 0;
         layer.fc0.propagateScalar(&input, &scalar);
         var prepared: [1024]u8 = undefined;
         layout.prepare(&input, &prepared);

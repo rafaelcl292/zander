@@ -29,6 +29,7 @@ inline fn block(input: [*]const u8, index: usize) Bytes {
 }
 
 pub fn sparse(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
+    if (comptime std.Target.aarch64.featureSetHas(cpu.features, .dotprod)) return sparseDot(input, masks, weights, biases, output);
     var sums: [8]Sums = undefined;
     inline for (0..8) |i| sums[i] = biases[i * 4 ..][0..4].*;
     for (0..4) |part| {
@@ -42,6 +43,46 @@ pub fn sparse(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, bia
         }
     }
     inline for (0..8) |i| output[i * 4 ..][0..4].* = sums[i];
+}
+
+/// As in the reference NEON dot-product kernel, distribute successive input
+/// blocks over three independent accumulator chains, then merge exactly.
+fn sparseDot(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, biases: [*]const i32, output: [*]i32) void {
+    var sums: [3][8]Sums = @splat(@splat(@splat(0)));
+    inline for (0..8) |i| sums[0][i] = biases[i * 4 ..][0..4].*;
+    for (0..4) |part| {
+        var bits = masks[part];
+        while (bits != 0) {
+            const first = part * 64 + @ctz(bits);
+            bits &= bits - 1;
+            if (bits == 0) {
+                sparseRows(1, &sums, input, weights, .{first});
+                break;
+            }
+            const second = part * 64 + @ctz(bits);
+            bits &= bits - 1;
+            if (bits == 0) {
+                sparseRows(2, &sums, input, weights, .{ first, second });
+                break;
+            }
+            const third = part * 64 + @ctz(bits);
+            bits &= bits - 1;
+            sparseRows(3, &sums, input, weights, .{ first, second, third });
+        }
+    }
+    inline for (0..8) |i| output[i * 4 ..][0..4].* = sums[0][i] +% sums[1][i] +% sums[2][i];
+}
+
+inline fn sparseRows(comptime count: usize, sums: *[3][8]Sums, input: [*]const u8, weights: [*]const i8, indices: [count]usize) void {
+    var inputs: [count]Bytes = undefined;
+    var rows: [count][*]const i8 = undefined;
+    inline for (0..count) |chain| {
+        inputs[chain] = block(input, indices[chain]);
+        rows[chain] = weights + indices[chain] * 128;
+    }
+    inline for (0..8) |i| {
+        inline for (0..count) |chain| sums[chain][i] = dot(sums[chain][i], inputs[chain], rows[chain][i * 16 ..][0..16].*);
+    }
 }
 
 pub fn hidden(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
