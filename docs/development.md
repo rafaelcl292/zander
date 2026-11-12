@@ -54,6 +54,13 @@ zig build network-test search-test engine-test uci-test \
 `engine-test` and `uci-test` do not. These four steps are available only when
 `-Dnetwork` is supplied. `quiescence-test` is an alias for `search-test`.
 
+`differential`, `network-test`, `search-test`, and `engine-test` compile the tested
+Zander module for the build host. Passing `-Dtarget` or `-Dcpu` does not turn these
+steps into checks of that target. The `test` step uses the requested target, and
+`uci-test` launches the built executable. To check search equivalence for a
+different CPU target, run `scripts/compare_engines.py --require-identical` with
+the actual target executable on a compatible host.
+
 Builds default to scalar NNUE. To exercise automatic backend selection, append
 `-Dnnue-backend=auto` to the test command.
 
