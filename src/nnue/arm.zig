@@ -79,3 +79,39 @@ pub fn clippedProduct(a: @Vector(8, i16), b: @Vector(8, i16)) @Vector(8, u8) {
     );
     return @intCast((@as(@Vector(8, u16), first) * @as(@Vector(8, u16), second)) >> @splat(9));
 }
+
+/// Keep both halves of a weight vector in one register, matching NEON's
+/// widening low/high instructions. Every ARM64 target supports these.
+pub inline fn updateAccumulatorPair(comptime add: bool, low: @Vector(8, i16), high: @Vector(8, i16), weights: Bytes) [2]@Vector(8, i16) {
+    const first = asm (if (add) "saddw %[result].8h, %[previous].8h, %[weights].8b" else "ssubw %[result].8h, %[previous].8h, %[weights].8b"
+        : [result] "=w" (-> @Vector(8, i16)),
+        : [previous] "0" (low),
+          [weights] "w" (weights),
+    );
+    const second = asm (if (add) "saddw2 %[result].8h, %[previous].8h, %[weights].16b" else "ssubw2 %[result].8h, %[previous].8h, %[weights].16b"
+        : [result] "=w" (-> @Vector(8, i16)),
+        : [previous] "0" (high),
+          [weights] "w" (weights),
+    );
+    return .{ first, second };
+}
+
+test "ARM accumulator widening preserves both halves and wrapping arithmetic" {
+    if (cpu.arch != .aarch64) return;
+    const edges = [_]i16{ -32768, -32767, -256, -1, 0, 255, 32766, 32767 };
+    for (0..256) |byte| {
+        var weights: [16]i8 = undefined;
+        var acc: [16]i16 = undefined;
+        for (&weights, &acc, 0..) |*weight, *value, i| {
+            weight.* = @bitCast(@as(u8, @truncate(byte + i * 7)));
+            value.* = edges[i % edges.len];
+        }
+        inline for (.{ false, true }) |add| {
+            const actual: [16]i16 = @bitCast(updateAccumulatorPair(add, acc[0..8].*, acc[8..16].*, weights));
+            for (acc, weights, actual) |value, weight, result| {
+                const expected = if (add) value +% weight else value -% weight;
+                try std.testing.expectEqual(expected, result);
+            }
+        }
+    }
+}

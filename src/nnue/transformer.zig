@@ -154,6 +154,17 @@ pub const FeatureTransformer = struct {
         }
         for (indices) |index| {
             const row = if (threats) self.threat_weights[index][offset..][0 .. tile_registers * lanes] else self.weights[index][offset..][0 .. tile_registers * lanes];
+            if (comptime @import("builtin").target.cpu.arch == .aarch64 and lanes == 8) {
+                // One 128-bit weight load feeds both halves of the tile.
+                // AArch64 widening operations can consume either byte half.
+                inline for (0..tile_registers / 2) |i| {
+                    const weights: @Vector(16, i8) = row[i * 16 ..][0..16].*;
+                    const values = @import("arm.zig").updateAccumulatorPair(add, tile[i * 2], tile[i * 2 + 1], weights);
+                    tile[i * 2] = values[0];
+                    tile[i * 2 + 1] = values[1];
+                }
+                continue;
+            }
             inline for (0..tile_registers) |i| {
                 const start = i * lanes;
                 const weight: @Vector(lanes, i16) = if (threats)
