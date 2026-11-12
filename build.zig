@@ -2,7 +2,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize });
+    const mod = b.addModule("zander", .{ .root_source_file = b.path("src/root.zig"), .target = target, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(target, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(target, optimize)) .async else null });
     const backend = b.addOptions();
     const Kernel = enum { scalar, vector, sse2, avx2, auto };
     const simd = b.option(bool, "simd", "Use portable vector NNUE kernels instead of the scalar reference") orelse false;
@@ -15,14 +15,14 @@ pub fn build(b: *std.Build) void {
     backend.addOption(bool, "prefetch", b.option(bool, "prefetch", "Issue the reference TT/history prefetch hints") orelse true);
     mod.addOptions("backend", backend);
     if (kernel == .auto) addDispatchObject(b, mod, target, optimize);
-    const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize });
+    const exe_mod = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(target, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(target, optimize)) .async else null });
     exe_mod.addImport("zander", mod);
     const exe = b.addExecutable(.{ .name = "zander", .root_module = exe_mod });
     b.installArtifact(exe);
     const run = b.addRunArtifact(exe);
     run.addPassthruArgs();
     b.step("run", "Run the UCI engine or diagnostic CLI").dependOn(&run.step);
-    const micro_mod = b.createModule(.{ .root_source_file = b.path("tests/microbench.zig"), .target = target, .optimize = optimize });
+    const micro_mod = b.createModule(.{ .root_source_file = b.path("tests/microbench.zig"), .target = target, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(target, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(target, optimize)) .async else null });
     micro_mod.addImport("zander", mod);
     const micro = b.addExecutable(.{ .name = "zander-microbench", .root_module = micro_mod });
     b.step("microbench-build", "Build the trace-replay kernel benchmark").dependOn(&b.addInstallArtifact(micro, .{}).step);
@@ -50,8 +50,8 @@ pub fn build(b: *std.Build) void {
     cpp.addFileArg2(b.path("tests/oracle.cpp"), .{});
     cpp.addArg("-o");
     const obj = cpp.addOutputFileArg2("oracle.o", .{});
-    const diff_mod = b.createModule(.{ .root_source_file = b.path("tests/differential.zig"), .target = b.graph.host, .optimize = optimize });
-    diff_mod.addImport("zander", b.createModule(.{ .root_source_file = b.path("src/root.zig"), .target = b.graph.host, .optimize = optimize }));
+    const diff_mod = b.createModule(.{ .root_source_file = b.path("tests/differential.zig"), .target = b.graph.host, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(b.graph.host, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(b.graph.host, optimize)) .async else null });
+    diff_mod.addImport("zander", b.createModule(.{ .root_source_file = b.path("src/root.zig"), .target = b.graph.host, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(b.graph.host, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(b.graph.host, optimize)) .async else null }));
     diff_mod.import_table.get("zander").?.addOptions("backend", backend);
     if (kernel == .auto) addDispatchObject(b, diff_mod.import_table.get("zander").?, b.graph.host, optimize);
     diff_mod.addObjectFile(obj);
@@ -140,7 +140,7 @@ pub fn build(b: *std.Build) void {
         network_run.addFileArg2(network_exe, .{});
         network_run.addFileArg2(.{ .cwd_relative = path }, .{});
         network_run.addFileArg2(b.path("tests/positions.txt"), .{});
-        const network_mod = b.createModule(.{ .root_source_file = b.path("tests/network.zig"), .target = b.graph.host, .optimize = optimize });
+        const network_mod = b.createModule(.{ .root_source_file = b.path("tests/network.zig"), .target = b.graph.host, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(b.graph.host, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(b.graph.host, optimize)) .async else null });
         network_mod.addImport("zander", diff_mod.import_table.get("zander").?);
         network_mod.addAnonymousImport("reference", .{ .root_source_file = network_run.captureStdOut(.{ .basename = "network_reference.zig" }) });
         const options = b.addOptions();
@@ -150,7 +150,7 @@ pub fn build(b: *std.Build) void {
         const network_test = b.addTest(.{ .root_module = network_mod });
         b.step("network-test", "Compare real NNUE weights and incremental evaluation with Stockfish").dependOn(&b.addRunArtifact(network_test).step);
         worker_cpp.addArgs(&.{ "-Wl,--gc-sections", "-o" });
-        const engine_mod = b.createModule(.{ .root_source_file = b.path("tests/engine.zig"), .target = b.graph.host, .optimize = optimize });
+        const engine_mod = b.createModule(.{ .root_source_file = b.path("tests/engine.zig"), .target = b.graph.host, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(b.graph.host, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(b.graph.host, optimize)) .async else null });
         engine_mod.addImport("zander", diff_mod.import_table.get("zander").?);
         engine_mod.addOptions("options", options);
         const uci_run = b.addSystemCommand(&.{"python3"});
@@ -166,7 +166,7 @@ pub fn build(b: *std.Build) void {
         worker_run.addFileArg2(worker_exe, .{});
         worker_run.addFileArg2(.{ .cwd_relative = path }, .{});
         worker_run.addFileArg2(b.path("tests/positions.txt"), .{});
-        const worker_mod = b.createModule(.{ .root_source_file = b.path("tests/search_worker.zig"), .target = b.graph.host, .optimize = optimize });
+        const worker_mod = b.createModule(.{ .root_source_file = b.path("tests/search_worker.zig"), .target = b.graph.host, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(b.graph.host, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(b.graph.host, optimize)) .async else null });
         worker_mod.addImport("zander", diff_mod.import_table.get("zander").?);
         worker_mod.addOptions("options", options);
         worker_mod.addAnonymousImport("reference", .{ .root_source_file = worker_run.captureStdOut(.{ .basename = "search_worker_reference.zig" }) });
@@ -202,7 +202,7 @@ pub fn build(b: *std.Build) void {
         reference.addFileArg2(positions.captureStdOut(.{ .basename = "syzygy-positions.txt" }), .{});
         const tb_options = b.addOptions();
         tb_options.addOption([]const u8, "tablebase_path", path);
-        const tb_mod = b.createModule(.{ .root_source_file = b.path("tests/syzygy.zig"), .target = b.graph.host, .optimize = optimize });
+        const tb_mod = b.createModule(.{ .root_source_file = b.path("tests/syzygy.zig"), .target = b.graph.host, .optimize = optimize, .omit_frame_pointer = if (useReleaseUnwind(b.graph.host, optimize)) true else null, .unwind_tables = if (useReleaseUnwind(b.graph.host, optimize)) .async else null });
         tb_mod.addImport("zander", diff_mod.import_table.get("zander").?);
         tb_mod.addOptions("options", tb_options);
         tb_mod.addAnonymousImport("reference", .{ .root_source_file = reference.captureStdOut(.{ .basename = "syzygy_reference.zig" }) });
@@ -230,6 +230,12 @@ pub fn build(b: *std.Build) void {
     diff_step.dependOn(&b.addRunArtifact(diff).step);
 }
 
+// Linux release builds can use DWARF unwind tables while freeing the frame
+// pointer register. Keep compiler defaults for other platform ABIs and modes.
+fn useReleaseUnwind(target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) bool {
+    return optimize == .fast and target.result.os.tag == .linux;
+}
+
 fn addDispatchObject(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize) void {
     if (target.result.cpu.arch != .x86_64) return;
     const Variant = enum { avx2, avx512, avxvnni, vnni512 };
@@ -249,6 +255,8 @@ fn addDispatchObject(b: *std.Build, module: *std.Build.Module, target: std.Build
             .root_source_file = b.path("src/nnue/x86_affine.zig"),
             .target = b.resolveTargetQuery(query),
             .optimize = optimize,
+            .omit_frame_pointer = if (useReleaseUnwind(target, optimize)) true else null,
+            .unwind_tables = if (useReleaseUnwind(target, optimize)) .async else null,
         });
         root.addOptions("kernel_options", options);
         module.addObject(b.addObject(.{ .name = "nnue-" ++ @tagName(variant), .root_module = root, .use_llvm = true }));
