@@ -174,6 +174,7 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
             z.movegen.generate(.legal, &pos, &list);
             try expectMoves(child.legal, list.slice());
             pos.undoMove(move);
+            try expectThreatBoards(&pos, expected);
             try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
             try std.testing.expectEqualSlices(z.types.Piece, &board_before, &pos.board);
             try std.testing.expectEqualSlices(i32, &counts_before, &pos.piece_count);
@@ -193,16 +194,24 @@ test "FEN positions match upstream board, keys, checks, pins and castling" {
         while (undone > 0) {
             undone -= 1;
             pos.undoMove(.{ .data = expected.walk[undone].move });
-            const prior = if (undone == 0) expected.data else expected.walk[undone - 1].data;
-            try std.testing.expectEqualSlices(u64, prior, snapshotPosition(&pos, &snapshot));
+            const prior = if (undone == 0) expected else expected.walk[undone - 1];
+            try expectThreatBoards(&pos, prior);
+            try std.testing.expectEqualSlices(u64, prior.data, snapshotPosition(&pos, &snapshot));
         }
         for (expected.null_state) |null_state| {
-            var next: z.position.StateInfo = undefined;
-            pos.doNullMove(&next);
-            try expectQueries(&pos, null_state);
-            try std.testing.expectEqualSlices(u64, null_state.data, snapshotPosition(&pos, &snapshot));
-            pos.undoNullMove();
-            try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
+            for ([_]bool{ false, true }) |cold| {
+                if (cold) {
+                    pos.st.threats = @splat(0xa5a5a5a5a5a5a5a5);
+                    pos.st.threats[0] = 0;
+                }
+                var next: z.position.StateInfo = undefined;
+                pos.doNullMove(&next);
+                try expectQueries(&pos, null_state);
+                try std.testing.expectEqualSlices(u64, null_state.data, snapshotPosition(&pos, &snapshot));
+                pos.undoNullMove();
+                try expectThreatBoards(&pos, expected);
+                try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
+            }
         }
         try std.testing.expectEqual(expected.nodes, z.perft.count(&pos, 3));
         try std.testing.expectEqualSlices(u64, expected.data, snapshotPosition(&pos, &snapshot));
@@ -280,7 +289,28 @@ fn expectMoves(expected: []const u16, actual: []const z.types.Move) !void {
     for (expected, actual) |e, m| try std.testing.expectEqual(e, m.data);
 }
 
+fn expectThreatBoards(pos: *const z.position.Position, expected: @import("position_reference").Snapshot) !void {
+    try std.testing.expectEqual(@as(usize, 7), expected.threat_boards.len);
+    // Workers copy root state before querying it, including an uncomputed cache.
+    var copied_state = pos.st.*;
+    var copied_pos = pos.*;
+    copied_pos.st = &copied_state;
+    for ([_]u3{ 3, 0, 6, 1, 4, 2, 5 }) |pt|
+        try std.testing.expectEqual(expected.threat_boards[pt], copied_pos.threatsBy(@fromBackingInt(pt)));
+    // Check normal cache invalidation first, then force a cold cache with stale
+    // payload. Ask for a specific piece before ALL_PIECES in both passes.
+    for ([_]bool{ false, true }) |cold| {
+        if (cold) {
+            pos.st.threats = @splat(0xa5a5a5a5a5a5a5a5);
+            pos.st.threats[0] = 0;
+        }
+        for ([_]u3{ 3, 0, 6, 1, 4, 2, 5 }) |pt|
+            try std.testing.expectEqual(expected.threat_boards[pt], pos.threatsBy(@fromBackingInt(pt)));
+    }
+}
+
 fn expectQueries(pos: *const z.position.Position, expected: @import("position_reference").Snapshot) !void {
+    try expectThreatBoards(pos, expected);
     try expectActiveFeatures(pos, expected);
     var list: z.movegen.MoveList = .{};
     z.movegen.generate(.legal, pos, &list);
