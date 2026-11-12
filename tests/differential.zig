@@ -413,6 +413,9 @@ fn expectActiveFeatures(pos: *const z.position.Position, expected: @import("posi
 }
 fn expectChangedFeatures(pos: *const z.position.Position, expected: @import("position_reference").Snapshot, diff: *const z.dirty.Dirties) !void {
     const features = z.nnue_features;
+    var both_removed: [2]features.ThreatList = .{ .{}, .{} };
+    var both_added: [2]features.ThreatList = .{ .{}, .{} };
+    features.FullThreats.appendChangedBoth(.{ pos.king(.white), pos.king(.black) }, &diff.threats, &both_removed, &both_added);
     for ([_]z.types.Color{ .white, .black }, expected.features) |c, ref| {
         var hr: features.SmallList = .{};
         var ha: features.SmallList = .{};
@@ -427,6 +430,8 @@ fn expectChangedFeatures(pos: *const z.position.Position, expected: @import("pos
         try std.testing.expectEqualSlices(u32, ref.half_added, ha.slice());
         try std.testing.expectEqualSlices(u16, ref.threats_removed, tr.slice());
         try std.testing.expectEqualSlices(u16, ref.threats_added, ta.slice());
+        try std.testing.expectEqualSlices(u16, ref.threats_removed, both_removed[@backingInt(c)].slice());
+        try std.testing.expectEqualSlices(u16, ref.threats_added, both_added[@backingInt(c)].slice());
         try std.testing.expectEqualSlices(u16, ref.pawns_removed, pr.slice());
         try std.testing.expectEqualSlices(u16, ref.pawns_added, pa.slice());
         try std.testing.expectEqual(ref.refresh, features.K32H3.requiresRefresh(diff.piece, c, ref.block_before, features.K32H3.block(pos, c)));
