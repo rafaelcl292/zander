@@ -1,6 +1,6 @@
 # Performance tools
 
-[Development](development.md) · [Historical measurements](performance.md)
+[Development](development.md) · [Performance](performance.md)
 
 Use these tools to evaluate execution changes with matching search behavior.
 They do not estimate Elo. Python 3.14.7, Zig 0.17.1 and Linux are the supported

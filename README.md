@@ -36,7 +36,7 @@ helper reads it to identify the pinned weights. Weights are downloaded separatel
 - [Usage](docs/usage.md): build options, network setup, UCI, and diagnostic commands.
 - [Development](docs/development.md): prerequisites, tests, and engine comparisons.
 - [Performance tools](docs/performance-tools.md): controlled benchmarks, profiling, revision experiments, and kernel replay.
-- [Performance](docs/performance.md): measured time, nodes, memory, thread scaling, and interpretation limits.
+- [Performance](docs/performance.md): validation scope and local experiment records.
 - [Architecture](docs/architecture.md): source map and verification boundaries.
 
 ## Attribution and license

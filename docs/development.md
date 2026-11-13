@@ -110,8 +110,8 @@ experiments and trace-replay kernel microbenchmarks.
 
 ## Compare engines
 
-See the [performance report](performance.md) for measured time, nodes, memory,
-and thread scaling, with search equivalence and playing strength kept separate.
+See [Performance](performance.md) for validation limits and where to keep local
+experiment records.
 
 The [comparison harness](../scripts/compare_engines.py) runs repeated fixed-depth
 UCI searches and can run paired games. Prepare the submodule and network first,
