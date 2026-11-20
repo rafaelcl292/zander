@@ -132,7 +132,9 @@ const Session = struct {
         self.wake_mutex.lockUncancelable(self.engine.io);
         defer self.wake_mutex.unlock(self.engine.io);
         while (true) {
-            while (!self.searching and !self.exiting) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+            while (!self.searching and !self.exiting) {
+                self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+            }
             if (self.exiting) return;
             self.wake_mutex.unlock(self.engine.io);
             self.searchThread();
@@ -152,7 +154,8 @@ const Session = struct {
                 "option name Syzygy50MoveRule type check default true\n" ++
                 "option name SyzygyProbeLimit type spin default 7 min 0 max 7\n" ++
                 "option name NumaPolicy type string default auto\n" ++
-                "option name PagePolicy type combo default auto var auto var small var transparent var huge2m var huge1g\n" ++
+                "option name PagePolicy type combo default auto" ++
+                " var auto var small var transparent var huge2m var huge1g\n" ++
                 "option name Threads type spin default 1 min 1 max {d}\n" ++
                 "option name Skill Level type spin default 20 min 0 max 20\n" ++
                 "option name UCI_LimitStrength type check default false\n" ++
@@ -194,15 +197,24 @@ const Session = struct {
         } else if (std.mem.eql(u8, cmd, "bench")) {
             self.stopSearch();
             try self.bench(args[1..]);
-        } else if (std.mem.eql(u8, cmd, "d") or std.mem.eql(u8, cmd, "flip") or std.mem.eql(u8, cmd, "eval") or std.mem.eql(u8, cmd, "compiler") or std.mem.eql(u8, cmd, "export_net")) {
+        } else if (std.mem.eql(u8, cmd, "d") or std.mem.eql(u8, cmd, "flip") or std.mem.eql(u8, cmd, "eval") or
+            std.mem.eql(u8, cmd, "compiler") or std.mem.eql(u8, cmd, "export_net"))
+        {
             self.stopSearch();
             try self.diagnostic(args);
-        } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "license") or std.mem.eql(u8, cmd, "--license")) {
-            try self.text("Zander is a Stockfish port in Zig, licensed under GPL-3.0-or-later. See README.md and LICENSE.\nCommands: uci, position, go, stop, ponderhit, setoption, isready, ucinewgame, d, flip, eval, compiler, export_net, bench, speedtest, quit.\n");
+        } else if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or
+            std.mem.eql(u8, cmd, "license") or std.mem.eql(u8, cmd, "--license"))
+        {
+            try self.text("Zander is a Stockfish port in Zig, licensed under GPL-3.0-or-later. " ++
+                "See README.md and LICENSE.\n" ++
+                "Commands: uci, position, go, stop, ponderhit, setoption, isready, ucinewgame, " ++
+                "d, flip, eval, compiler, export_net, bench, speedtest, quit.\n");
         } else if (std.mem.startsWith(u8, cmd, "#")) {
             return;
         } else if (std.mem.eql(u8, cmd, "debug")) {
-            if (args.len != 2 or (!std.mem.eql(u8, args[1], "on") and !std.mem.eql(u8, args[1], "off"))) return error.InvalidDebugCommand;
+            if (args.len != 2 or (!std.mem.eql(u8, args[1], "on") and !std.mem.eql(u8, args[1], "off"))) {
+                return error.InvalidDebugCommand;
+            }
         } else if (std.mem.eql(u8, cmd, "register")) {
             try self.text("registration ok\n");
         } else return error.UnknownCommand;
@@ -217,9 +229,18 @@ const Session = struct {
     }
     fn speedtest(self: *Session, args: []const []const u8) !void {
         if (args.len > 3) return error.UnexpectedArgument;
-        const threads: usize = if (args.len > 0) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[0], 10), 1, @as(i64, @intCast(e.maxThreads())))) else @min(e.maxThreads(), std.Thread.getCpuCount() catch 1);
-        const hash: usize = if (args.len > 1) @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[1], 10), 1, @as(i64, @intCast(e.max_hash_mb)))) else @min(e.max_hash_mb, 128 * threads);
-        const seconds: i64 = if (args.len > 2) std.math.clamp(try std.fmt.parseInt(i64, args[2], 10), 1, std.math.maxInt(i32) / 1000) else 150;
+        const threads: usize = if (args.len > 0)
+            @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[0], 10), 1, @as(i64, @intCast(e.maxThreads()))))
+        else
+            @min(e.maxThreads(), std.Thread.getCpuCount() catch 1);
+        const hash: usize = if (args.len > 1)
+            @intCast(std.math.clamp(try std.fmt.parseInt(i64, args[1], 10), 1, @as(i64, @intCast(e.max_hash_mb))))
+        else
+            @min(e.max_hash_mb, 128 * threads);
+        const seconds: i64 = if (args.len > 2)
+            std.math.clamp(try std.fmt.parseInt(i64, args[2], 10), 1, std.math.maxInt(i32) / 1000)
+        else
+            150;
         try self.engine.resizeThreads(threads);
         try self.engine.resizeHash(hash);
         self.chess960 = false;
@@ -231,7 +252,9 @@ const Session = struct {
         while (games.next()) |game| {
             var lines = std.mem.tokenizeScalar(u8, game, '\n');
             var ply: usize = 1;
-            while (lines.next() != null) : (ply += 1) total_time += @as(f32, @floatCast(50000.0 / @as(f64, @floatFromInt(ply + 15))));
+            while (lines.next() != null) : (ply += 1) {
+                total_time += @as(f32, @floatCast(50000.0 / @as(f64, @floatFromInt(ply + 15))));
+            }
         }
         const scale = @as(f32, @floatFromInt(seconds * 1000)) / total_time;
         games.reset();
@@ -265,9 +288,24 @@ const Session = struct {
         const milliseconds: u64 = @intCast(@max(1, elapsed));
         self.output_mutex.lockUncancelable(self.engine.io);
         defer self.output_mutex.unlock(self.engine.io);
-        try self.writer.print("Filled invocation          : speedtest {d} {d} {d}\nThread count               : {d}\nTT size [MiB]              : {d}\n", .{ threads, hash, seconds, threads, hash });
-        try self.writer.print("Hash max, avg [per mille]   :\n    single search          : {d}, {d}\n    single game            : {d}, {d}\n", .{ hash_max[0], hash_total[0] / samples, hash_max[1], hash_total[1] / samples });
-        try self.writer.print("Total nodes searched       : {d}\nTotal search time [s]      : {d:.3}\nNodes/second               : {d}\n", .{ nodes, @as(f64, @floatFromInt(milliseconds)) / 1000, 1000 * nodes / milliseconds });
+        try self.writer.print(
+            "Filled invocation          : speedtest {d} {d} {d}\n" ++
+                "Thread count               : {d}\n" ++
+                "TT size [MiB]              : {d}\n",
+            .{ threads, hash, seconds, threads, hash },
+        );
+        try self.writer.print(
+            "Hash max, avg [per mille]   :\n" ++
+                "    single search          : {d}, {d}\n" ++
+                "    single game            : {d}, {d}\n",
+            .{ hash_max[0], hash_total[0] / samples, hash_max[1], hash_total[1] / samples },
+        );
+        try self.writer.print(
+            "Total nodes searched       : {d}\n" ++
+                "Total search time [s]      : {d:.3}\n" ++
+                "Nodes/second               : {d}\n",
+            .{ nodes, @as(f64, @floatFromInt(milliseconds)) / 1000, 1000 * nodes / milliseconds },
+        );
         try self.writer.flush();
     }
     // Defaults are copied from the pinned GPL-3.0-or-later benchmark.cpp.
@@ -281,9 +319,20 @@ const Session = struct {
         var current_buffer: [256]u8 = undefined;
         var current = std.Io.Writer.fixed(&current_buffer);
         try self.engine.position.writeFen(&current);
-        const file = if (!std.mem.eql(u8, source, "default") and !std.mem.eql(u8, source, "current")) try std.Io.Dir.cwd().readFileAlloc(self.engine.io, source, self.engine.allocator, .limited(16 * 1024 * 1024)) else null;
+        const file = if (!std.mem.eql(u8, source, "default") and !std.mem.eql(u8, source, "current"))
+            try std.Io.Dir.cwd().readFileAlloc(
+                self.engine.io,
+                source,
+                self.engine.allocator,
+                .limited(16 * 1024 * 1024),
+            )
+        else
+            null;
         defer if (file) |bytes| self.engine.allocator.free(bytes);
-        const positions = file orelse if (std.mem.eql(u8, source, "current")) current.buffered() else @embedFile("benchmark_positions.txt");
+        const positions = file orelse if (std.mem.eql(u8, source, "current"))
+            current.buffered()
+        else
+            @embedFile("benchmark_positions.txt");
         try self.setOption(&.{ "name", "Threads", "value", threads });
         try self.setOption(&.{ "name", "Hash", "value", hash });
         self.engine.newGame();
@@ -328,7 +377,10 @@ const Session = struct {
         const elapsed: u64 = @intCast(@max(1, std.Io.Clock.awake.now(self.engine.io).toMilliseconds() - start + 1));
         self.output_mutex.lockUncancelable(self.engine.io);
         defer self.output_mutex.unlock(self.engine.io);
-        try self.writer.print("Total time (ms) : {d}\nNodes searched  : {d}\nNodes/second    : {d}\n", .{ elapsed, total, 1000 * total / elapsed });
+        try self.writer.print(
+            "Total time (ms) : {d}\nNodes searched  : {d}\nNodes/second    : {d}\n",
+            .{ elapsed, total, 1000 * total / elapsed },
+        );
         try self.writer.flush();
     }
     fn diagnostic(self: *Session, args: []const []const u8) !void {
@@ -346,14 +398,22 @@ const Session = struct {
             var buffer: [256]u8 = undefined;
             var flipped = std.Io.Writer.fixed(&buffer);
             for (0..8) |i| {
-                for (rows[7 - i]) |c| try flipped.writeByte(if (std.ascii.isLower(c)) std.ascii.toUpper(c) else std.ascii.toLower(c));
+                for (rows[7 - i]) |c| {
+                    try flipped.writeByte(if (std.ascii.isLower(c)) std.ascii.toUpper(c) else std.ascii.toLower(c));
+                }
                 if (i != 7) try flipped.writeByte('/');
             }
             try flipped.writeAll(if (std.mem.eql(u8, fields.next().?, "w")) " b " else " w ");
-            for (fields.next().?) |c| try flipped.writeByte(if (std.ascii.isLower(c)) std.ascii.toUpper(c) else std.ascii.toLower(c));
+            for (fields.next().?) |c| {
+                try flipped.writeByte(if (std.ascii.isLower(c)) std.ascii.toUpper(c) else std.ascii.toLower(c));
+            }
             try flipped.writeByte(' ');
             const ep = fields.next().?;
-            if (ep[0] == '-') try flipped.writeByte('-') else try flipped.print("{c}{c}", .{ ep[0], @as(u8, if (ep[1] == '3') '6' else '3') });
+            if (ep[0] == '-') {
+                try flipped.writeByte('-');
+            } else {
+                try flipped.print("{c}{c}", .{ ep[0], @as(u8, if (ep[1] == '3') '6' else '3') });
+            }
             try flipped.print(" {s} {s}", .{ fields.next().?, fields.next().? });
             try self.engine.setPosition(flipped.buffered(), pos.chess960, &.{});
             return;
@@ -365,7 +425,11 @@ const Session = struct {
             try self.writer.writeAll("\n");
             try self.writer.writeAll(border);
             for (0..8) |r| {
-                for (0..8) |f| try self.writer.print(" | {c}", .{" PNBRQK  pnbrqk"[@backingInt(pos.pieceOn(t.Square.make(@intCast(f), @intCast(7 - r))))]});
+                for (0..8) |f| {
+                    try self.writer.print(" | {c}", .{
+                        " PNBRQK  pnbrqk"[@backingInt(pos.pieceOn(t.Square.make(@intCast(f), @intCast(7 - r))))],
+                    });
+                }
                 try self.writer.print(" | {d}\n{s}", .{ 8 - r, border });
             }
             try self.writer.writeAll("   a   b   c   d   e   f   g   h\n\nFen: ");
@@ -380,8 +444,18 @@ const Session = struct {
             try self.writer.writeByte('\n');
         } else if (std.mem.eql(u8, cmd, "compiler")) {
             const builtin = @import("builtin");
-            try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{ builtin.zig_version_string, @tagName(builtin.target.cpu.arch), @tagName(builtin.target.os.tag), @tagName(builtin.mode), @tagName(@import("backend").nnue_backend) });
-            if (@import("backend").nnue_backend == .auto and builtin.target.cpu.arch == .x86_64) try self.writer.print("Selected affine kernel: {s}\n", .{@tagName(@import("nnue/dispatch.zig").selected())});
+            try self.writer.print("Zig {s}\nTarget: {s}-{s}\nOptimization: {s}\nNNUE backend: {s}\n", .{
+                builtin.zig_version_string,
+                @tagName(builtin.target.cpu.arch),
+                @tagName(builtin.target.os.tag),
+                @tagName(builtin.mode),
+                @tagName(@import("backend").nnue_backend),
+            });
+            if (@import("backend").nnue_backend == .auto and builtin.target.cpu.arch == .x86_64) {
+                try self.writer.print("Selected affine kernel: {s}\n", .{
+                    @tagName(@import("nnue/dispatch.zig").selected()),
+                });
+            }
         } else if (std.mem.eql(u8, cmd, "eval")) {
             try self.engine.ensureNetwork();
             if (pos.st.checkers != 0) {
@@ -392,22 +466,41 @@ const Session = struct {
                 const trace = network.trace(pos, self.engine.accumulators, self.engine.caches);
                 const bucket = network.layerStack(pos);
                 const border = "+------------+------------+\n";
-                try self.writer.print("NNUE network contributions (Normalized, {s} to move)\n{s}", .{ if (pos.side == .white) "White" else "Black", border });
+                try self.writer.print("NNUE network contributions (Normalized, {s} to move)\n{s}", .{
+                    if (pos.side == .white) "White" else "Black",
+                    border,
+                });
                 try self.writer.writeAll("|   Bucket   | Evaluation |\n");
                 try self.writer.writeAll(border);
                 for (trace[0..network.stored_layer_stacks], 0..) |value, index| {
                     try self.writer.print("|  {d}         |  ", .{index});
-                    try self.writer.print("{c}{d:6.2}   |  ", .{ @as(u8, if (value < 0) '-' else if (value > 0) '+' else ' '), @as(f64, @floatFromInt(@abs(notation.centipawns(value, pos)))) / 100.0 });
+                    try self.writer.print("{c}{d:6.2}   |  ", .{
+                        @as(u8, if (value < 0) '-' else if (value > 0) '+' else ' '),
+                        @as(f64, @floatFromInt(@abs(notation.centipawns(value, pos)))) / 100.0,
+                    });
                     if (index == bucket) try self.writer.writeAll("<-- this bucket is used");
                     try self.writer.writeByte('\n');
                 }
                 try self.writer.writeAll(border);
                 const raw = trace[bucket];
-                try self.writer.print("NNUE evaluation          {s}{d} (side to move, internal units)\n", .{ if (raw >= 0) "+" else "", raw });
+                try self.writer.print(
+                    "NNUE evaluation          {s}{d} (side to move, internal units)\n",
+                    .{ if (raw >= 0) "+" else "", raw },
+                );
                 const sign: i32 = if (pos.side == .white) 1 else -1;
-                const values = [_]i32{ notation.centipawns(raw * sign, pos), notation.centipawns(network.evaluateAdjusted(pos, self.engine.accumulators, self.engine.caches, 0) * sign, pos) };
+                const values = [_]i32{
+                    notation.centipawns(raw * sign, pos),
+                    notation.centipawns(
+                        network.evaluateAdjusted(pos, self.engine.accumulators, self.engine.caches, 0) * sign,
+                        pos,
+                    ),
+                };
                 for (values, [_][]const u8{ "NNUE evaluation", "Final evaluation" }) |value, label| {
-                    try self.writer.print("{s}      {s}{d:.2} (white side)\n", .{ label, if (value >= 0) "+" else "", @as(f64, @floatFromInt(value)) / 100.0 });
+                    try self.writer.print("{s}      {s}{d:.2} (white side)\n", .{
+                        label,
+                        if (value >= 0) "+" else "",
+                        @as(f64, @floatFromInt(value)) / 100.0,
+                    });
                 }
             }
         } else if (std.mem.eql(u8, cmd, "export_net")) {
@@ -473,19 +566,38 @@ const Session = struct {
                 return err;
             };
         } else if (std.ascii.eqlIgnoreCase(name, "PagePolicy")) {
-            const policy = std.meta.stringToEnum(@import("memory.zig").PagePolicy, value) orelse return error.InvalidPagePolicy;
+            const policy = std.meta.stringToEnum(@import("memory.zig").PagePolicy, value) orelse
+                return error.InvalidPagePolicy;
             const previous = self.engine.page_policy;
             self.engine.page_policy = policy;
             self.engine.resizeHash(self.engine.hash_mb) catch |err| {
                 self.engine.page_policy = previous;
                 return err;
             };
-        } else if (std.ascii.eqlIgnoreCase(name, "Hash")) try self.engine.resizeHash(try integer(usize, value, 1, e.max_hash_mb)) else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
+        } else if (std.ascii.eqlIgnoreCase(name, "Hash")) {
+            try self.engine.resizeHash(try integer(usize, value, 1, e.max_hash_mb));
+        } else if (std.ascii.eqlIgnoreCase(name, "Threads")) {
             try self.engine.resizeThreads(try integer(usize, value, 1, e.maxThreads()));
-        } else if (std.ascii.eqlIgnoreCase(name, "Skill Level")) self.skill_level = try integer(i32, value, 0, 20) else if (std.ascii.eqlIgnoreCase(name, "UCI_LimitStrength")) self.limit_strength = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Elo")) self.elo = try integer(i32, value, 1320, 3190) else if (std.ascii.eqlIgnoreCase(name, "nodestime")) {
+        } else if (std.ascii.eqlIgnoreCase(name, "Skill Level")) {
+            self.skill_level = try integer(i32, value, 0, 20);
+        } else if (std.ascii.eqlIgnoreCase(name, "UCI_LimitStrength")) {
+            self.limit_strength = try boolean(value);
+        } else if (std.ascii.eqlIgnoreCase(name, "UCI_Elo")) {
+            self.elo = try integer(i32, value, 1320, 3190);
+        } else if (std.ascii.eqlIgnoreCase(name, "nodestime")) {
             self.engine.node_rate = try integer(i64, value, 0, 10000);
             self.engine.node_time = .{};
-        } else if (std.ascii.eqlIgnoreCase(name, "MultiPV")) self.multi_pv = try integer(usize, value, 1, t.max_moves) else if (std.ascii.eqlIgnoreCase(name, "Ponder")) self.ponder_option = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_Chess960")) self.chess960 = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "UCI_ShowWDL")) self.show_wdl = try boolean(value) else if (std.ascii.eqlIgnoreCase(name, "Move Overhead")) self.move_overhead = try integer(i64, value, 0, 5000) else if (std.ascii.eqlIgnoreCase(name, "EvalFile")) {
+        } else if (std.ascii.eqlIgnoreCase(name, "MultiPV")) {
+            self.multi_pv = try integer(usize, value, 1, t.max_moves);
+        } else if (std.ascii.eqlIgnoreCase(name, "Ponder")) {
+            self.ponder_option = try boolean(value);
+        } else if (std.ascii.eqlIgnoreCase(name, "UCI_Chess960")) {
+            self.chess960 = try boolean(value);
+        } else if (std.ascii.eqlIgnoreCase(name, "UCI_ShowWDL")) {
+            self.show_wdl = try boolean(value);
+        } else if (std.ascii.eqlIgnoreCase(name, "Move Overhead")) {
+            self.move_overhead = try integer(i64, value, 0, 5000);
+        } else if (std.ascii.eqlIgnoreCase(name, "EvalFile")) {
             if (value.len == 0) return error.EmptyNetworkPath;
             try self.engine.loadNetwork(value);
         } else if (std.ascii.eqlIgnoreCase(name, "Clear Hash")) self.engine.newGame() else return error.UnknownOption;
@@ -573,7 +685,25 @@ const Session = struct {
             if (i == args.len) return error.MissingGoValue;
             const value = args[i];
             i += 1;
-            if (std.mem.eql(u8, key, "depth")) limits.depth = try integer(i32, value, 1, t.max_ply - 1) else if (std.mem.eql(u8, key, "nodes")) time_limits.nodes = try integer(u64, value, 0, std.math.maxInt(i64)) else if (std.mem.eql(u8, key, "movetime")) time_limits.move_time = try parseTime(value) else if (std.mem.eql(u8, key, "wtime")) time_limits.time[0] = try parseTime(value) else if (std.mem.eql(u8, key, "btime")) time_limits.time[1] = try parseTime(value) else if (std.mem.eql(u8, key, "winc")) time_limits.increment[0] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "binc")) time_limits.increment[1] = try integer(i64, value, 0, 1_000_000_000_000) else if (std.mem.eql(u8, key, "movestogo")) time_limits.moves_to_go = try integer(i32, value, 0, 100000) else if (std.mem.eql(u8, key, "mate")) time_limits.mate = try integer(i32, value, 0, t.max_ply / 2) else return error.UnknownGoOption;
+            if (std.mem.eql(u8, key, "depth")) {
+                limits.depth = try integer(i32, value, 1, t.max_ply - 1);
+            } else if (std.mem.eql(u8, key, "nodes")) {
+                time_limits.nodes = try integer(u64, value, 0, std.math.maxInt(i64));
+            } else if (std.mem.eql(u8, key, "movetime")) {
+                time_limits.move_time = try parseTime(value);
+            } else if (std.mem.eql(u8, key, "wtime")) {
+                time_limits.time[0] = try parseTime(value);
+            } else if (std.mem.eql(u8, key, "btime")) {
+                time_limits.time[1] = try parseTime(value);
+            } else if (std.mem.eql(u8, key, "winc")) {
+                time_limits.increment[0] = try integer(i64, value, 0, 1_000_000_000_000);
+            } else if (std.mem.eql(u8, key, "binc")) {
+                time_limits.increment[1] = try integer(i64, value, 0, 1_000_000_000_000);
+            } else if (std.mem.eql(u8, key, "movestogo")) {
+                time_limits.moves_to_go = try integer(i32, value, 0, 100000);
+            } else if (std.mem.eql(u8, key, "mate")) {
+                time_limits.mate = try integer(i32, value, 0, t.max_ply / 2);
+            } else return error.UnknownGoOption;
         }
         limits.search_moves = requested[0..count];
         self.engine.worker.skill_level = self.skill_level;
@@ -590,7 +720,10 @@ const Session = struct {
         return if (parsed < 0) 1 else parsed;
     }
     fn isGoKeyword(word: []const u8) bool {
-        for ([_][]const u8{ "infinite", "ponder", "searchmoves", "depth", "nodes", "movetime", "wtime", "btime", "winc", "binc", "movestogo", "mate" }) |key| if (std.mem.eql(u8, word, key)) {
+        for ([_][]const u8{
+            "infinite", "ponder", "searchmoves", "depth", "nodes",     "movetime",
+            "wtime",    "btime",  "winc",        "binc",  "movestogo", "mate",
+        }) |key| if (std.mem.eql(u8, word, key)) {
             return true;
         };
         return false;
@@ -607,8 +740,14 @@ const Session = struct {
         defer self.output_mutex.unlock(self.engine.io);
         self.writeInfo() catch {};
         var buffer: [6]u8 = undefined;
-        self.writer.print("bestmove {s}", .{notation.moveText(result.best_move, self.engine.position.chess960, &buffer)}) catch {};
-        if (self.engine.worker.root_moves.len != 0 and self.engine.worker.root_moves[0].pv.len > 1) self.writer.print(" ponder {s}", .{notation.moveText(self.engine.worker.root_moves[0].pv.moves[1], self.engine.position.chess960, &buffer)}) catch {};
+        self.writer.print("bestmove {s}", .{
+            notation.moveText(result.best_move, self.engine.position.chess960, &buffer),
+        }) catch {};
+        if (self.engine.worker.root_moves.len != 0 and self.engine.worker.root_moves[0].pv.len > 1) {
+            self.writer.print(" ponder {s}", .{
+                notation.moveText(self.engine.worker.root_moves[0].pv.moves[1], self.engine.position.chess960, &buffer),
+            }) catch {};
+        }
         self.writer.writeByte('\n') catch {};
         self.writer.flush() catch {};
     }
@@ -616,7 +755,11 @@ const Session = struct {
         const self: *Session = @ptrCast(@alignCast(context.?));
         self.wake_mutex.lockUncancelable(self.engine.io);
         defer self.wake_mutex.unlock(self.engine.io);
-        while (!self.engine.control.stopped() and (self.engine.control.ponder.load(.acquire) or self.engine.control.limits.infinite)) self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+        while (!self.engine.control.stopped() and
+            (self.engine.control.ponder.load(.acquire) or self.engine.control.limits.infinite))
+        {
+            self.wake_condition.waitUncancelable(self.engine.io, &self.wake_mutex);
+        }
     }
     fn progress(context: ?*anyopaque, _: *search.Worker) void {
         const self: *Session = @ptrCast(@alignCast(context.?));
@@ -634,7 +777,11 @@ const Session = struct {
         const worker = &self.engine.worker;
         if (worker.root_moves.len == 0) {
             try self.writer.writeAll("info depth 0 score ");
-            try notation.writeScore(self.writer, if (self.engine.position.st.checkers != 0) -t.value_mate else 0, &self.engine.position);
+            try notation.writeScore(
+                self.writer,
+                if (self.engine.position.st.checkers != 0) -t.value_mate else 0,
+                &self.engine.position,
+            );
             try self.writer.writeAll(" nodes 0\n");
             return;
         }
@@ -644,15 +791,30 @@ const Session = struct {
             if (worker.root_depth <= 1 and previous and index > 1) continue;
             var value = if (previous) root.previous_score else root.uci_score;
             if (value == -t.value_infinite) value = 0;
-            const tb_score = worker.tb_config.root_in_tb and @abs(value) < @import("search_support.zig").mate_in_max_ply;
+            const tb_score = worker.tb_config.root_in_tb and
+                @abs(value) < @import("search_support.zig").mate_in_max_ply;
             if (tb_score) value = root.tb_score;
             var extended: std.ArrayList(t.Move) = .empty;
             defer extended.deinit(self.engine.allocator);
             const support = @import("search_support.zig");
-            if (@abs(value) >= support.tb_win_in_max_ply and @abs(value) < support.mate_in_max_ply and !previous and (!root.isInexact() or tb_score)) {
+            if (@abs(value) >= support.tb_win_in_max_ply and @abs(value) < support.mate_in_max_ply and
+                !previous and (!root.isInexact() or tb_score))
+            {
                 if (worker.tablebases) |database| {
                     try extended.appendSlice(self.engine.allocator, root.pv.slice());
-                    if (try @import("syzygy/pv.zig").extend(self.engine.allocator, &extended, database, worker.tb_options, &self.engine.control, &self.engine.position, &value, @min(self.multi_pv, worker.root_moves.len), self.move_overhead)) try self.writer.writeAll("info string Syzygy PV extension reached its time limit\n");
+                    if (try @import("syzygy/pv.zig").extend(
+                        self.engine.allocator,
+                        &extended,
+                        database,
+                        worker.tb_options,
+                        &self.engine.control,
+                        &self.engine.position,
+                        &value,
+                        @min(self.multi_pv, worker.root_moves.len),
+                        self.move_overhead,
+                    )) {
+                        try self.writer.writeAll("info string Syzygy PV extension reached its time limit\n");
+                    }
                     // Retain the corrected search prefix, including the ponder move.
                     root.pv.resize(@min(extended.items.len, root.pv.moves.len));
                     @memcpy(root.pv.moves[0..root.pv.len], extended.items[0..root.pv.len]);
@@ -662,13 +824,23 @@ const Session = struct {
             try self.writer.print("info depth {d} seldepth {d} multipv {d} score ", .{ depth, root.sel_depth, index });
             try notation.writeScore(self.writer, value, &self.engine.position);
             if (!previous and !tb_score) {
-                if (root.inexact_lower) try self.writer.writeAll(" lowerbound") else if (root.inexact_upper) try self.writer.writeAll(" upperbound");
+                if (root.inexact_lower) {
+                    try self.writer.writeAll(" lowerbound");
+                } else if (root.inexact_upper) {
+                    try self.writer.writeAll(" upperbound");
+                }
             }
             if (self.show_wdl) {
                 const wdl = notation.wdl(value, &self.engine.position);
                 try self.writer.print(" wdl {d} {d} {d}", .{ wdl[0], wdl[1], wdl[2] });
             }
-            try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits {d} time {d} pv", .{ self.engine.totalNodes(), self.engine.totalNodes() * 1000 / elapsed, self.engine.table.hashfull(0), self.engine.tablebaseHits(), elapsed });
+            try self.writer.print(" nodes {d} nps {d} hashfull {d} tbhits {d} time {d} pv", .{
+                self.engine.totalNodes(),
+                self.engine.totalNodes() * 1000 / elapsed,
+                self.engine.table.hashfull(0),
+                self.engine.tablebaseHits(),
+                elapsed,
+            });
             const pv = if (previous) &root.previous_pv else &root.pv;
             for (if (extended.items.len != 0) extended.items else pv.slice()) |move| {
                 var buffer: [6]u8 = undefined;

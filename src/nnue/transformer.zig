@@ -15,7 +15,11 @@ pub const FeatureTransformer = struct {
     threat_weights: [combined_features][dimensions]i8 align(64),
     pub fn hash() u32 {
         var result: u32 = 0;
-        for ([_]u32{ features.FullThreats.hash_value, features.PawnPairs.hash_value, features.K32H3.hash_value }) |h| result = ((result << 1) | (result >> 31)) ^ h;
+        for ([_]u32{
+            features.FullThreats.hash_value,
+            features.PawnPairs.hash_value,
+            features.K32H3.hash_value,
+        }) |h| result = ((result << 1) | (result >> 31)) ^ h;
         return result ^ (dimensions * 2);
     }
     pub fn read(self: *FeatureTransformer, reader: *Reader) !void {
@@ -32,7 +36,12 @@ pub const FeatureTransformer = struct {
             for (&self.threat_weights) |*row| paired.permute(row);
         }
     }
-    pub fn applyPsq(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u32) void {
+    pub fn applyPsq(
+        self: *const FeatureTransformer,
+        comptime add: bool,
+        acc: *[dimensions]i16,
+        indices: []const u32,
+    ) void {
         if (@import("backend").simd) return self.applyVector(add, false, acc, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
@@ -40,7 +49,12 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    pub fn applyThreats(self: *const FeatureTransformer, comptime add: bool, acc: *[dimensions]i16, indices: []const u16) void {
+    pub fn applyThreats(
+        self: *const FeatureTransformer,
+        comptime add: bool,
+        acc: *[dimensions]i16,
+        indices: []const u16,
+    ) void {
         if (@import("backend").simd) return self.applyVector(add, true, acc, indices);
         for (acc, 0..) |*value, j| {
             for (indices) |index| {
@@ -48,7 +62,13 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    fn applyVector(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, acc: *[dimensions]i16, indices: anytype) void {
+    fn applyVector(
+        self: *const FeatureTransformer,
+        comptime add: bool,
+        comptime threats: bool,
+        acc: *[dimensions]i16,
+        indices: anytype,
+    ) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         if (paired.enabled) {
             var start: usize = 0;
@@ -75,7 +95,15 @@ pub const FeatureTransformer = struct {
     }
     /// Reference apply_combined: retain one tile in registers through all
     /// feature removals/additions, then write the destination once.
-    pub fn applyCombined(self: *const FeatureTransformer, from: *const [dimensions]i16, to: *[dimensions]i16, removed: []const u32, added: []const u32, threats_removed: []const u16, threats_added: []const u16) void {
+    pub fn applyCombined(
+        self: *const FeatureTransformer,
+        from: *const [dimensions]i16,
+        to: *[dimensions]i16,
+        removed: []const u32,
+        added: []const u32,
+        threats_removed: []const u16,
+        threats_added: []const u16,
+    ) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const registers = tile_registers;
         const removed_prefix = if (paired.enabled) self.preparePairedPrefix(removed, threats_removed) else {};
@@ -102,7 +130,14 @@ pub const FeatureTransformer = struct {
     }
     /// Reference cache refresh: store updated PSQ values to the cache before
     /// adding active threats to the same register tile for the live position.
-    pub fn applyRefresh(self: *const FeatureTransformer, cache: *[dimensions]i16, to: *[dimensions]i16, removed: []const u32, added: []const u32, active: []const u16) void {
+    pub fn applyRefresh(
+        self: *const FeatureTransformer,
+        cache: *[dimensions]i16,
+        to: *[dimensions]i16,
+        removed: []const u32,
+        added: []const u32,
+        active: []const u16,
+    ) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * tile_registers) {
@@ -117,7 +152,19 @@ pub const FeatureTransformer = struct {
     }
     /// Hybrid king refresh: update only the new PSQ cache, then correct the
     /// previous live accumulator in registers before applying threat changes.
-    pub fn applyHybrid(self: *const FeatureTransformer, new_cache: anytype, old_cache: anytype, from: *const [dimensions]i16, to: *[dimensions]i16, new_removed: []const u32, new_added: []const u32, old_removed: []const u32, old_added: []const u32, removed: []const u16, added: []const u16) void {
+    pub fn applyHybrid(
+        self: *const FeatureTransformer,
+        new_cache: anytype,
+        old_cache: anytype,
+        from: *const [dimensions]i16,
+        to: *[dimensions]i16,
+        new_removed: []const u32,
+        new_added: []const u32,
+        old_removed: []const u32,
+        old_added: []const u32,
+        removed: []const u16,
+        added: []const u16,
+    ) void {
         const lanes = @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         var offset: usize = 0;
         while (offset < dimensions) : (offset += lanes * tile_registers) {
@@ -144,13 +191,30 @@ pub const FeatureTransformer = struct {
     };
     fn preparePsqPrefix(self: *const FeatureTransformer, indices: []const u32) PsqPrefix {
         std.debug.assert(indices.len == 1 or indices.len == 2);
-        return .{ .first = &self.weights[indices[0]], .second = if (indices.len == 2) &self.weights[indices[1]] else null };
+        return .{
+            .first = &self.weights[indices[0]],
+            .second = if (indices.len == 2) &self.weights[indices[1]] else null,
+        };
     }
-    inline fn applyPsqPrefix(comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, prefix: PsqPrefix) void {
+    inline fn applyPsqPrefix(
+        comptime add: bool,
+        comptime lanes: usize,
+        tile: *[tile_registers]@Vector(lanes, i16),
+        offset: usize,
+        prefix: PsqPrefix,
+    ) void {
         applyRow(add, lanes, tile, offset, prefix.first);
         if (prefix.second) |second| applyRow(add, lanes, tile, offset, second);
     }
-    inline fn applyTile(self: *const FeatureTransformer, comptime add: bool, comptime threats: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, indices: anytype) void {
+    inline fn applyTile(
+        self: *const FeatureTransformer,
+        comptime add: bool,
+        comptime threats: bool,
+        comptime lanes: usize,
+        tile: *[tile_registers]@Vector(lanes, i16),
+        offset: usize,
+        indices: anytype,
+    ) void {
         if (paired.enabled) {
             var i: usize = 0;
             while (i + 1 < indices.len) : (i += 2) {
@@ -158,18 +222,38 @@ pub const FeatureTransformer = struct {
                 const b = if (threats) &self.threat_weights[indices[i + 1]] else &self.weights[indices[i + 1]];
                 applyPair(add, tile, offset, a, b);
             }
-            if (i < indices.len) applySingle(add, tile, offset, if (threats) &self.threat_weights[indices[i]] else &self.weights[indices[i]]);
+            if (i < indices.len) {
+                applySingle(
+                    add,
+                    tile,
+                    offset,
+                    if (threats) &self.threat_weights[indices[i]] else &self.weights[indices[i]],
+                );
+            }
             return;
         }
-        for (indices) |index| applyRow(add, lanes, tile, offset, if (threats) &self.threat_weights[index] else &self.weights[index]);
+        for (indices) |index| {
+            applyRow(add, lanes, tile, offset, if (threats) &self.threat_weights[index] else &self.weights[index]);
+        }
     }
-    inline fn applyRow(comptime add: bool, comptime lanes: usize, tile: *[tile_registers]@Vector(lanes, i16), offset: usize, weights: *const [dimensions]i8) void {
+    inline fn applyRow(
+        comptime add: bool,
+        comptime lanes: usize,
+        tile: *[tile_registers]@Vector(lanes, i16),
+        offset: usize,
+        weights: *const [dimensions]i8,
+    ) void {
         const row = weights[offset..][0 .. tile_registers * lanes];
         if (comptime @import("builtin").target.cpu.arch == .aarch64 and lanes == 8) {
             // Both halves share one full weight-vector load.
             inline for (0..tile_registers / 2) |i| {
                 const weight_bytes: @Vector(16, i8) = row[i * 16 ..][0..16].*;
-                const values = @import("arm.zig").updateAccumulatorPair(add, tile[i * 2], tile[i * 2 + 1], weight_bytes);
+                const values = @import("arm.zig").updateAccumulatorPair(
+                    add,
+                    tile[i * 2],
+                    tile[i * 2 + 1],
+                    weight_bytes,
+                );
                 tile[i * 2] = values[0];
                 tile[i * 2 + 1] = values[1];
             }
@@ -193,7 +277,12 @@ pub const FeatureTransformer = struct {
         const next = @as([*]const i8, row) + offset + tile_bytes;
         inline for (0..tile_bytes / 64) |line| @import("../prefetch.zig").read(next + line * 64);
     }
-    inline fn applySingle(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, row: *const [dimensions]i8) void {
+    inline fn applySingle(
+        comptime add: bool,
+        tile: *[tile_registers]paired.Words,
+        offset: usize,
+        row: *const [dimensions]i8,
+    ) void {
         prefetchNextTile(row, offset);
         inline for (0..tile_registers / 2) |i| {
             const values = paired.single(row[offset + i * 32 ..][0..32]);
@@ -202,7 +291,13 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    inline fn applyPair(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, a: *const [dimensions]i8, b: *const [dimensions]i8) void {
+    inline fn applyPair(
+        comptime add: bool,
+        tile: *[tile_registers]paired.Words,
+        offset: usize,
+        a: *const [dimensions]i8,
+        b: *const [dimensions]i8,
+    ) void {
         prefetchNextTile(a, offset);
         prefetchNextTile(b, offset);
         inline for (0..tile_registers / 2) |i| {
@@ -222,10 +317,18 @@ pub const FeatureTransformer = struct {
         std.debug.assert(psq.len == 1 or psq.len == 2);
         const first = &self.weights[psq[0]];
         if (psq.len == 2) return .{ .first = first, .second = &self.weights[psq[1]], .threats = threats };
-        if (threats.len != 0) return .{ .first = first, .second = &self.threat_weights[threats[0]], .threats = threats[1..] };
+        if (threats.len != 0) {
+            return .{ .first = first, .second = &self.threat_weights[threats[0]], .threats = threats[1..] };
+        }
         return .{ .first = first, .second = null, .threats = threats };
     }
-    inline fn applyPairedPrefix(self: *const FeatureTransformer, comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, prefix: PairedPrefix) void {
+    inline fn applyPairedPrefix(
+        self: *const FeatureTransformer,
+        comptime add: bool,
+        tile: *[tile_registers]paired.Words,
+        offset: usize,
+        prefix: PairedPrefix,
+    ) void {
         if (prefix.second) |second| {
             applyPair(add, tile, offset, prefix.first, second);
         } else {
@@ -254,7 +357,12 @@ pub const FeatureTransformer = struct {
         masks.* = @import("layers.zig").Architecture.nonzeroMasks(output);
     }
     /// Sparse consumers use the native AVX2 pack order, with matching weights.
-    pub fn transformSparseMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: *[4]u64) void {
+    pub fn transformSparseMasked(
+        acc: *const [2][dimensions]i16,
+        side: usize,
+        output: *[dimensions]u8,
+        masks: *[4]u64,
+    ) void {
         if (!layout.native_pack) return transformMasked(acc, side, output, masks);
         const Words = @Vector(16, i16);
         for (0..2) |p| {
@@ -265,8 +373,10 @@ pub const FeatureTransformer = struct {
                     const offset = j + i * 16;
                     const a: Words = acc[side ^ p][offset..][0..16].*;
                     const b: Words = acc[side ^ p][offset + dimensions / 2 ..][0..16].*;
-                    const first: @Vector(16, u16) = @intCast(@min(@max(a, @as(Words, @splat(0))), @as(Words, @splat(255))));
-                    const second: @Vector(16, u16) = @intCast(@min(@max(b, @as(Words, @splat(0))), @as(Words, @splat(255))));
+                    const first: @Vector(16, u16) =
+                        @intCast(@min(@max(a, @as(Words, @splat(0))), @as(Words, @splat(255))));
+                    const second: @Vector(16, u16) =
+                        @intCast(@min(@max(b, @as(Words, @splat(0))), @as(Words, @splat(255))));
                     products[i] = @intCast((first * second) >> @splat(9));
                 }
                 const values = asm ("vpackuswb %[hi], %[lo], %[result]"
@@ -284,7 +394,11 @@ pub const FeatureTransformer = struct {
             }
         }
     }
-    inline fn activationProduct(comptime lanes: usize, a: @Vector(lanes, i16), b: @Vector(lanes, i16)) @Vector(lanes, u8) {
+    inline fn activationProduct(
+        comptime lanes: usize,
+        a: @Vector(lanes, i16),
+        b: @Vector(lanes, i16),
+    ) @Vector(lanes, u8) {
         if (comptime @import("builtin").target.cpu.arch == .aarch64 and lanes == 8)
             return @import("arm.zig").clippedProduct(a, b);
         const Signed = @Vector(lanes, i16);
@@ -294,7 +408,12 @@ pub const FeatureTransformer = struct {
         // 255 * 255 fits u16; the clipped product fits seven bits.
         return @intCast((first * second) >> @splat(9));
     }
-    fn transformVectorMasked(acc: *const [2][dimensions]i16, side: usize, output: *[dimensions]u8, masks: ?*[4]u64) void {
+    fn transformVectorMasked(
+        acc: *const [2][dimensions]i16,
+        side: usize,
+        output: *[dimensions]u8,
+        masks: ?*[4]u64,
+    ) void {
         // A power-of-two lane count always partitions one mask chunk.
         const suggested_lanes = comptime @min(32, std.simd.suggestVectorLength(i16) orelse 8);
         const lanes = comptime std.math.floorPowerOfTwo(usize, suggested_lanes);
@@ -317,7 +436,8 @@ pub const FeatureTransformer = struct {
                     const start = p * (dimensions / 2) + j;
                     output[start..][0..mask_chunk_bytes].* = @bitCast(values);
                     const words: @Vector(8, u32) = @bitCast(values);
-                    std.mem.asBytes(bits)[start / mask_chunk_bytes] = @bitCast(words != @as(@Vector(8, u32), @splat(0)));
+                    std.mem.asBytes(bits)[start / mask_chunk_bytes] =
+                        @bitCast(words != @as(@Vector(8, u32), @splat(0)));
                 }
             }
             return;
@@ -373,7 +493,10 @@ test "vector feature transformation matches scalar clipping and lane order" {
     const edges = [_]i16{ -32768, -1, 0, 1, 254, 255, 256, 32767 };
     for (0..16) |pattern| {
         for (&acc) |*row| for (row, 0..) |*value, i| {
-            value.* = if (pattern < edges.len) edges[(i + pattern) % edges.len] else @bitCast(@as(u16, @truncate(rng.next())));
+            value.* = if (pattern < edges.len)
+                edges[(i + pattern) % edges.len]
+            else
+                @bitCast(@as(u16, @truncate(rng.next())));
         };
         for (0..2) |side| {
             FeatureTransformer.transformScalar(&acc, side, &scalar);
@@ -399,7 +522,9 @@ test "incremental prefixes match scalar rows across list lengths and tiles" {
         if (paired.enabled) paired.permute(&ft.weights[row]);
     }
     for (0..6) |row| {
-        for (&ft.threat_weights[row], 0..) |*value, lane| value.* = @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97)));
+        for (&ft.threat_weights[row], 0..) |*value, lane| {
+            value.* = @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97)));
+        }
         if (paired.enabled) paired.permute(&ft.threat_weights[row]);
     }
     const removed = [_]u32{ 0, 2 };
@@ -416,8 +541,12 @@ test "incremental prefixes match scalar rows across list lengths and tiles" {
             var expected = from[lane];
             for (removed[0..r]) |row| expected -%= @as(i8, @bitCast(@as(u8, @truncate(row * 71 + lane * 13))));
             for (added[0..a]) |row| expected +%= @as(i8, @bitCast(@as(u8, @truncate(row * 71 + lane * 13))));
-            for (threats_removed[0..tr]) |row| expected -%= @as(i8, @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97))));
-            for (threats_added[0..ta]) |row| expected +%= @as(i8, @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97))));
+            for (threats_removed[0..tr]) |row| {
+                expected -%= @as(i8, @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97))));
+            }
+            for (threats_added[0..ta]) |row| {
+                expected +%= @as(i8, @bitCast(@as(u8, @truncate(row * 53 + lane * 17 + 97))));
+            }
             try std.testing.expectEqual(expected, value);
         }
     };

@@ -57,11 +57,24 @@ pub const Plan = struct {
 
     pub fn write(writer: *std.Io.Writer, count: usize) !void {
         const total = try bytesForWorkers(count);
-        try writer.print("{{\n\"workers\":{d},\"bytes_per_worker\":{d},\"total_payload_bytes\":{d},\"alignment\":{d},\n", .{ count, bytes_per_worker, total, alignment });
-        try writer.print("\"frame_capacity\":{d},\"accumulator_capacity\":{d},\"root_capacity\":{d},\n\"components\":[", .{ frame_capacity, accumulator_capacity, root_capacity });
-        inline for (@typeInfo(Storage).@"struct".field_names, @typeInfo(Storage).@"struct".field_types, 0..) |name, Field, i| {
+        try writer.print(
+            "{{\n\"workers\":{d},\"bytes_per_worker\":{d},\"total_payload_bytes\":{d},\"alignment\":{d},\n",
+            .{ count, bytes_per_worker, total, alignment },
+        );
+        try writer.print(
+            "\"frame_capacity\":{d},\"accumulator_capacity\":{d},\"root_capacity\":{d},\n\"components\":[",
+            .{ frame_capacity, accumulator_capacity, root_capacity },
+        );
+        inline for (
+            @typeInfo(Storage).@"struct".field_names,
+            @typeInfo(Storage).@"struct".field_types,
+            0..,
+        ) |name, Field, i| {
             if (i != 0) try writer.writeAll(",");
-            try writer.print("{{\"name\":\"{s}\",\"offset\":{d},\"bytes\":{d},\"alignment\":{d}}}", .{ name, @offsetOf(Storage, name), @sizeOf(Field), @alignOf(Field) });
+            try writer.print(
+                "{{\"name\":\"{s}\",\"offset\":{d},\"bytes\":{d},\"alignment\":{d}}}",
+                .{ name, @offsetOf(Storage, name), @sizeOf(Field), @alignOf(Field) },
+            );
         }
         try writer.writeAll("]\n}\n");
     }

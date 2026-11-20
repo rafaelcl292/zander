@@ -67,7 +67,9 @@ pub const Network = struct {
         }
     }
     fn readLayerStacks(self: *Network, reader: *Reader) !void {
-        if (try reader.int(u32) != layer_stack_table_hash or try reader.int(u32) != 192) return error.ArchitectureMismatch;
+        if (try reader.int(u32) != layer_stack_table_hash or try reader.int(u32) != 192) {
+            return error.ArchitectureMismatch;
+        }
         self.stored_layer_stacks = try reader.int(u32);
         if (self.stored_layer_stacks == 0 or self.stored_layer_stacks > 192) return error.InvalidLayerStacks;
         for (&self.layer_stack_fallback) |*fallback| {
@@ -89,15 +91,23 @@ pub const Network = struct {
     }
     pub fn layerStack(self: *const Network, pos: *const Position) usize {
         const band: usize = (@popCount(pos.pieces()) - 1) / 4;
-        const queens: usize = @as(usize, if (pos.piecesOf(pos.side, .queen) != 0) 2 else 0) + @intFromBool(pos.piecesOf(pos.side.opposite(), .queen) != 0);
+        const queens: usize = @as(usize, if (pos.piecesOf(pos.side, .queen) != 0) 2 else 0) +
+            @intFromBool(pos.piecesOf(pos.side.opposite(), .queen) != 0);
         const pawns = pos.by_type[1];
         const queen_side: u64 = 0x0f0f0f0f0f0f0f0f;
         const layout: usize = if (pawns == 0) 2 else if (pawns & queen_side != 0 and pawns & ~queen_side != 0) 0 else 1;
         const officers = pos.pieces() & ~(pawns | pos.by_type[6]);
-        const many: usize = @intFromBool(@max(@popCount(officers & pos.by_color[0]), @popCount(officers & pos.by_color[1])) >= 2);
+        const many: usize = @intFromBool(
+            @max(@popCount(officers & pos.by_color[0]), @popCount(officers & pos.by_color[1])) >= 2,
+        );
         return self.layer_stack_index[((band * 4 + queens) * 3 + layout) * 2 + many];
     }
-    pub fn evaluate(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) i32 {
+    pub fn evaluate(
+        self: *const Network,
+        pos: *const Position,
+        stack: *accumulator.Stack,
+        cache: *accumulator.Caches,
+    ) i32 {
         std.debug.assert(self.initialized);
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
@@ -105,18 +115,27 @@ pub const Network = struct {
         const bucket = self.layerStack(pos);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
-        if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
+        if (@import("layers.zig").use_sparse) {
+            FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks);
+        } else FeatureTransformer.transform(&state.accumulation, side, &transformed);
         var buffer: Architecture.Buffer = undefined;
         const positional = self.layers[bucket].propagatePreparedMasked(&transformed, &masks, &buffer);
         return @divTrunc(positional, 16);
     }
-    pub fn trace(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches) [192]i32 {
+    pub fn trace(
+        self: *const Network,
+        pos: *const Position,
+        stack: *accumulator.Stack,
+        cache: *accumulator.Caches,
+    ) [192]i32 {
         stack.evaluate(pos, &self.transformer, cache);
         const state = stack.latest();
         const side = @backingInt(pos.side);
         var transformed: [1024]u8 align(64) = undefined;
         var masks: [4]u64 = undefined;
-        if (@import("layers.zig").use_sparse) FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks) else FeatureTransformer.transform(&state.accumulation, side, &transformed);
+        if (@import("layers.zig").use_sparse) {
+            FeatureTransformer.transformSparseMasked(&state.accumulation, side, &transformed, &masks);
+        } else FeatureTransformer.transform(&state.accumulation, side, &transformed);
         var result: [192]i32 = @splat(0);
         for (self.layers[0..self.stored_layer_stacks], result[0..self.stored_layer_stacks]) |*layer, *out| {
             var buffer: Architecture.Buffer = undefined;
@@ -124,17 +143,26 @@ pub const Network = struct {
         }
         return result;
     }
-    pub fn evaluateAdjusted(self: *const Network, pos: *const Position, stack: *accumulator.Stack, cache: *accumulator.Caches, initial_optimism: i32) i32 {
+    pub fn evaluateAdjusted(
+        self: *const Network,
+        pos: *const Position,
+        stack: *accumulator.Stack,
+        cache: *accumulator.Caches,
+        initial_optimism: i32,
+    ) i32 {
         std.debug.assert(pos.st.checkers == 0);
         const nnue: i64 = self.evaluate(pos, stack, cache);
         const side = @backingInt(pos.side);
-        const pawns = @as(i64, @popCount(pos.piecesOf(pos.side, .pawn))) - @as(i64, @popCount(pos.piecesOf(pos.side.opposite(), .pawn)));
-        const simple = @import("../position.zig").piece_value[1] * pawns + pos.st.non_pawn_material[side] - pos.st.non_pawn_material[side ^ 1];
+        const pawns = @as(i64, @popCount(pos.piecesOf(pos.side, .pawn))) -
+            @as(i64, @popCount(pos.piecesOf(pos.side.opposite(), .pawn)));
+        const simple = @import("../position.zig").piece_value[1] * pawns +
+            pos.st.non_pawn_material[side] - pos.st.non_pawn_material[side ^ 1];
         const se_norm = @divTrunc(simple * 1024, @as(i64, @intCast(@abs(simple))) + 1024);
         const nnue_norm = @divTrunc(nnue * 1024, @as(i64, @intCast(@abs(nnue))) + 1024);
         const alignment = @divTrunc(se_norm * nnue_norm, 512);
         const base_eval = nnue + @divTrunc((nnue + @as(i64, initial_optimism)) * alignment, 65536);
-        const material = 521 * @as(i64, @popCount(pos.by_type[1])) + pos.st.non_pawn_material[0] + pos.st.non_pawn_material[1];
+        const material = 521 * @as(i64, @popCount(pos.by_type[1])) +
+            pos.st.non_pawn_material[0] + pos.st.non_pawn_material[1];
         var value = base_eval + @divTrunc(base_eval * material, 90649);
         value -= @divTrunc(value * pos.st.rule50, 189);
         const max = t.value_mate - 2 * t.max_ply - 2;

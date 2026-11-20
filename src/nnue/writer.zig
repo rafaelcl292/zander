@@ -31,7 +31,20 @@ pub fn leb128(writer: *std.Io.Writer, comptime T: type, values: []const T) !void
 }
 
 test "signed compressed writer round-trips integer boundaries" {
-    const values = [_]i32{ 0, -1, 63, 64, -64, -65, 127, 128, -32768, 32767, std.math.minInt(i32), std.math.maxInt(i32) };
+    const values = [_]i32{
+        0,
+        -1,
+        63,
+        64,
+        -64,
+        -65,
+        127,
+        128,
+        -32768,
+        32767,
+        std.math.minInt(i32),
+        std.math.maxInt(i32),
+    };
     var buffer: [128]u8 = undefined;
     var output = std.Io.Writer.fixed(&buffer);
     try leb128(&output, i32, &values);

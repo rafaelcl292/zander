@@ -132,7 +132,9 @@ pub fn discover(respect_affinity: bool) n.Topology {
     if (size == 0) return splitGroups(system) catch .{};
     const buffer = std.heap.page_allocator.alloc(u8, size) catch return splitGroups(system) catch .{};
     defer std.heap.page_allocator.free(buffer);
-    if (GetLogicalProcessorInformationEx(2, buffer.ptr, &size) == 0 or size > buffer.len) return splitGroups(system) catch .{};
+    if (GetLogicalProcessorInformationEx(2, buffer.ptr, &size) == 0 or size > buffer.len) {
+        return splitGroups(system) catch .{};
+    }
     const topology = cacheTopology(system, buffer[0..size]) catch system;
     return splitGroups(topology) catch .{};
 }
@@ -194,14 +196,17 @@ pub const Guard = struct {
         const set = procedure(SetSelected, "SetThreadSelectedCpuSetMasks");
         if (set) |setter| {
             const get = procedure(GetSelected, "GetThreadSelectedCpuSetMasks") orelse return error.AffinityUnavailable;
-            if (get(GetCurrentThread(), &result.selected, result.selected.len, &result.selected_count) == 0 or result.selected_count > result.selected.len) return error.AffinityUnavailable;
+            if (get(GetCurrentThread(), &result.selected, result.selected.len, &result.selected_count) == 0 or
+                result.selected_count > result.selected.len) return error.AffinityUnavailable;
             if (setter(GetCurrentThread(), &groups, count) == 0) return error.AffinityUnavailable;
             result.set_selected = setter;
         }
         errdefer result.restore();
         if (set == null or oldRestriction() != null) {
             var previous: GroupAffinity = undefined;
-            if (SetThreadGroupAffinity(GetCurrentThread(), &groups[0], &previous) == 0) return error.AffinityUnavailable;
+            if (SetThreadGroupAffinity(GetCurrentThread(), &groups[0], &previous) == 0) {
+                return error.AffinityUnavailable;
+            }
             result.previous = previous;
         }
         _ = SwitchToThread();
@@ -209,7 +214,9 @@ pub const Guard = struct {
     }
     pub fn restore(self: Guard) void {
         if (self.previous) |previous| _ = SetThreadGroupAffinity(GetCurrentThread(), &previous, null);
-        if (self.set_selected) |set| _ = set(GetCurrentThread(), if (self.selected_count == 0) null else &self.selected, self.selected_count);
+        if (self.set_selected) |set| {
+            _ = set(GetCurrentThread(), if (self.selected_count == 0) null else &self.selected, self.selected_count);
+        }
     }
 };
 

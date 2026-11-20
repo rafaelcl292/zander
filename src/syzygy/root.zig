@@ -28,8 +28,19 @@ fn dtzIsDtm(pos: *const p.Position) bool {
 fn rankLess(_: void, a: RootMove, b: RootMove) bool {
     return a.tb_rank > b.tb_rank;
 }
-pub fn rank(db: *const Database, pos: *p.Position, roots: []RootMove, options: Options, abort: Abort, force_distance: bool) Config {
-    var config: Config = .{ .cardinality = @min(options.limit, db.cardinality), .depth = if (options.limit > db.cardinality) 0 else options.depth, .rule50 = options.rule50 };
+pub fn rank(
+    db: *const Database,
+    pos: *p.Position,
+    roots: []RootMove,
+    options: Options,
+    abort: Abort,
+    force_distance: bool,
+) Config {
+    var config: Config = .{
+        .cardinality = @min(options.limit, db.cardinality),
+        .depth = if (options.limit > db.cardinality) 0 else options.depth,
+        .rule50 = options.rule50,
+    };
     if (roots.len == 0) return .{};
     var distance_available = true;
     if (config.cardinality >= @popCount(pos.pieces()) and pos.st.castling_rights == 0) {
@@ -69,7 +80,14 @@ pub fn rankWdl(db: *const Database, pos: *p.Position, roots: []RootMove, rule50:
     }
     return true;
 }
-pub fn rankDtz(db: *const Database, pos: *p.Position, roots: []RootMove, rule50: bool, rank_distance: bool, abort: Abort) !bool {
+pub fn rankDtz(
+    db: *const Database,
+    pos: *p.Position,
+    roots: []RootMove,
+    rule50: bool,
+    rank_distance: bool,
+    abort: Abort,
+) !bool {
     const count50 = pos.st.rule50;
     const repeated = pos.hasRepeated();
     const bound: i32 = if (rule50) max_dtz / 2 - 100 else 1;
@@ -99,9 +117,15 @@ pub fn rankDtz(db: *const Database, pos: *p.Position, roots: []RootMove, rule50:
         pos.undoMove(move);
         if (abort.expired()) return false;
         const r = if (distance > 0)
-            (if (distance + count50 <= 99 and !repeated) max_dtz - (if (rank_distance) distance else 0) else max_dtz / 2 - (distance + count50))
+            (if (distance + count50 <= 99 and !repeated)
+                max_dtz - (if (rank_distance) distance else 0)
+            else
+                max_dtz / 2 - (distance + count50))
         else if (distance < 0)
-            (if (-distance * 2 + count50 < 100) -max_dtz - (if (rank_distance) distance else 0) else -max_dtz / 2 + (-distance + count50))
+            (if (-distance * 2 + count50 < 100)
+                -max_dtz - (if (rank_distance) distance else 0)
+            else
+                -max_dtz / 2 + (-distance + count50))
         else
             @as(i32, 0);
         root.tb_rank = r;

@@ -62,7 +62,9 @@ pub const Pairs = struct {
         if (self.length_count == 0) return error.CorruptTablebase;
         self.max_length = try cursor.int(u8);
         self.min_length = try cursor.int(u8);
-        if (self.min_length == 0 or self.min_length > self.max_length or self.max_length >= 64) return error.CorruptTablebase;
+        if (self.min_length == 0 or self.min_length > self.max_length or self.max_length >= 64) {
+            return error.CorruptTablebase;
+        }
         const count: usize = self.max_length - self.min_length + 1;
         for (self.lowest[0..count]) |*value| value.* = try cursor.int(u16);
         var i = count - 1;
@@ -78,7 +80,10 @@ pub const Pairs = struct {
         if (symbols > self.tree.len) return error.CorruptTablebase;
         for (self.tree[0..symbols]) |*symbol| {
             const bytes = try cursor.take(3);
-            symbol.* = .{ .left = (@as(u16, bytes[1] & 15) << 8) | bytes[0], .right = (@as(u16, bytes[2]) << 4) | (bytes[1] >> 4) };
+            symbol.* = .{
+                .left = (@as(u16, bytes[1] & 15) << 8) | bytes[0],
+                .right = (@as(u16, bytes[2]) << 4) | (bytes[1] >> 4),
+            };
         }
         var colors: [4096]u2 = @splat(0);
         for (0..symbols) |symbol| _ = try self.symbolLength(symbol, &colors);
@@ -107,7 +112,9 @@ pub const Pairs = struct {
     }
     pub fn readData(self: *Pairs, cursor: *Cursor) Error!void {
         try cursor.alignTo(64);
-        self.data = try cursor.take(std.math.mul(usize, self.block_count, self.block_size) catch return error.CorruptTablebase);
+        self.data = try cursor.take(
+            std.math.mul(usize, self.block_count, self.block_size) catch return error.CorruptTablebase,
+        );
     }
     fn blockLength(self: *const Pairs, block: usize) i64 {
         return std.mem.readInt(u16, self.blocks[block * 2 ..][0..2], .little);
@@ -119,7 +126,8 @@ pub const Pairs = struct {
         if (k >= self.sparse_count) return error.CorruptTablebase;
         const sparse = self.sparse[k * 6 ..][0..6];
         var block: usize = @min(std.mem.readInt(u32, sparse[0..4], .little), self.length_count - 1);
-        var offset: i64 = @as(i64, std.mem.readInt(u16, sparse[4..6], .little)) + @as(i64, @intCast(index % self.span)) - @as(i64, @intCast(self.span / 2));
+        var offset: i64 = @as(i64, std.mem.readInt(u16, sparse[4..6], .little)) +
+            @as(i64, @intCast(index % self.span)) - @as(i64, @intCast(self.span / 2));
         while (offset < 0 and block > 0) {
             block -= 1;
             offset += self.blockLength(block) + 1;
@@ -149,7 +157,10 @@ pub const Pairs = struct {
             available -= @intCast(length);
             if (available <= 32) {
                 available += 32;
-                if (pointer + 4 <= self.data.len) bits |= @as(u64, std.mem.readInt(u32, self.data[pointer..][0..4], .big)) << @intCast(64 - available);
+                if (pointer + 4 <= self.data.len) {
+                    bits |= @as(u64, std.mem.readInt(u32, self.data[pointer..][0..4], .big)) <<
+                        @intCast(64 - available);
+                }
                 pointer += 4;
             }
         }

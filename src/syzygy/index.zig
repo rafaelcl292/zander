@@ -55,7 +55,8 @@ pub const Maps = struct {
         }
         self.binomial[0][0] = 1;
         for (1..64) |n| for (0..@min(6, n + 1)) |k| {
-            self.binomial[k][n] = (if (k > 0) self.binomial[k - 1][n - 1] else 0) + (if (k < n) self.binomial[k][n - 1] else 0);
+            self.binomial[k][n] = (if (k > 0) self.binomial[k - 1][n - 1] else 0) +
+                (if (k < n) self.binomial[k][n - 1] else 0);
         };
         var available: i32 = 47;
         for (1..6) |count| for (0..4) |file| {
@@ -100,7 +101,9 @@ pub const Material = struct {
             self.counts[color + kind] += 1;
             self.piece_count += 1;
         }
-        if (!divided or self.counts[6] != 1 or self.counts[14] != 1 or self.piece_count < 3) return error.InvalidTablebaseName;
+        if (!divided or self.counts[6] != 1 or self.counts[14] != 1 or self.piece_count < 3) {
+            return error.InvalidTablebaseName;
+        }
         for (self.counts, 0..) |count, piece| {
             for (0..count) |n| {
                 self.key ^= keys.psq[piece][8 + n];
@@ -156,7 +159,13 @@ pub const Material = struct {
     }
 };
 
-pub fn encode(pos: *const @import("../position.zig").Position, material: Material, maps: *const Maps, items: *const [2][4]Pairs, dtz: bool) Error!struct { pair: *const Pairs, index: u64, changed_side: bool } {
+pub fn encode(
+    pos: *const @import("../position.zig").Position,
+    material: Material,
+    maps: *const Maps,
+    items: *const [2][4]Pairs,
+    dtz: bool,
+) Error!struct { pair: *const Pairs, index: u64, changed_side: bool } {
     var squares: [7]usize = undefined;
     var pieces: [7]u8 = undefined;
     const symmetric_black = material.key == material.reversed_key and pos.side == .black;
@@ -178,12 +187,16 @@ pub fn encode(pos: *const @import("../position.zig").Position, material: Materia
             count += 1;
         }
         if (count == 0 or count > 5) return error.CorruptTablebase;
-        for (1..count) |i| if (maps.pawns[squares[i]] > maps.pawns[squares[0]]) std.mem.swap(usize, &squares[0], &squares[i]);
+        for (1..count) |i| if (maps.pawns[squares[i]] > maps.pawns[squares[0]]) {
+            std.mem.swap(usize, &squares[0], &squares[i]);
+        };
         file = @min(squares[0] % 8, 7 - squares[0] % 8);
     }
     const lead_count = count;
     const d = &items[if (dtz) 0 else side][file];
-    if (dtz and (d.flags & 1) != side and !(material.key == material.reversed_key and !material.has_pawns)) return .{ .pair = d, .index = 0, .changed_side = true };
+    if (dtz and (d.flags & 1) != side and !(material.key == material.reversed_key and !material.has_pawns)) {
+        return .{ .pair = d, .index = 0, .changed_side = true };
+    }
     var bits = pos.pieces() ^ leading;
     while (bits != 0) {
         const square: usize = @ctz(bits);
@@ -231,7 +244,14 @@ pub fn encode(pos: *const @import("../position.zig").Position, material: Materia
             const c = squares[2];
             const adjust1: usize = @intFromBool(b > a);
             const adjust2: usize = @as(usize, @intFromBool(c > a)) + @intFromBool(c > b);
-            index = if (off(a) != 0) (maps.triangle[a] * 63 + b - adjust1) * 62 + c - adjust2 else if (off(b) != 0) (6 * 63 + a / 8 * 28 + maps.below[b]) * 62 + c - adjust2 else if (off(c) != 0) 6 * 63 * 62 + 4 * 28 * 62 + a / 8 * 7 * 28 + (b / 8 - adjust1) * 28 + maps.below[c] else 6 * 63 * 62 + 4 * 28 * 62 + 4 * 7 * 28 + a / 8 * 7 * 6 + (b / 8 - adjust1) * 6 + c / 8 - adjust2;
+            index = if (off(a) != 0)
+                (maps.triangle[a] * 63 + b - adjust1) * 62 + c - adjust2
+            else if (off(b) != 0)
+                (6 * 63 + a / 8 * 28 + maps.below[b]) * 62 + c - adjust2
+            else if (off(c) != 0)
+                6 * 63 * 62 + 4 * 28 * 62 + a / 8 * 7 * 28 + (b / 8 - adjust1) * 28 + maps.below[c]
+            else
+                6 * 63 * 62 + 4 * 28 * 62 + 4 * 7 * 28 + a / 8 * 7 * 6 + (b / 8 - adjust1) * 6 + c / 8 - adjust2;
         } else index = maps.kings[maps.triangle[a]][b];
     }
     index *= d.group_index[0];

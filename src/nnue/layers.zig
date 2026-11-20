@@ -5,7 +5,8 @@ const Reader = @import("reader.zig").Reader;
 pub const output_scale: i32 = 16;
 pub const weight_scale_bits = 6;
 pub const hidden_one = 128;
-pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and (@import("builtin").target.cpu.arch == .x86_64 or @import("builtin").target.cpu.arch == .aarch64);
+pub const use_sparse = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and
+    (@import("builtin").target.cpu.arch == .x86_64 or @import("builtin").target.cpu.arch == .aarch64);
 const Sparse = *const fn ([*]const u8, [*]const u64, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
 const Small = *const fn ([*]const u8, [*]const i8, [*]const i32, [*]i32) callconv(.c) void;
 fn sparseKernel() ?Sparse {
@@ -59,7 +60,10 @@ pub fn activatePair(input: *const [32]i32, output: *[64]u8, comptime scale: u5) 
                 : [input] "x" (words),
                   [previous] "0" (words),
             ) else @intCast((@as(Wide, words) * @as(Wide, words)) >> @splat(16));
-        output[offset..][0..lanes].* = @as(@Vector(lanes, u8), @intCast(@min(high >> @splat(2 * scale + 7 - 16), @as(Words, @splat(127)))));
+        output[offset..][0..lanes].* = @as(
+            @Vector(lanes, u8),
+            @intCast(@min(high >> @splat(2 * scale + 7 - 16), @as(Words, @splat(127)))),
+        );
         const linear = @max(words, @as(Words, @splat(0))) >> @splat(scale);
         output[32 + offset ..][0..lanes].* = @as(@Vector(lanes, u8), @intCast(@min(linear, @as(Words, @splat(127)))));
     }
@@ -83,7 +87,9 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
                 .auto => {
                     if (@import("builtin").target.cpu.arch == .x86_64) {
                         const dispatch = @import("dispatch.zig");
-                        if (dispatch.function(dispatch.selected())) |kernel| kernel(input, @ptrCast(&self.weights), &self.biases, output, inputs, outputs) else self.propagateSse2(input, output);
+                        if (dispatch.function(dispatch.selected())) |kernel| {
+                            kernel(input, @ptrCast(&self.weights), &self.biases, output, inputs, outputs);
+                        } else self.propagateSse2(input, output);
                     } else self.propagateVector(input, output);
                 },
                 .scalar => self.propagateScalar(input, output),
@@ -100,10 +106,17 @@ pub fn Affine(comptime inputs: usize, comptime outputs: usize) type {
         pub fn propagateAvx2(self: *const @This(), input: *const [inputs]u8, output: *[outputs]i32) void {
             self.propagatePacked(16, input, output);
         }
-        fn propagatePacked(self: *const @This(), comptime lanes: usize, input: *const [inputs]u8, output: *[outputs]i32) void {
+        fn propagatePacked(
+            self: *const @This(),
+            comptime lanes: usize,
+            input: *const [inputs]u8,
+            output: *[outputs]i32,
+        ) void {
             const cpu = @import("builtin").target.cpu;
             if (cpu.arch != .x86_64) @compileError("Packed x86 NNUE backends require x86-64");
-            if (comptime lanes == 16 and !std.Target.x86.featureSetHas(cpu.features, .avx2)) @compileError("The AVX2 NNUE backend requires an AVX2 compilation target");
+            if (comptime lanes == 16 and !std.Target.x86.featureSetHas(cpu.features, .avx2)) {
+                @compileError("The AVX2 NNUE backend requires an AVX2 compilation target");
+            }
             comptime std.debug.assert(inputs % lanes == 0);
             for (&self.biases, &self.weights, output) |bias, row, *value| {
                 var sums: @Vector(lanes / 2, i32) = @splat(0);
@@ -179,7 +192,9 @@ pub const Architecture = struct {
     }
     pub fn prepareSparse(self: *Architecture) void {
         if (use_sparse) for (0..1024) |input| {
-            for (0..32) |output| self.sparse_weights[input / 4][output][input % 4] = self.fc0.weights[output][layout.canonical(input)];
+            for (0..32) |output| {
+                self.sparse_weights[input / 4][output][input % 4] = self.fc0.weights[output][layout.canonical(input)];
+            }
         };
     }
     pub const Buffer = struct {
@@ -201,7 +216,12 @@ pub const Architecture = struct {
         }
         return masks;
     }
-    pub fn propagateMasked(self: *const Architecture, input: *const [1024]u8, masks: *const [4]u64, buffer: *Buffer) i32 {
+    pub fn propagateMasked(
+        self: *const Architecture,
+        input: *const [1024]u8,
+        masks: *const [4]u64,
+        buffer: *Buffer,
+    ) i32 {
         if (layout.native_pack) {
             var prepared: [1024]u8 align(64) = undefined;
             layout.prepare(input, &prepared);
@@ -211,7 +231,12 @@ pub const Architecture = struct {
         return self.propagatePreparedMasked(input, masks, buffer);
     }
     /// Input and masks follow layout.canonical; serialized weights stay canonical.
-    pub fn propagatePreparedMasked(self: *const Architecture, input: *const [1024]u8, masks: *const [4]u64, buffer: *Buffer) i32 {
+    pub fn propagatePreparedMasked(
+        self: *const Architecture,
+        input: *const [1024]u8,
+        masks: *const [4]u64,
+        buffer: *Buffer,
+    ) i32 {
         if (use_sparse) {
             if (sparseKernel()) |kernel| {
                 kernel(input, masks, @ptrCast(&self.sparse_weights), &self.fc0.biases, &buffer.fc0);
@@ -284,7 +309,14 @@ test "block sparse affine preserves signed extremes, zero blocks and wrapping su
         // short groups and every tail of kernels that process multiple blocks.
         for (&input, 0..) |*value, i| value.* = if (pattern >= 16)
             (if ((i / 4) % 64 < pattern - 16) 127 else 0)
-        else if (pattern == 0) 0 else if (pattern == 1) 127 else if ((i / 4) % pattern == 0) @truncate(rng.next() & 127) else 0;
+        else if (pattern == 0)
+            0
+        else if (pattern == 1)
+            127
+        else if ((i / 4) % pattern == 0)
+            @truncate(rng.next() & 127)
+        else
+            0;
         layer.fc0.propagateScalar(&input, &scalar);
         var prepared: [1024]u8 = undefined;
         layout.prepare(&input, &prepared);

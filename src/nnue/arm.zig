@@ -28,8 +28,16 @@ inline fn block(input: [*]const u8, index: usize) Bytes {
     return @bitCast(@as(@Vector(4, u32), @splat(word)));
 }
 
-pub fn sparse(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
-    if (comptime std.Target.aarch64.featureSetHas(cpu.features, .dotprod)) return sparseDot(input, masks, weights, biases, output);
+pub fn sparse(
+    input: [*]const u8,
+    masks: [*]const u64,
+    weights: [*]const i8,
+    biases: [*]const i32,
+    output: [*]i32,
+) callconv(.c) void {
+    if (comptime std.Target.aarch64.featureSetHas(cpu.features, .dotprod)) {
+        return sparseDot(input, masks, weights, biases, output);
+    }
     var sums: [8]Sums = undefined;
     inline for (0..8) |i| sums[i] = biases[i * 4 ..][0..4].*;
     for (0..4) |part| {
@@ -73,7 +81,13 @@ fn sparseDot(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, bias
     inline for (0..8) |i| output[i * 4 ..][0..4].* = sums[0][i] +% sums[1][i] +% sums[2][i];
 }
 
-inline fn sparseRows(comptime count: usize, sums: *[3][8]Sums, input: [*]const u8, weights: [*]const i8, indices: [count]usize) void {
+inline fn sparseRows(
+    comptime count: usize,
+    sums: *[3][8]Sums,
+    input: [*]const u8,
+    weights: [*]const i8,
+    indices: [count]usize,
+) void {
     var inputs: [count]Bytes = undefined;
     var rows: [count][*]const i8 = undefined;
     inline for (0..count) |chain| {
@@ -81,7 +95,9 @@ inline fn sparseRows(comptime count: usize, sums: *[3][8]Sums, input: [*]const u
         rows[chain] = weights + indices[chain] * 128;
     }
     inline for (0..8) |i| {
-        inline for (0..count) |chain| sums[chain][i] = dot(sums[chain][i], inputs[chain], rows[chain][i * 16 ..][0..16].*);
+        inline for (0..count) |chain| {
+            sums[chain][i] = dot(sums[chain][i], inputs[chain], rows[chain][i * 16 ..][0..16].*);
+        }
     }
 }
 
@@ -123,13 +139,24 @@ pub fn clippedProduct(a: @Vector(8, i16), b: @Vector(8, i16)) @Vector(8, u8) {
 
 /// Keep both halves of a weight vector in one register, matching NEON's
 /// widening low/high instructions. Every ARM64 target supports these.
-pub inline fn updateAccumulatorPair(comptime add: bool, low: @Vector(8, i16), high: @Vector(8, i16), weights: Bytes) [2]@Vector(8, i16) {
-    const first = asm (if (add) "saddw %[result].8h, %[previous].8h, %[weights].8b" else "ssubw %[result].8h, %[previous].8h, %[weights].8b"
+pub inline fn updateAccumulatorPair(
+    comptime add: bool,
+    low: @Vector(8, i16),
+    high: @Vector(8, i16),
+    weights: Bytes,
+) [2]@Vector(8, i16) {
+    const first = asm (if (add)
+            "saddw %[result].8h, %[previous].8h, %[weights].8b"
+        else
+            "ssubw %[result].8h, %[previous].8h, %[weights].8b"
         : [result] "=w" (-> @Vector(8, i16)),
         : [previous] "0" (low),
           [weights] "w" (weights),
     );
-    const second = asm (if (add) "saddw2 %[result].8h, %[previous].8h, %[weights].16b" else "ssubw2 %[result].8h, %[previous].8h, %[weights].16b"
+    const second = asm (if (add)
+            "saddw2 %[result].8h, %[previous].8h, %[weights].16b"
+        else
+            "ssubw2 %[result].8h, %[previous].8h, %[weights].16b"
         : [result] "=w" (-> @Vector(8, i16)),
         : [previous] "0" (high),
           [weights] "w" (weights),

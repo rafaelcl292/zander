@@ -54,7 +54,12 @@ pub const Stack = struct {
         var i = self.size - 1;
         while (i > 0) : (i -= 1) {
             const state = &self.accumulators[i];
-            if (state.computed[@backingInt(c)] or f.K32H3.requiresRefresh(state.dirties.piece, c, self.accumulators[i - 1].blocks[@backingInt(c)], state.blocks[@backingInt(c)])) return i;
+            if (state.computed[@backingInt(c)] or f.K32H3.requiresRefresh(
+                state.dirties.piece,
+                c,
+                self.accumulators[i - 1].blocks[@backingInt(c)],
+                state.blocks[@backingInt(c)],
+            )) return i;
         }
         return 0;
     }
@@ -64,32 +69,78 @@ pub const Stack = struct {
         if (self.accumulators[last[0]].computed[0] and self.accumulators[last[1]].computed[1]) {
             const shared = @max(last[0], last[1]);
             for ([_]t.Color{ .white, .black }) |c| {
-                for (last[@backingInt(c)] + 1..shared + 1) |i| incremental(true, c, pos.king(c), f.K32H3.block(pos, c), ft, &self.accumulators[i], &self.accumulators[i - 1]);
+                for (last[@backingInt(c)] + 1..shared + 1) |i| {
+                    incremental(
+                        true,
+                        c,
+                        pos.king(c),
+                        f.K32H3.block(pos, c),
+                        ft,
+                        &self.accumulators[i],
+                        &self.accumulators[i - 1],
+                    );
+                }
             }
             for (shared + 1..self.size) |i| {
-                incrementalBoth(.{ pos.king(.white), pos.king(.black) }, .{ f.K32H3.block(pos, .white), f.K32H3.block(pos, .black) }, ft, &self.accumulators[i], &self.accumulators[i - 1]);
+                incrementalBoth(
+                    .{ pos.king(.white), pos.king(.black) },
+                    .{ f.K32H3.block(pos, .white), f.K32H3.block(pos, .black) },
+                    ft,
+                    &self.accumulators[i],
+                    &self.accumulators[i - 1],
+                );
             }
         } else for ([_]t.Color{ .white, .black }) |c| {
             const begin = last[@backingInt(c)];
             if (self.accumulators[begin].computed[@backingInt(c)]) {
-                for (begin + 1..self.size) |i| incremental(true, c, pos.king(c), f.K32H3.block(pos, c), ft, &self.accumulators[i], &self.accumulators[i - 1]);
+                for (begin + 1..self.size) |i| {
+                    incremental(
+                        true,
+                        c,
+                        pos.king(c),
+                        f.K32H3.block(pos, c),
+                        ft,
+                        &self.accumulators[i],
+                        &self.accumulators[i - 1],
+                    );
+                }
             } else {
                 const dp = self.latest().dirties.piece;
-                if (dp.pc == t.Piece.make(c, .king) and self.size > 1 and self.accumulators[self.size - 2].computed[@backingInt(c)] and @popCount(pos.pieces()) >= 15 and (@backingInt(dp.from) & 4) == (@backingInt(dp.to) & 4) and dp.add_sq == .none and self.latest().blocks[@backingInt(c)] == self.accumulators[self.size - 2].blocks[@backingInt(c)]) {
+                if (dp.pc == t.Piece.make(c, .king) and self.size > 1 and
+                    self.accumulators[self.size - 2].computed[@backingInt(c)] and @popCount(pos.pieces()) >= 15 and
+                    (@backingInt(dp.from) & 4) == (@backingInt(dp.to) & 4) and dp.add_sq == .none and
+                    self.latest().blocks[@backingInt(c)] == self.accumulators[self.size - 2].blocks[@backingInt(c)])
+                {
                     hybrid(c, pos, ft, self.latest(), &self.accumulators[self.size - 2], cache);
                 } else {
                     refresh(c, pos, ft, self.latest(), cache);
                     var i = self.size - 1;
                     while (i > begin) {
                         i -= 1;
-                        incremental(false, c, pos.king(c), f.K32H3.block(pos, c), ft, &self.accumulators[i], &self.accumulators[i + 1]);
+                        incremental(
+                            false,
+                            c,
+                            pos.king(c),
+                            f.K32H3.block(pos, c),
+                            ft,
+                            &self.accumulators[i],
+                            &self.accumulators[i + 1],
+                        );
                     }
                 }
             }
         }
     }
 };
-fn incremental(comptime forward: bool, c: t.Color, king: t.Square, block_index: u8, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
+fn incremental(
+    comptime forward: bool,
+    c: t.Color,
+    king: t.Square,
+    block_index: u8,
+    ft: *const FT,
+    target: *Accumulator,
+    computed: *const Accumulator,
+) void {
     const side = @backingInt(c);
     const diff = if (forward) &target.dirties else &computed.dirties;
     // Match the reference list constructor: initialize the length only.
@@ -110,7 +161,14 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, block_index: 
     f.FullThreats.appendChanged(c, king, &diff.threats, if (forward) &tr else &ta, if (forward) &ta else &tr);
     f.PawnPairs.appendChanged(c, king, diff.before, diff.after, if (forward) &tr else &ta, if (forward) &ta else &tr);
     if (@import("backend").simd) {
-        ft.applyCombined(&computed.accumulation[side], &target.accumulation[side], pr.slice(), pa.slice(), tr.slice(), ta.slice());
+        ft.applyCombined(
+            &computed.accumulation[side],
+            &target.accumulation[side],
+            pr.slice(),
+            pa.slice(),
+            tr.slice(),
+            ta.slice(),
+        );
     } else {
         target.accumulation[side] = computed.accumulation[side];
         ft.applyPsq(false, &target.accumulation[side], pr.slice());
@@ -121,9 +179,17 @@ fn incremental(comptime forward: bool, c: t.Color, king: t.Square, block_index: 
     target.computed[side] = true;
 }
 
-fn incrementalBoth(kings: [2]t.Square, blocks: [2]u8, ft: *const FT, target: *Accumulator, computed: *const Accumulator) void {
+fn incrementalBoth(
+    kings: [2]t.Square,
+    blocks: [2]u8,
+    ft: *const FT,
+    target: *Accumulator,
+    computed: *const Accumulator,
+) void {
     if (!@import("backend").simd) {
-        inline for (0..2) |side| incremental(true, @fromBackingInt(@intCast(side)), kings[side], blocks[side], ft, target, computed);
+        inline for (0..2) |side| {
+            incremental(true, @fromBackingInt(@intCast(side)), kings[side], blocks[side], ft, target, computed);
+        }
         return;
     }
     var pr: [2]f.SmallList = undefined;
@@ -144,8 +210,22 @@ fn incrementalBoth(kings: [2]t.Square, blocks: [2]u8, ft: *const FT, target: *Ac
     f.FullThreats.appendChangedBoth(kings, &diff.threats, &tr, &ta);
     f.PawnPairs.appendChangedBoth(kings, diff.before, diff.after, &tr, &ta);
     inline for (0..2) |side| {
-        f.K32H3.appendChanged(@fromBackingInt(@intCast(side)), kings[side], diff.piece, blocks[side], &pr[side], &pa[side]);
-        ft.applyCombined(&computed.accumulation[side], &target.accumulation[side], pr[side].slice(), pa[side].slice(), tr[side].slice(), ta[side].slice());
+        f.K32H3.appendChanged(
+            @fromBackingInt(@intCast(side)),
+            kings[side],
+            diff.piece,
+            blocks[side],
+            &pr[side],
+            &pa[side],
+        );
+        ft.applyCombined(
+            &computed.accumulation[side],
+            &target.accumulation[side],
+            pr[side].slice(),
+            pa[side].slice(),
+            tr[side].slice(),
+            ta[side].slice(),
+        );
         target.computed[side] = true;
     }
 }
@@ -165,7 +245,16 @@ fn changedPieces(old: *const [64]t.Piece, new: *const [64]t.Piece) u64 {
     };
     return bits;
 }
-fn changed(entry: *const CacheEntry, pieces: *const [64]t.Piece, occupied: u64, c: t.Color, king: t.Square, block_index: u8, removed: *f.SmallList, added: *f.SmallList) void {
+fn changed(
+    entry: *const CacheEntry,
+    pieces: *const [64]t.Piece,
+    occupied: u64,
+    c: t.Color,
+    king: t.Square,
+    block_index: u8,
+    removed: *f.SmallList,
+    added: *f.SmallList,
+) void {
     const bits = changedPieces(&entry.pieces, pieces);
     var r = bits & entry.piece_bb;
     while (r != 0) {
@@ -197,7 +286,13 @@ fn refresh(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator
     f.FullThreats.appendActive(c, pos, &active);
     f.PawnPairs.appendActive(c, pos, &active);
     if (@import("backend").simd) {
-        ft.applyRefresh(&entry.accumulation, &target.accumulation[side], removed.slice(), added.slice(), active.slice());
+        ft.applyRefresh(
+            &entry.accumulation,
+            &target.accumulation[side],
+            removed.slice(),
+            added.slice(),
+            active.slice(),
+        );
     } else {
         ft.applyPsq(false, &entry.accumulation, removed.slice());
         ft.applyPsq(true, &entry.accumulation, added.slice());
@@ -206,7 +301,14 @@ fn refresh(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator
     }
     target.computed[side] = true;
 }
-fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator, computed: *const Accumulator, cache: *Caches) void {
+fn hybrid(
+    c: t.Color,
+    pos: *const Position,
+    ft: *const FT,
+    target: *Accumulator,
+    computed: *const Accumulator,
+    cache: *Caches,
+) void {
     const dp = target.dirties.piece;
     const side = @backingInt(c);
     var previous_pieces = pos.board;
@@ -244,11 +346,27 @@ fn hybrid(c: t.Color, pos: *const Position, ft: *const FT, target: *Accumulator,
     f.FullThreats.appendChanged(c, dp.to, &target.dirties.threats, &removed, &added);
     f.PawnPairs.appendChanged(c, dp.to, target.dirties.before, target.dirties.after, &removed, &added);
     if (@import("backend").simd) {
-        ft.applyHybrid(new_entry, old_entry, &computed.accumulation[side], &target.accumulation[side], new_removed.slice(), new_added.slice(), old_removed.slice(), old_added.slice(), removed.slice(), added.slice());
+        ft.applyHybrid(
+            new_entry,
+            old_entry,
+            &computed.accumulation[side],
+            &target.accumulation[side],
+            new_removed.slice(),
+            new_added.slice(),
+            old_removed.slice(),
+            old_added.slice(),
+            removed.slice(),
+            added.slice(),
+        );
     } else {
         ft.applyPsq(false, &new_entry.accumulation, new_removed.slice());
         ft.applyPsq(true, &new_entry.accumulation, new_added.slice());
-        for (&target.accumulation[side], new_entry.accumulation, computed.accumulation[side], old_entry.accumulation) |*out, new, from, old| out.* = new +% from -% old;
+        for (
+            &target.accumulation[side],
+            new_entry.accumulation,
+            computed.accumulation[side],
+            old_entry.accumulation,
+        ) |*out, new, from, old| out.* = new +% from -% old;
         ft.applyPsq(true, &target.accumulation[side], old_removed.slice());
         ft.applyPsq(false, &target.accumulation[side], old_added.slice());
         ft.applyThreats(false, &target.accumulation[side], removed.slice());

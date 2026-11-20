@@ -7,13 +7,24 @@ pub const Table = struct {
     material: idx.Material,
     dtz: bool,
     items: [2][4]coding.Pairs,
-    pub fn load(allocator: std.mem.Allocator, io: std.Io, path: []const u8, material: idx.Material, maps: *const idx.Maps, dtz: bool) !*Table {
+    pub fn load(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        path: []const u8,
+        material: idx.Material,
+        maps: *const idx.Maps,
+        dtz: bool,
+    ) !*Table {
         const file = try std.Io.Dir.cwd().openFile(io, path, .{});
         defer file.close(io);
         const stat = try file.stat(io);
         const size = std.math.cast(usize, stat.size) orelse return error.CorruptTablebase;
         if (size < 16 or size % 64 != 16) return error.CorruptTablebase;
-        var mapping = try std.Io.File.MemoryMap.create(io, file, .{ .len = size, .protection = .{ .read = true, .write = false }, .populate = false });
+        var mapping = try std.Io.File.MemoryMap.create(io, file, .{
+            .len = size,
+            .protection = .{ .read = true, .write = false },
+            .populate = false,
+        });
         errdefer mapping.destroy(io);
         const self = try allocator.create(Table);
         errdefer allocator.destroy(self);
@@ -27,7 +38,9 @@ pub const Table = struct {
         const magic = try cursor.int(u32);
         if (magic != @as(u32, if (dtz) 0xa50c66d7 else 0x5d23e871)) return error.CorruptTablebase;
         const flags = try cursor.int(u8);
-        if ((flags & 2 != 0) != material.has_pawns or (flags & 1 != 0) != (material.key != material.reversed_key)) return error.CorruptTablebase;
+        if ((flags & 2 != 0) != material.has_pawns or (flags & 1 != 0) != (material.key != material.reversed_key)) {
+            return error.CorruptTablebase;
+        }
         const sides: usize = if (!dtz and material.key != material.reversed_key) 2 else 1;
         const files: usize = if (material.has_pawns) 4 else 1;
         const pp = material.has_pawns and material.pawn_count[1] != 0;
@@ -79,7 +92,12 @@ pub const Table = struct {
         self.mapping.destroy(io);
         allocator.destroy(self);
     }
-    pub fn probe(self: *const Table, pos: *const @import("../position.zig").Position, maps: *const idx.Maps, wdl: i32) !?i32 {
+    pub fn probe(
+        self: *const Table,
+        pos: *const @import("../position.zig").Position,
+        maps: *const idx.Maps,
+        wdl: i32,
+    ) !?i32 {
         const encoded = try idx.encode(pos, self.material, maps, &self.items, self.dtz);
         if (encoded.changed_side) return null;
         var value = try encoded.pair.decompress(encoded.index);

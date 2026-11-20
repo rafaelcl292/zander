@@ -29,8 +29,23 @@ fn less(_: void, a: RootMove, b: RootMove) bool {
 }
 /// Output-only extension may allocate; the recursive search keeps fixed storage.
 /// Return true when the time budget prevented completing the extension.
-pub fn extend(allocator: std.mem.Allocator, pv: *std.ArrayList(t.Move), db: *const Database, options: root.Options, control: *const Control, pos: *p.Position, value: *i32, multi_pv: usize, overhead: i64) !bool {
-    var deadline: Deadline = .{ .control = control, .start = control.elapsed(), .overhead = overhead, .multi_pv = multi_pv };
+pub fn extend(
+    allocator: std.mem.Allocator,
+    pv: *std.ArrayList(t.Move),
+    db: *const Database,
+    options: root.Options,
+    control: *const Control,
+    pos: *p.Position,
+    value: *i32,
+    multi_pv: usize,
+    overhead: i64,
+) !bool {
+    var deadline: Deadline = .{
+        .control = control,
+        .start = control.elapsed(),
+        .overhead = overhead,
+        .multi_pv = multi_pv,
+    };
     const abort: root.Abort = .{ .context = &deadline, .check = Deadline.expired };
     if (abort.expired() or pv.items.len == 0) return abort.expired();
     var arena = std.heap.ArenaAllocator.init(allocator);

@@ -56,7 +56,9 @@ pub const Control = struct {
         if (self.ponder.load(.acquire)) return;
         const nodes = self.totalNodes(local_nodes);
         const elapsed_ms = self.searchElapsed(nodes);
-        if ((self.limits.managed() and (elapsed_ms > self.budget.maximum or self.stop_on_ponderhit)) or (self.limits.move_time != 0 and elapsed_ms >= self.limits.move_time) or (self.limits.nodes != 0 and nodes >= self.limits.nodes)) self.requestStop();
+        if ((self.limits.managed() and (elapsed_ms > self.budget.maximum or self.stop_on_ponderhit)) or
+            (self.limits.move_time != 0 and elapsed_ms >= self.limits.move_time) or
+            (self.limits.nodes != 0 and nodes >= self.limits.nodes)) self.requestStop();
     }
 };
 

@@ -3,7 +3,8 @@ const std = @import("std");
 const cpu = @import("builtin").target.cpu;
 // Only targets that guarantee AVX2 use this layout. Generic targets retain
 // canonical activations even when runtime dispatch selects an AVX2 kernel.
-pub const native_pack = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);
+pub const native_pack = @import("backend").nnue_sparse and @import("backend").nnue_backend == .auto and
+    cpu.arch == .x86_64 and std.Target.x86.featureSetHas(cpu.features, .avx2);
 /// Map a physical activation offset to its canonical neuron. In each group
 /// of 32: 0..7, 16..23, 8..15, 24..31. Four-byte sparsity blocks stay intact.
 pub fn canonical(index: usize) usize {

@@ -37,28 +37,46 @@ pub const K32H3 = struct {
             const perspective: t.Color = @fromBackingInt(@intCast(side));
             const king: t.Square = @fromBackingInt(@intCast(square));
             const relative = king.relative(perspective);
-            const bucket = (7 - @as(u16, relative.rank())) * 4 + @min(@as(u16, relative.file()), 7 - @as(u16, relative.file()));
+            const bucket = (7 - @as(u16, relative.rank())) * 4 +
+                @min(@as(u16, relative.file()), 7 - @as(u16, relative.file()));
             const orient: u16 = @as(u16, if (king.file() < 4) 7 else 0) ^ (56 * @as(u16, @intCast(side)));
             for (all_pieces) |pc| {
-                const piece_offset: u16 = if (pc.pieceType() == .king) 640 else (@as(u16, @backingInt(pc.pieceType())) - 1) * 128 + @as(u16, @intFromBool(pc.color() != perspective)) * 64;
+                const piece_offset: u16 = if (pc.pieceType() == .king)
+                    640
+                else
+                    (@as(u16, @backingInt(pc.pieceType())) - 1) * 128 +
+                        @as(u16, @intFromBool(pc.color() != perspective)) * 64;
                 table[side][square][@backingInt(pc)] = piece_offset + bucket * 704 + orient;
             }
         };
         break :blk table;
     };
     pub fn makeIndex(perspective: t.Color, s: t.Square, pc: t.Piece, king: t.Square, block_index: u8) u32 {
-        return @as(u32, @backingInt(s)) ^ (offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)] + @as(u32, block_index) * 22528);
+        return @as(u32, @backingInt(s)) ^
+            (offsets[@backingInt(perspective)][@backingInt(king)][@backingInt(pc)] + @as(u32, block_index) * 22528);
     }
     pub fn block(pos: *const Position, perspective: t.Color) u8 {
-        return if (pos.piecesOf(perspective.opposite(), .queen) != 0) 2 else @intFromBool(pos.by_type[4] | pos.by_type[5] != 0);
+        return if (pos.piecesOf(perspective.opposite(), .queen) != 0)
+            2
+        else
+            @intFromBool(pos.by_type[4] | pos.by_type[5] != 0);
     }
     pub fn requiresRefresh(diff: dirty.DirtyPiece, perspective: t.Color, before: u8, after: u8) bool {
         return diff.pc == t.Piece.make(perspective, .king) or before != after;
     }
-    pub fn appendChanged(perspective: t.Color, king: t.Square, diff: dirty.DirtyPiece, block_index: u8, removed: *SmallList, added: *SmallList) void {
+    pub fn appendChanged(
+        perspective: t.Color,
+        king: t.Square,
+        diff: dirty.DirtyPiece,
+        block_index: u8,
+        removed: *SmallList,
+        added: *SmallList,
+    ) void {
         removed.append(makeIndex(perspective, diff.from, diff.pc, king, block_index));
         if (diff.to != .none) added.append(makeIndex(perspective, diff.to, diff.pc, king, block_index));
-        if (diff.remove_sq != .none) removed.append(makeIndex(perspective, diff.remove_sq, diff.remove_pc, king, block_index));
+        if (diff.remove_sq != .none) {
+            removed.append(makeIndex(perspective, diff.remove_sq, diff.remove_pc, king, block_index));
+        }
         if (diff.add_sq != .none) added.append(makeIndex(perspective, diff.add_sq, diff.add_pc, king, block_index));
     }
 };
@@ -82,18 +100,43 @@ pub const PawnPairs = struct {
     pub const hash_value: u32 = 0x5c80fa69;
     pub const dimensions: u32 = 4560;
     pub const index_base: u32 = FullThreats.dimensions;
-    pub fn makeIndex(perspective: t.Color, color: t.Color, from: t.Square, to: t.Square, paired: t.Color, king: t.Square) u32 {
+    pub fn makeIndex(
+        perspective: t.Color,
+        color: t.Color,
+        from: t.Square,
+        to: t.Square,
+        paired: t.Color,
+        king: t.Square,
+    ) u32 {
         const orient = orientation(perspective, king);
-        const id_a = 48 * @as(u32, @backingInt(color) ^ @backingInt(perspective)) + (@as(u32, @backingInt(from)) ^ orient) - 8;
-        const id_b = 48 * @as(u32, @backingInt(paired) ^ @backingInt(perspective)) + (@as(u32, @backingInt(to)) ^ orient) - 8;
+        const id_a = 48 * @as(u32, @backingInt(color) ^ @backingInt(perspective)) +
+            (@as(u32, @backingInt(from)) ^ orient) - 8;
+        const id_b = 48 * @as(u32, @backingInt(paired) ^ @backingInt(perspective)) +
+            (@as(u32, @backingInt(to)) ^ orient) - 8;
         const hi = @max(id_a, id_b);
         return hi * (hi - 1) / 2 + @min(id_a, id_b) + index_base;
     }
     pub fn appendActive(perspective: t.Color, pos: *const Position, active: *ThreatList) void {
-        generate(perspective, pos.king(perspective), pos.piecesOf(.white, .pawn), pos.piecesOf(.black, .pawn), pos.piecesOf(.white, .pawn), pos.piecesOf(.black, .pawn), active);
+        generate(
+            perspective,
+            pos.king(perspective),
+            pos.piecesOf(.white, .pawn),
+            pos.piecesOf(.black, .pawn),
+            pos.piecesOf(.white, .pawn),
+            pos.piecesOf(.black, .pawn),
+            active,
+        );
     }
 
-    fn generate(perspective: t.Color, king: t.Square, updated_white: u64, updated_black: u64, white: u64, black: u64, out: *ThreatList) void {
+    fn generate(
+        perspective: t.Color,
+        king: t.Square,
+        updated_white: u64,
+        updated_black: u64,
+        white: u64,
+        black: u64,
+        out: *ThreatList,
+    ) void {
         const unchanged = (white | black) & ~(updated_white | updated_black);
         var updated = updated_white | updated_black;
         while (updated != 0) {
@@ -106,17 +149,37 @@ pub const PawnPairs = struct {
             while (b != 0) out.append(makeIndex(perspective, color, from, bb.popLsb(&b), .white, king));
         }
     }
-    pub fn appendChanged(perspective: t.Color, king: t.Square, before: [2]u64, after: [2]u64, removed: *ThreatList, added: *ThreatList) void {
+    pub fn appendChanged(
+        perspective: t.Color,
+        king: t.Square,
+        before: [2]u64,
+        after: [2]u64,
+        removed: *ThreatList,
+        added: *ThreatList,
+    ) void {
         if (before[0] == after[0] and before[1] == after[1]) return;
         generate(perspective, king, after[0] & ~before[0], after[1] & ~before[1], after[0], after[1], added);
         generate(perspective, king, before[0] & ~after[0], before[1] & ~after[1], before[0], before[1], removed);
     }
-    pub fn appendChangedBoth(kings: [2]t.Square, before: [2]u64, after: [2]u64, removed: *[2]ThreatList, added: *[2]ThreatList) void {
+    pub fn appendChangedBoth(
+        kings: [2]t.Square,
+        before: [2]u64,
+        after: [2]u64,
+        removed: *[2]ThreatList,
+        added: *[2]ThreatList,
+    ) void {
         if (before[0] == after[0] and before[1] == after[1]) return;
         generateBoth(kings, after[0] & ~before[0], after[1] & ~before[1], after[0], after[1], added);
         generateBoth(kings, before[0] & ~after[0], before[1] & ~after[1], before[0], before[1], removed);
     }
-    fn generateBoth(kings: [2]t.Square, updated_white: u64, updated_black: u64, white: u64, black: u64, out: *[2]ThreatList) void {
+    fn generateBoth(
+        kings: [2]t.Square,
+        updated_white: u64,
+        updated_black: u64,
+        white: u64,
+        black: u64,
+        out: *[2]ThreatList,
+    ) void {
         const unchanged = (white | black) & ~(updated_white | updated_black);
         var updated = updated_white | updated_black;
         while (updated != 0) {
@@ -127,7 +190,11 @@ pub const PawnPairs = struct {
                 var partners = (if (paired == .black) black else white) & mask;
                 while (partners != 0) {
                     const to = bb.popLsb(&partners);
-                    inline for (0..2) |side| out[side].append(makeIndex(@fromBackingInt(@intCast(side)), color, from, to, paired, kings[side]));
+                    inline for (0..2) |side| {
+                        out[side].append(
+                            makeIndex(@fromBackingInt(@intCast(side)), color, from, to, paired, kings[side]),
+                        );
+                    }
                 }
             }
         }
@@ -154,9 +221,12 @@ pub const FullThreats = struct {
             for (0..64) |from| {
                 for (0..64) |to| {
                     const pseudo = attacks.pseudo[if (pt == 1) @as(usize, if (to < from) 1 else 0) else pt][from];
-                    result.index2[pt][from][to] = @intCast(counts[pt] + @popCount(((@as(u64, 1) << @as(u6, @intCast(to))) - 1) & pseudo));
+                    result.index2[pt][from][to] =
+                        @intCast(counts[pt] + @popCount(((@as(u64, 1) << @as(u6, @intCast(to))) - 1) & pseudo));
                 }
-                if (pt != 1 or (from >= 8 and from <= 55)) counts[pt] += @popCount(attacks.pseudo[if (pt == 1) 0 else pt][from]);
+                if (pt != 1 or (from >= 8 and from <= 55)) {
+                    counts[pt] += @popCount(attacks.pseudo[if (pt == 1) 0 else pt][from]);
+                }
             }
         }
         var cumulative: u32 = 0;
@@ -175,13 +245,24 @@ pub const FullThreats = struct {
                 const qt = attacked.pieceType();
                 const mapped = mapping[@backingInt(pt) - 1][@backingInt(qt) - 1];
                 const semi_excluded = pt == qt and ((p ^ q) == 8 or pt != .pawn);
-                const feature = if (mapped < 0) dimensions else bases[p] + (@as(u32, @backingInt(attacked.color())) * (valid_targets[p] / 2) + @as(u32, @intCast(mapped))) * counts[p & 7];
+                const feature = if (mapped < 0)
+                    dimensions
+                else
+                    bases[p] + (@as(u32, @backingInt(attacked.color())) * (valid_targets[p] / 2) +
+                        @as(u32, @intCast(mapped))) * counts[p & 7];
                 result.index1[p][q] = .{ feature, if (mapped < 0 or semi_excluded) dimensions else feature };
             }
         }
         break :blk result;
     };
-    pub fn makeIndex(perspective: t.Color, attacker: t.Piece, from: t.Square, to: t.Square, attacked: t.Piece, king: t.Square) u32 {
+    pub fn makeIndex(
+        perspective: t.Color,
+        attacker: t.Piece,
+        from: t.Square,
+        to: t.Square,
+        attacked: t.Piece,
+        king: t.Square,
+    ) u32 {
         const orient = orientation(perspective, king);
         const f = @backingInt(from) ^ orient;
         const dest = @backingInt(to) ^ orient;
@@ -220,13 +301,22 @@ pub const FullThreats = struct {
                     var b = pos.tables.attacks(pt, from, pos.pieces()) & targets;
                     while (b != 0) {
                         const to = bb.popLsb(&b);
-                        appendIfValid(active, makeIndex(perspective, t.Piece.make(c, pt), from, to, pos.pieceOn(to), king));
+                        appendIfValid(
+                            active,
+                            makeIndex(perspective, t.Piece.make(c, pt), from, to, pos.pieceOn(to), king),
+                        );
                     }
                 }
             }
         }
     }
-    pub fn appendChanged(perspective: t.Color, king: t.Square, diff: *const dirty.DirtyThreats, removed: *ThreatList, added: *ThreatList) void {
+    pub fn appendChanged(
+        perspective: t.Color,
+        king: t.Square,
+        diff: *const dirty.DirtyThreats,
+        removed: *ThreatList,
+        added: *ThreatList,
+    ) void {
         const orient = orientation(perspective, king);
         const pair_swap: u8 = 0x88 * @backingInt(perspective);
         for (diff.list[0..diff.len]) |entry| {
@@ -235,11 +325,17 @@ pub const FullThreats = struct {
             const to = @as(u8, @truncate(raw >> 8)) ^ orient;
             const pair: u8 = @truncate(raw >> 16);
             const oriented = pair ^ pair_swap;
-            const index = lookup.index1[oriented >> 4][oriented & 15][@intFromBool(from < to)] + lookup.index2[(pair >> 4) & 7][from][to];
+            const index = lookup.index1[oriented >> 4][oriented & 15][@intFromBool(from < to)] +
+                lookup.index2[(pair >> 4) & 7][from][to];
             appendIfValid(if (raw >> 31 != 0) added else removed, index);
         }
     }
-    pub fn appendChangedBoth(kings: [2]t.Square, diff: *const dirty.DirtyThreats, removed: *[2]ThreatList, added: *[2]ThreatList) void {
+    pub fn appendChangedBoth(
+        kings: [2]t.Square,
+        diff: *const dirty.DirtyThreats,
+        removed: *[2]ThreatList,
+        added: *[2]ThreatList,
+    ) void {
         const orient = [2]u8{ orientation(.white, kings[0]), orientation(.black, kings[1]) };
         for (diff.list[0..diff.len]) |entry| {
             const raw = entry.data;
@@ -250,7 +346,8 @@ pub const FullThreats = struct {
                 const f = from ^ orient[side];
                 const dest = to ^ orient[side];
                 const oriented = pair ^ @as(u8, 0x88 * side);
-                const index = lookup.index1[oriented >> 4][oriented & 15][@intFromBool(f < dest)] + lookup.index2[(pair >> 4) & 7][f][dest];
+                const index = lookup.index1[oriented >> 4][oriented & 15][@intFromBool(f < dest)] +
+                    lookup.index2[(pair >> 4) & 7][f][dest];
                 appendIfValid(if (raw >> 31 != 0) &added[side] else &removed[side], index);
             }
         }
@@ -270,7 +367,14 @@ test "pawn pair masks cover adjacent files and legal pawn ranks" {
 
 test "threat filtering preserves valid boundary indices and insertion order" {
     var list: ThreatList = .{};
-    for ([_]u32{ FullThreats.dimensions, 0, FullThreats.dimensions + 1, FullThreats.dimensions - 1, std.math.maxInt(u16), 42 }) |index| {
+    for ([_]u32{
+        FullThreats.dimensions,
+        0,
+        FullThreats.dimensions + 1,
+        FullThreats.dimensions - 1,
+        std.math.maxInt(u16),
+        42,
+    }) |index| {
         FullThreats.appendIfValid(&list, index);
     }
     try std.testing.expectEqualSlices(u16, &.{ 0, FullThreats.dimensions - 1, 42 }, list.slice());

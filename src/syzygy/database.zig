@@ -12,7 +12,12 @@ pub const Database = struct {
     entries: std.ArrayList(*Entry) = .empty,
     lookup: std.AutoHashMapUnmanaged(u64, *Entry) = .empty,
     cardinality: usize = 0,
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, paths: []const u8, keys: *const @import("../position_keys.zig").PositionKeys) !*Database {
+    pub fn create(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        paths: []const u8,
+        keys: *const @import("../position_keys.zig").PositionKeys,
+    ) !*Database {
         const self = try allocator.create(Database);
         self.* = .{ .allocator = allocator, .io = io, .maps = idx.Maps.init() };
         errdefer self.destroy();
@@ -44,7 +49,9 @@ pub const Database = struct {
             errdefer allocator.destroy(entry);
             entry.* = .{ .wdl = wdl_table };
             const dtz_name = try a.print("{s}.rtbz", .{stem});
-            if (files.get(dtz_name)) |dtz_path| entry.dtz = try Table.load(allocator, io, dtz_path, material, &self.maps, true);
+            if (files.get(dtz_name)) |dtz_path| {
+                entry.dtz = try Table.load(allocator, io, dtz_path, material, &self.maps, true);
+            }
             errdefer if (entry.dtz) |dtz_table| dtz_table.destroy(allocator, io);
             try self.lookup.ensureUnusedCapacity(allocator, 2);
             try self.entries.append(allocator, entry);
@@ -80,7 +87,9 @@ pub const Database = struct {
         var searched: usize = 0;
         var best: i32 = -2;
         for (moves.slice()) |move| {
-            if (!pos.capture(move) and (!zeroing_moves or pos.board[@backingInt(move.from())].pieceType() != .pawn)) continue;
+            if (!pos.capture(move) and (!zeroing_moves or pos.board[@backingInt(move.from())].pieceType() != .pawn)) {
+                continue;
+            }
             searched += 1;
             var state: p.StateInfo = undefined;
             pos.doMove(move, &state);
@@ -112,7 +121,9 @@ pub const Database = struct {
         const result = try self.search(pos, true);
         if (result.value == 0) return 0;
         if (result.zeroing) return beforeZeroing(result.value);
-        if (try self.raw(pos, true, result.value)) |value| return (value + @as(i32, if (@abs(result.value) == 1) 100 else 0)) * std.math.sign(result.value);
+        if (try self.raw(pos, true, result.value)) |value| {
+            return (value + @as(i32, if (@abs(result.value) == 1) 100 else 0)) * std.math.sign(result.value);
+        }
         var moves: mg.MoveList = .{};
         mg.generate(.legal, pos, &moves);
         var minimum: i32 = 0xffff;

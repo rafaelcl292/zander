@@ -20,7 +20,12 @@ pub const Region = struct {
                 const base_flags: linux.MAP = .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .HUGETLB = true };
                 const shift: u32 = if (policy == .huge2m) 21 else 30;
                 const flags: linux.MAP = @bitCast(@as(u32, @bitCast(base_flags)) | (shift << 26));
-                if (map(length, flags)) |ptr| return .{ .bytes = ptr[0..size], .mapped_length = length, .backing = if (policy == .huge2m) .huge2m else .huge1g, .allocator = allocator };
+                if (map(length, flags)) |ptr| return .{
+                    .bytes = ptr[0..size],
+                    .mapped_length = length,
+                    .backing = if (policy == .huge2m) .huge2m else .huge1g,
+                    .allocator = allocator,
+                };
             }
             const transparent = policy == .auto or policy == .transparent;
             const alignment: usize = if (transparent) 2 * 1024 * 1024 else std.heap.pageSize();
@@ -35,9 +40,18 @@ pub const Region = struct {
             if (suffix != 0) _ = linux.munmap(ptr + length, suffix);
             const advice: u32 = if (transparent) linux.MADV.HUGEPAGE else linux.MADV.NOHUGEPAGE;
             const advised = linux.errno(linux.madvise(ptr, length, advice)) == .SUCCESS;
-            return .{ .bytes = ptr[0..size], .mapped_length = length, .backing = if (transparent and advised) .transparent_hint else .small, .allocator = allocator };
+            return .{
+                .bytes = ptr[0..size],
+                .mapped_length = length,
+                .backing = if (transparent and advised) .transparent_hint else .small,
+                .allocator = allocator,
+            };
         }
-        return .{ .bytes = try allocator.alignedAlloc(u8, .@"64", size), .backing = .allocator, .allocator = allocator };
+        return .{
+            .bytes = try allocator.alignedAlloc(u8, .@"64", size),
+            .backing = .allocator,
+            .allocator = allocator,
+        };
     }
     fn map(size: usize, flags: linux.MAP) ?[*]align(64) u8 {
         const result = linux.mmap(null, size, .{ .READ = true, .WRITE = true }, flags, -1, 0);
@@ -58,7 +72,9 @@ test "page policies retain requested capacity and alignment with fallback" {
         defer region.deinit();
         try std.testing.expectEqual(@as(usize, 1024 * 1024 + 17), region.bytes.len);
         try std.testing.expectEqual(@as(usize, 0), @intFromPtr(region.bytes.ptr) % 64);
-        if (region.backing == .transparent_hint) try std.testing.expectEqual(@as(usize, 0), @intFromPtr(region.bytes.ptr) % (2 * 1024 * 1024));
+        if (region.backing == .transparent_hint) {
+            try std.testing.expectEqual(@as(usize, 0), @intFromPtr(region.bytes.ptr) % (2 * 1024 * 1024));
+        }
         region.bytes[0] = 12;
         region.bytes[region.bytes.len - 1] = 34;
         try std.testing.expectEqual(@as(u8, 12), region.bytes[0]);

@@ -12,14 +12,17 @@ pub const Topology = struct {
         return discoverWithAffinity(io, true);
     }
     pub fn discoverWithAffinity(io: std.Io, respect_affinity: bool) Topology {
-        if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) return @import("numa_windows.zig").discover(respect_affinity);
+        if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) {
+            return @import("numa_windows.zig").discover(respect_affinity);
+        }
         var result: Topology = .{};
         if (builtin.target.os.tag != .linux) return result;
         var allowed: Mask = @splat(0);
         if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &allowed)) != .SUCCESS) return result;
         if (!respect_affinity) {
             var online_buffer: [8192]u8 = undefined;
-            const online = std.Io.Dir.cwd().readFile(io, "/sys/devices/system/cpu/online", &online_buffer) catch return result;
+            const online = std.Io.Dir.cwd().readFile(io, "/sys/devices/system/cpu/online", &online_buffer) catch
+                return result;
             allowed = parseCpuList(online) catch return result;
         }
         result.nodes[0].cpus = allowed;
@@ -50,7 +53,11 @@ pub const Topology = struct {
                 const word = cpu / @bitSizeOf(usize);
                 if (node.cpus[word] & bit == 0 or seen[word] & bit != 0) continue;
                 var path: [128]u8 = undefined;
-                const name = std.fmt.bufPrint(&path, "/sys/devices/system/cpu/cpu{d}/cache/index3/shared_cpu_list", .{cpu}) catch unreachable;
+                const name = std.fmt.bufPrint(
+                    &path,
+                    "/sys/devices/system/cpu/cpu{d}/cache/index3/shared_cpu_list",
+                    .{cpu},
+                ) catch unreachable;
                 var buffer: [8192]u8 = undefined;
                 const text = std.Io.Dir.cwd().readFile(io, name, &buffer) catch continue;
                 var mask = parseCpuList(text) catch continue;
@@ -81,7 +88,11 @@ pub const Topology = struct {
                 const second = result.nodes[j + 1];
                 if (first.id == second.id and cpuCount(first.cpus) + cpuCount(second.cpus) <= bundle_size) {
                     for (&first.cpus, second.cpus) |*word, other| word.* |= other;
-                    std.mem.copyForwards(Node, result.nodes[j + 1 .. result.count - 1], result.nodes[j + 2 .. result.count]);
+                    std.mem.copyForwards(
+                        Node,
+                        result.nodes[j + 1 .. result.count - 1],
+                        result.nodes[j + 2 .. result.count],
+                    );
                     result.count -= 1;
                     changed = true;
                 }
@@ -91,7 +102,11 @@ pub const Topology = struct {
     }
     /// Parse explicit domains in Stockfish's colon-separated CPU-list format.
     pub fn fromString(text: []const u8) !Topology {
-        var result: Topology = .{ .count = 0, .available = builtin.target.os.tag == .linux or (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) };
+        var result: Topology = .{
+            .count = 0,
+            .available = builtin.target.os.tag == .linux or
+                (builtin.target.os.tag == .windows and @sizeOf(usize) == 8),
+        };
         var used: Mask = @splat(0);
         var domains = std.mem.splitScalar(u8, text, ':');
         while (domains.next()) |domain| {
@@ -129,7 +144,8 @@ pub const Topology = struct {
             var best: usize = 0;
             var best_fill: f32 = std.math.inf(f32);
             for (0..self.count) |candidate| {
-                const fill = @as(f32, @floatFromInt(assigned[candidate] + 1)) / @as(f32, @floatFromInt(cpuCount(self.nodes[candidate].cpus)));
+                const fill = @as(f32, @floatFromInt(assigned[candidate] + 1)) /
+                    @as(f32, @floatFromInt(cpuCount(self.nodes[candidate].cpus)));
                 if (fill < best_fill) {
                     best = candidate;
                     best_fill = fill;
@@ -142,14 +158,19 @@ pub const Topology = struct {
 };
 pub const Guard = struct {
     previous: ?Mask = null,
-    windows: if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) ?@import("numa_windows.zig").Guard else ?void = null,
+    windows: if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8)
+        ?@import("numa_windows.zig").Guard
+    else
+        ?void = null,
     pub fn bind(mask: ?*const Mask) !Guard {
         if (builtin.target.os.tag == .windows and @sizeOf(usize) == 8) {
             return if (mask) |cpus| .{ .windows = try @import("numa_windows.zig").Guard.bind(cpus.*) } else .{};
         }
         if (builtin.target.os.tag != .linux or mask == null) return .{};
         var previous: Mask = @splat(0);
-        if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &previous)) != .SUCCESS) return error.AffinityUnavailable;
+        if (linux.errno(linux.sched_getaffinity(0, @sizeOf(Mask), &previous)) != .SUCCESS) {
+            return error.AffinityUnavailable;
+        }
         try linux.sched_setaffinity(0, mask.?);
         return .{ .previous = previous };
     }

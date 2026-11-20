@@ -138,7 +138,12 @@ pub const Engine = struct {
         return std.Io.Clock.awake.now(self.io).toMilliseconds();
     }
     pub fn newGame(self: *Engine) void {
-        const main_guard = numa.Guard.bind(if (self.groups.len != 0 and self.groups[self.worker_nodes[0]].mask != null) &self.groups[self.worker_nodes[0]].mask.? else null) catch numa.Guard{};
+        const main_guard = numa.Guard.bind(
+            if (self.groups.len != 0 and self.groups[self.worker_nodes[0]].mask != null)
+                &self.groups[self.worker_nodes[0]].mask.?
+            else
+                null,
+        ) catch numa.Guard{};
         defer main_guard.restore();
         h.fill(self.base.main_history, -5);
         h.fill(self.base.low_ply_history, 102);
@@ -185,13 +190,26 @@ pub const Engine = struct {
         var group_count: usize = 0;
         errdefer for (groups[0..group_count]) |group| group.destroy(self.allocator);
         for (groups, 0..) |*group, node| {
-            group.* = try Group.create(self.allocator, if (bind) self.topology.nodes[node].cpus else null, @max(1, counts[node]), self.network);
+            group.* = try Group.create(
+                self.allocator,
+                if (bind) self.topology.nodes[node].cpus else null,
+                @max(1, counts[node]),
+                self.network,
+            );
             group_count += 1;
         }
         const main_storage = block: {
             const guard = try numa.Guard.bind(if (groups[assignment[0]].mask) |*mask| mask else null);
             defer guard.restore();
-            break :block try Helper.create(self.allocator, self.io, 0, &self.shared, &self.table, &self.control, groups[assignment[0]].mask);
+            break :block try Helper.create(
+                self.allocator,
+                self.io,
+                0,
+                &self.shared,
+                &self.table,
+                &self.control,
+                groups[assignment[0]].mask,
+            );
         };
         errdefer main_storage.destroy(self.allocator);
         var region = try memory.Region.allocate(self.allocator, self.hash_mb * 1024 * 1024, self.page_policy);
@@ -204,7 +222,15 @@ pub const Engine = struct {
             const group = groups[assignment[index]];
             const guard = try numa.Guard.bind(if (group.mask) |*mask| mask else null);
             defer guard.restore();
-            helper.* = try Helper.create(self.allocator, self.io, index, &group.shared, &self.table, &self.control, group.mask);
+            helper.* = try Helper.create(
+                self.allocator,
+                self.io,
+                index,
+                &group.shared,
+                &self.table,
+                &self.control,
+                group.mask,
+            );
             initialized += 1;
         }
         for (self.helpers) |helper| helper.destroy(self.allocator);
@@ -303,8 +329,10 @@ pub const Engine = struct {
             const worker = self.workerAt(index);
             const current = worker.root_moves[0];
             const chosen = best.root_moves[0];
-            const current_decisive = current.score != -t.value_infinite and @abs(current.score) >= support.tb_win_in_max_ply and !current.isInexact();
-            const chosen_decisive = chosen.score != -t.value_infinite and @abs(chosen.score) >= support.tb_win_in_max_ply and !chosen.isInexact();
+            const current_decisive = current.score != -t.value_infinite and
+                @abs(current.score) >= support.tb_win_in_max_ply and !current.isInexact();
+            const chosen_decisive = chosen.score != -t.value_infinite and
+                @abs(chosen.score) >= support.tb_win_in_max_ply and !chosen.isInexact();
             var current_vote: i64 = 0;
             var chosen_vote: i64 = 0;
             for (self.worker.root_moves, 0..) |root, i| {
@@ -314,7 +342,10 @@ pub const Engine = struct {
             if (chosen_decisive) {
                 if (current_decisive and @abs(current.score) > @abs(chosen.score)) best = worker;
             } else if (current_decisive or (current.score > -support.tb_win_in_max_ply and
-                (current_vote > chosen_vote or (current_vote == chosen_vote and current.pv.len > chosen.pv.len)))) best = worker;
+                (current_vote > chosen_vote or (current_vote == chosen_vote and current.pv.len > chosen.pv.len))))
+            {
+                best = worker;
+            }
         }
         return best;
     }
@@ -332,7 +363,12 @@ pub const Engine = struct {
         self.clearHash();
     }
     pub fn loadTablebases(self: *Engine, path: []const u8) !void {
-        const replacement = try @import("syzygy/database.zig").Database.create(self.allocator, self.io, path, self.keys);
+        const replacement = try @import("syzygy/database.zig").Database.create(
+            self.allocator,
+            self.io,
+            path,
+            self.keys,
+        );
         if (self.tablebases) |previous| previous.destroy();
         self.tablebases = replacement;
         self.worker.tablebases = replacement;
@@ -386,7 +422,13 @@ pub const Engine = struct {
         self.states = states;
         self.position = position;
     }
-    pub fn prepareSearch(self: *Engine, limits: search.Worker.Limits, time_limits: tm.Limits, overhead: i64, ponder_option: bool) !void {
+    pub fn prepareSearch(
+        self: *Engine,
+        limits: search.Worker.Limits,
+        time_limits: tm.Limits,
+        overhead: i64,
+        ponder_option: bool,
+    ) !void {
         if (limits.depth < 1 or limits.depth >= t.max_ply) return error.InvalidDepth;
         if (limits.multi_pv < 1 or limits.multi_pv > t.max_moves) return error.InvalidMultiPV;
         if (limits.search_moves.len > self.requested.len) return error.TooManyRootMoves;
@@ -395,8 +437,20 @@ pub const Engine = struct {
         self.search_limits = limits;
         self.search_limits.search_moves = self.requested[0..limits.search_moves.len];
         var adjusted_overhead = overhead;
-        const adjusted_limits = self.node_time.prepare(time_limits, @backingInt(self.position.side), self.node_rate, &adjusted_overhead);
-        const budget = tm.Budget.init(adjusted_limits, @backingInt(self.position.side), self.position.game_ply, adjusted_overhead, ponder_option, &self.original_time_adjust);
+        const adjusted_limits = self.node_time.prepare(
+            time_limits,
+            @backingInt(self.position.side),
+            self.node_rate,
+            &adjusted_overhead,
+        );
+        const budget = tm.Budget.init(
+            adjusted_limits,
+            @backingInt(self.position.side),
+            self.position.game_ply,
+            adjusted_overhead,
+            ponder_option,
+            &self.original_time_adjust,
+        );
         self.control.reset(adjusted_limits, budget);
         self.control.use_nodes_time = self.node_rate != 0;
         self.base.published_nodes.store(0, .monotonic);
@@ -409,7 +463,12 @@ pub const Engine = struct {
         }
     }
     pub fn runSearch(self: *Engine) !search.Worker.Result {
-        const guard = try numa.Guard.bind(if (self.groups.len != 0 and self.groups[self.worker_nodes[0]].mask != null) &self.groups[self.worker_nodes[0]].mask.? else null);
+        const guard = try numa.Guard.bind(
+            if (self.groups.len != 0 and self.groups[self.worker_nodes[0]].mask != null)
+                &self.groups[self.worker_nodes[0]].mask.?
+            else
+                null,
+        );
         defer guard.restore();
         if (self.helpers.len != 0) self.table.newSearch();
         for (self.helpers) |helper| helper.start(&self.position, self.search_limits, &self.worker);
@@ -426,7 +485,9 @@ pub const Engine = struct {
         for (self.helpers) |helper| helper.wait();
         joined = true;
         for (self.helpers) |helper| if (helper.failure) |err| return err;
-        if (self.helpers.len != 0 and self.worker.root_moves.len != 0 and self.search_limits.depth == t.max_ply - 1 and !@import("skill.zig").Skill.init(self.worker.skill_level, self.worker.skill_elo).enabled()) {
+        if (self.helpers.len != 0 and self.worker.root_moves.len != 0 and self.search_limits.depth == t.max_ply - 1 and
+            !@import("skill.zig").Skill.init(self.worker.skill_level, self.worker.skill_elo).enabled())
+        {
             const best = self.selectBest();
             if (best != &self.worker) {
                 @memcpy(self.roots[0..best.root_moves.len], best.root_moves);
@@ -440,7 +501,12 @@ pub const Engine = struct {
             }
         }
         result.nodes = self.totalNodes();
-        if (self.control.limits.npmsec != 0) self.node_time.advance(@intCast(result.nodes), self.control.limits.increment[@backingInt(self.position.side)]);
+        if (self.control.limits.npmsec != 0) {
+            self.node_time.advance(
+                @intCast(result.nodes),
+                self.control.limits.increment[@backingInt(self.position.side)],
+            );
+        }
         return result;
     }
     pub fn extendPonder(self: *Engine) void {
@@ -453,6 +519,8 @@ pub const Engine = struct {
         defer self.position.undoMove(first);
         if (self.position.isDraw(1)) return;
         const probe = self.table.probe(self.position.key());
-        if (probe.found and self.position.legal(probe.data.move) and self.position.legal(probe.data.move)) pv.append(probe.data.move);
+        if (probe.found and self.position.legal(probe.data.move) and self.position.legal(probe.data.move)) {
+            pv.append(probe.data.move);
+        }
     }
 };

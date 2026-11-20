@@ -21,7 +21,8 @@ fn cpuid(leaf: u32, subleaf: u32) Registers {
 }
 fn permitted(max_leaf: u32, leaf1_ecx: u32, xcr0: u32, leaf7_ebx: u32) bool {
     const avx_and_osxsave = (@as(u32, 1) << 28) | (@as(u32, 1) << 27);
-    return max_leaf >= 7 and leaf1_ecx & avx_and_osxsave == avx_and_osxsave and xcr0 & 6 == 6 and leaf7_ebx & (1 << 5) != 0;
+    return max_leaf >= 7 and leaf1_ecx & avx_and_osxsave == avx_and_osxsave and xcr0 & 6 == 6 and
+        leaf7_ebx & (1 << 5) != 0;
 }
 fn selectFeatures(max_leaf: u32, leaf1: u32, xcr0: u32, leaf7: Registers, leaf71_eax: u32) Kernel {
     if (!permitted(max_leaf, leaf1, xcr0, leaf7.ebx)) return .sse2;

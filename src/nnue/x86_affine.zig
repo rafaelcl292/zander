@@ -11,7 +11,14 @@ const sums_count = lanes / (if (dot_product) 4 else 2);
 comptime {
     @export(&affine, .{ .name = "zander_affine_" ++ @tagName(kind) });
 }
-fn affine(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output: [*]i32, inputs: usize, outputs: usize) callconv(.c) void {
+fn affine(
+    input: [*]const u8,
+    weights: [*]const i8,
+    biases: [*]const i32,
+    output: [*]i32,
+    inputs: usize,
+    outputs: usize,
+) callconv(.c) void {
     for (0..outputs) |row| {
         var sums: @Vector(sums_count, i32) = @splat(0);
         var offset: usize = 0;
@@ -46,7 +53,13 @@ fn affine(input: [*]const u8, weights: [*]const i8, biases: [*]const i32, output
 comptime {
     @export(&sparse, .{ .name = "zander_sparse_" ++ @tagName(kind) });
 }
-fn sparse(input: [*]const u8, masks: [*]const u64, weights: [*]const i8, biases: [*]const i32, output: [*]i32) callconv(.c) void {
+fn sparse(
+    input: [*]const u8,
+    masks: [*]const u64,
+    weights: [*]const i8,
+    biases: [*]const i32,
+    output: [*]i32,
+) callconv(.c) void {
     const bytes = if (kind == .avx512 or kind == .vnni512) 64 else 32;
     const width = bytes / 4;
     const Vec = @Vector(width, i32);
