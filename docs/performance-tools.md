@@ -114,6 +114,7 @@ Outputs:
 python3 scripts/screen.py \
   --engine baseline=artifacts/baseline/bin/zander \
   --engine candidate=artifacts/candidate/bin/zander \
+  --engine baseline-copy=artifacts/baseline-copy/bin/zander \
   --engine stockfish=artifacts/stockfish-optimized \
   --network networks/nn-bddd9d57eb87.nnue \
   --cpu 2 --harness-cpu 0 \
@@ -127,7 +128,11 @@ controlled benchmark. Ratios use the first engine as the base and sum per-positi
 medians over `--repeats` (default 3), rotating engine order between repeats.
 
 Use it to discard candidates that do not reduce equal-work cycles, then confirm
-retained ones with `bench.py`. Counts exclude kernel time, frequency changes and
+retained ones with `bench.py`. Include a second copy of the base executable under
+another label as an A/A control: a single process can be skewed by several percent,
+for example when transparent huge pages are unavailable for its allocations. Only
+trust differences well outside the A/A ratio, and repeat a screen before acting on
+a surprising result. Counts exclude kernel time, frequency changes and
 UCI round trips, so a screen is not timing evidence. Run it on an otherwise idle
 host: concurrent builds distort cycle counts while leaving instruction counts
 unchanged.
