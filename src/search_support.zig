@@ -100,7 +100,9 @@ pub fn updateContinuationHistories(frames: []Stack, current: usize, pc: t.Piece,
         if (prior.current_move.valid()) {
             const entry = &prior.continuation_history.?[@backingInt(pc)][@backingInt(to)];
             if (entry.get() > 0) positive_count += 1;
-            entry.update(@divTrunc(bonus * weight * multipliers[positive_count], 65536) + @as(i32, if (i < 2) 73 else 0));
+            entry.update(
+                @divTrunc(bonus * weight * multipliers[positive_count], 65536) + @as(i32, if (i < 2) 73 else 0),
+            );
         }
     }
 }

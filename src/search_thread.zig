@@ -26,7 +26,15 @@ pub const Helper = struct {
     limits: search.Worker.Limits = .{ .depth = t.max_ply - 1 },
     failure: ?anyerror = null,
 
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, index: usize, shared: *h.SharedHistories, table: *@import("tt.zig").Table, control: *@import("search_control.zig").Control, affinity: ?@import("numa.zig").Mask) !*Helper {
+    pub fn create(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        index: usize,
+        shared: *h.SharedHistories,
+        table: *@import("tt.zig").Table,
+        control: *@import("search_control.zig").Control,
+        affinity: ?@import("numa.zig").Mask,
+    ) !*Helper {
         const self = try allocator.create(Helper);
         errdefer allocator.destroy(self);
         // Keep independent OS-backed storage for NUMA first-touch placement.
@@ -34,7 +42,15 @@ pub const Helper = struct {
         var storage_region = try Storage.createRegion(allocator);
         errdefer storage_region.deinit();
         const storage = Storage.fromRegion(&storage_region);
-        self.* = .{ .storage = storage, .storage_region = storage_region, .io = io, .affinity = affinity, .base = &storage.base, .worker = undefined, .roots = &storage.roots };
+        self.* = .{
+            .storage = storage,
+            .storage_region = storage_region,
+            .io = io,
+            .affinity = affinity,
+            .base = &storage.base,
+            .worker = undefined,
+            .roots = &storage.roots,
+        };
         const base = &storage.base;
         base.* = .{
             .network = undefined,

@@ -114,7 +114,10 @@ pub const Worker = struct {
         self.root_moves = storage[0..count];
         for (selected[0..count], self.root_moves) |move, *rm| rm.* = RootMove.init(move);
         self.tb_hits.store(0, .monotonic);
-        self.tb_config = if (self.tablebases) |database| tb.rank(database, pos, self.root_moves, self.tb_options, tb.Abort.fromControl(self.base.control), false) else .{};
+        self.tb_config = if (self.tablebases) |database|
+            tb.rank(database, pos, self.root_moves, self.tb_options, tb.Abort.fromControl(self.base.control), false)
+        else
+            .{};
         self.root_depth = 0;
         self.completed_depth = 0;
         self.nmp_min_ply = 0;
@@ -124,7 +127,14 @@ pub const Worker = struct {
         var pv: s.PV = .{};
         self.base.prepare(&pv);
         if (self.advance_generation) self.base.table.newSearch();
-        if (count == 0) return .{ .best_move = .none, .score = if (pos.st.checkers != 0) -t.value_mate else 0, .depth = 0, .nodes = 0 };
+        if (count == 0) {
+            return .{
+                .best_move = .none,
+                .score = if (pos.st.checkers != 0) -t.value_mate else 0,
+                .depth = 0,
+                .nodes = 0,
+            };
+        }
         var skill = @import("skill.zig").Skill.init(self.skill_level, self.skill_elo);
         const multi_pv = @min(@max(limits.multi_pv, @as(usize, if (skill.enabled()) 4 else 1)), count);
         h.fill(self.base.low_ply_history, 102);
@@ -159,22 +169,31 @@ pub const Worker = struct {
                 if (self.pv_idx == self.pv_last) {
                     pv_first = self.pv_last;
                     self.pv_last += 1;
-                    while (self.pv_last < count and self.root_moves[self.pv_last].tb_rank == self.root_moves[pv_first].tb_rank) self.pv_last += 1;
+                    while (self.pv_last < count and
+                        self.root_moves[self.pv_last].tb_rank == self.root_moves[pv_first].tb_rank)
+                    {
+                        self.pv_last += 1;
+                    }
                 }
                 self.last_iteration_pv.assignRoot(self.root_moves[self.pv_idx].previous_pv.slice());
                 self.base.sel_depth = 0;
-                var delta: i32 = 5 + @as(i32, @intCast(self.thread_index % 8)) + @as(i32, @intCast(@abs(self.root_moves[self.pv_idx].mean_squared_score) / 10193));
+                var delta: i32 = 5 + @as(i32, @intCast(self.thread_index % 8)) +
+                    @as(i32, @intCast(@abs(self.root_moves[self.pv_idx].mean_squared_score) / 10193));
                 const average = self.root_moves[self.pv_idx].average_score;
                 var alpha = @max(average - delta, -t.value_infinite);
                 var beta = @min(average + delta, t.value_infinite);
                 const seek_mate_score = self.root_moves[self.pv_idx].previous_score;
-                self.seek_mate = seek_mate_score != -t.value_infinite and @abs(seek_mate_score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
+                self.seek_mate = seek_mate_score != -t.value_infinite and
+                    @abs(seek_mate_score) >= 750 + @as(u32, @intCast(div(220000, self.root_depth * self.root_depth)));
                 self.base.optimism[us] = div(456 * average, @as(i32, @intCast(@abs(average))) + 85);
                 self.base.optimism[us ^ 1] = -self.base.optimism[us];
                 var failed_high_count: i32 = 0;
                 if (self.pv_idx == 0) fail_high_recovery = @max(0, fail_high_recovery - 2);
                 while (true) {
-                    const adjusted_depth = @max(1, self.root_depth - failed_high_count - fail_high_recovery - div(3 * (search_again + 1), 4));
+                    const adjusted_depth = @max(
+                        1,
+                        self.root_depth - failed_high_count - fail_high_recovery - div(3 * (search_again + 1), 4),
+                    );
                     const best = self.searchRoot(pos, alpha, beta, adjusted_depth);
                     std.mem.sort(RootMove, self.root_moves[self.pv_idx..self.pv_last], {}, RootMove.lessThan);
                     if (self.base.stopped()) break;
@@ -192,15 +211,23 @@ pub const Worker = struct {
                     } else break;
                     delta += div(47 * delta, 128);
                 }
-                if (failed_high_count > 0 and self.pv_idx == 0) fail_high_recovery = div(failed_high_count + 1, 2) + 2;
+                if (failed_high_count > 0 and self.pv_idx == 0) {
+                    fail_high_recovery = div(failed_high_count + 1, 2) + 2;
+                }
                 if (self.base.stopped() and self.pv_idx != 0) self.repairAbortedMultiPV(multi_pv);
                 std.mem.sort(RootMove, self.root_moves[pv_first .. self.pv_idx + 1], {}, RootMove.lessThan);
                 if (self.thread_index == 0 and self.pv_idx == 0) total_effort = self.base.nodes;
                 if (self.base.stopped()) break;
             }
             const best = &self.root_moves[0];
-            const forgotten_mate = last_best_score != -t.value_infinite and @abs(last_best_score) >= s.mate_in_max_ply and (@abs(best.score) < @abs(last_best_score) or best.isInexact());
-            if (!self.base.stopped() and (last_best_pv.len == 0 or last_best_pv.moves[0].data != best.pv.moves[0].data)) last_best_depth = self.root_depth;
+            const forgotten_mate = last_best_score != -t.value_infinite and
+                @abs(last_best_score) >= s.mate_in_max_ply and
+                (@abs(best.score) < @abs(last_best_score) or best.isInexact());
+            if (!self.base.stopped() and
+                (last_best_pv.len == 0 or last_best_pv.moves[0].data != best.pv.moves[0].data))
+            {
+                last_best_depth = self.root_depth;
+            }
             const aborted_loss = self.base.stopped() and self.pv_idx == 0 and best.isExactLoss();
             if (!self.base.stopped() and !forgotten_mate) {
                 last_best_pv = best.pv;
@@ -226,47 +253,89 @@ pub const Worker = struct {
                 if (self.on_progress) |callback| callback(self.progress_context, self);
             }
             if (self.thread_index != 0) continue;
-            if (skill.enabled() and skill.timeToPick(self.root_depth)) _ = skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
+            if (skill.enabled() and skill.timeToPick(self.root_depth)) {
+                _ = skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
+            }
             if (self.base.control) |control| {
                 const best_score = self.root_moves[0].score;
-                if (control.limits.mate != 0 and !control.stopped() and @abs(best_score) >= s.mate_in_max_ply and t.value_mate - @as(i32, @intCast(@abs(best_score))) <= 2 * control.limits.mate) control.requestStop();
+                if (control.limits.mate != 0 and !control.stopped() and @abs(best_score) >= s.mate_in_max_ply and
+                    t.value_mate - @as(i32, @intCast(@abs(best_score))) <= 2 * control.limits.mate)
+                {
+                    control.requestStop();
+                }
                 if (control.limits.managed() and !control.stopped() and !control.stop_on_ponderhit) {
                     const effort = self.root_moves[0].effort * 100000 / @max(1, total_effort);
-                    const falling = std.math.clamp((11.48 + 2.30 * @as(f64, @floatFromInt(self.previous_average - self.root_moves[0].score)) + 1.1 * @as(f64, @floatFromInt(iter_values[iter_index] - self.root_moves[0].score))) / 100.0, 0.576, 1.728);
-                    time_reduction = std.math.clamp(interpolate(@floatFromInt(self.root_depth - last_best_depth), 4.96, 18.79, 0.639, 1.712), 0.629, 1.544);
+                    const falling = std.math.clamp(
+                        (11.48 + 2.30 * @as(f64, @floatFromInt(self.previous_average - self.root_moves[0].score)) +
+                            1.1 * @as(f64, @floatFromInt(iter_values[iter_index] - self.root_moves[0].score))) / 100.0,
+                        0.576,
+                        1.728,
+                    );
+                    time_reduction = std.math.clamp(
+                        interpolate(@floatFromInt(self.root_depth - last_best_depth), 4.96, 18.79, 0.639, 1.712),
+                        0.629,
+                        1.544,
+                    );
                     const reduction = (1.468 + self.previous_time_reduction) / (2.284 * time_reduction);
                     total_changes /= 2;
-                    const changes = if (control.read_changes) |read| read(control.node_context) else self.best_move_changes;
+                    const changes = if (control.read_changes) |read|
+                        read(control.node_context)
+                    else
+                        self.best_move_changes;
                     total_changes += @floatFromInt(changes);
                     self.best_move_changes = 0;
                     const instability = 1.077 + 2.229 * total_changes / @as(f64, @floatFromInt(control.worker_count));
-                    const high_effort = std.math.clamp(interpolate(@floatFromInt(effort), 75800, 104510, 0.969, 0.714), 0.693, 0.838);
-                    var total_time = @as(f64, @floatFromInt(control.budget.optimum)) * falling * reduction * instability * high_effort;
-                    if (count == 1) total_time = @min(500.0 * @as(f64, @floatFromInt(@max(control.limits.npmsec, 1))), total_time);
+                    const high_effort = std.math.clamp(
+                        interpolate(@floatFromInt(effort), 75800, 104510, 0.969, 0.714),
+                        0.693,
+                        0.838,
+                    );
+                    var total_time = @as(f64, @floatFromInt(control.budget.optimum)) * falling * reduction *
+                        instability * high_effort;
+                    if (count == 1) {
+                        total_time = @min(500.0 * @as(f64, @floatFromInt(@max(control.limits.npmsec, 1))), total_time);
+                    }
                     const elapsed: f64 = @floatFromInt(control.searchElapsed(control.totalNodes(self.base.nodes)));
-                    if (elapsed > @min(total_time, @as(f64, @floatFromInt(control.budget.maximum))) or self.root_moves[multi_pv - 1].score >= t.value_mate - 3 or best_score == -t.value_mate + 2) {
+                    if (elapsed > @min(total_time, @as(f64, @floatFromInt(control.budget.maximum))) or
+                        self.root_moves[multi_pv - 1].score >= t.value_mate - 3 or best_score == -t.value_mate + 2)
+                    {
                         if (control.ponder.load(.acquire)) control.stop_on_ponderhit = true else control.requestStop();
-                    } else control.increase_depth.store(control.ponder.load(.acquire) or elapsed <= total_time * 0.50, .monotonic);
+                    } else {
+                        control.increase_depth.store(
+                            control.ponder.load(.acquire) or elapsed <= total_time * 0.50,
+                            .monotonic,
+                        );
+                    }
                 }
             }
             iter_values[iter_index] = self.root_moves[0].score;
             iter_index = (iter_index + 1) & 3;
         }
         if (self.thread_index == 0 and skill.enabled()) {
-            const chosen = if (skill.best.data != 0) skill.best else skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
+            const chosen = if (skill.best.data != 0)
+                skill.best
+            else
+                skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
             if (chosen.data != self.root_moves[0].pv.moves[0].data) {
                 const best_score = self.root_moves[0].score;
                 for (self.root_moves) |*root| if (root.pv.moves[0].data == chosen.data) {
                     std.mem.swap(RootMove, &self.root_moves[0], root);
                     break;
                 };
-                if (loss(self.root_moves[0].score) and self.root_moves[0].score < best_score) self.root_moves[0].inexact_lower = true;
+                if (loss(self.root_moves[0].score) and self.root_moves[0].score < best_score) {
+                    self.root_moves[0].inexact_lower = true;
+                }
             }
         }
         self.previous_time_reduction = time_reduction;
         self.previous_score = self.root_moves[0].score;
         self.previous_average = self.root_moves[0].average_score;
-        return .{ .best_move = self.root_moves[0].pv.moves[0], .score = if (self.root_moves[0].score == -t.value_infinite) 0 else self.root_moves[0].score, .depth = self.completed_depth, .nodes = self.base.nodes };
+        return .{
+            .best_move = self.root_moves[0].pv.moves[0],
+            .score = if (self.root_moves[0].score == -t.value_infinite) 0 else self.root_moves[0].score,
+            .depth = self.completed_depth,
+            .nodes = self.base.nodes,
+        };
     }
     fn interpolate(x: f64, x0: f64, x1: f64, y0: f64, y1: f64) f64 {
         return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
@@ -275,7 +344,9 @@ pub const Worker = struct {
         const prior = &self.root_moves[self.pv_idx - 1];
         const current = &self.root_moves[self.pv_idx];
         if ((loss(prior.score) and RootMove.lessThan({}, current.*, prior.*)) or current.isExactLoss()) {
-            if (current.previous_score != -t.value_infinite and current.previous_score_exact and current.previous_score <= prior.score) {
+            if (current.previous_score != -t.value_infinite and current.previous_score_exact and
+                current.previous_score <= prior.score)
+            {
                 current.score = current.previous_score;
                 current.uci_score = current.previous_score;
                 current.previous_score = -t.value_infinite;
@@ -297,7 +368,16 @@ pub const Worker = struct {
         };
     }
     /// Diagnostic non-root entry. Retain histories and TT between calls.
-    pub fn run(self: *Worker, comptime pv_node: bool, pos: *p.Position, pv: *s.PV, alpha: i32, beta: i32, depth: i32, cut_node: bool) i32 {
+    pub fn run(
+        self: *Worker,
+        comptime pv_node: bool,
+        pos: *p.Position,
+        pv: *s.PV,
+        alpha: i32,
+        beta: i32,
+        depth: i32,
+        cut_node: bool,
+    ) i32 {
         self.base.prepare(pv);
         self.root_moves = &.{};
         self.root_depth = depth;
@@ -306,18 +386,49 @@ pub const Worker = struct {
         return self.search(pv_node, pos, 7, alpha, beta, depth, cut_node);
     }
     fn shuffling(self: *Worker, move: t.Move, frame: usize, pos: *const p.Position) bool {
-        if (pos.captureStage(move) or pos.st.rule50 < 10 or pos.st.plies_from_null < 6 or self.base.frames[frame].ply < 20) return false;
-        return move.from() == self.base.frames[frame - 2].current_move.to() and self.base.frames[frame - 2].current_move.from() == self.base.frames[frame - 4].current_move.to();
+        if (pos.captureStage(move) or pos.st.rule50 < 10 or pos.st.plies_from_null < 6 or
+            self.base.frames[frame].ply < 20)
+        {
+            return false;
+        }
+        return move.from() == self.base.frames[frame - 2].current_move.to() and
+            self.base.frames[frame - 2].current_move.from() == self.base.frames[frame - 4].current_move.to();
     }
-    pub fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, initial_beta: i32, initial_depth: i32, cut_node: bool) i32 {
-        return self.searchNode(if (pv_node) .pv else .non_pv, pos, frame, initial_alpha, initial_beta, initial_depth, cut_node);
+    pub fn search(
+        self: *Worker,
+        comptime pv_node: bool,
+        pos: *p.Position,
+        frame: usize,
+        initial_alpha: i32,
+        initial_beta: i32,
+        initial_depth: i32,
+        cut_node: bool,
+    ) i32 {
+        return self.searchNode(
+            if (pv_node) .pv else .non_pv,
+            pos,
+            frame,
+            initial_alpha,
+            initial_beta,
+            initial_depth,
+            cut_node,
+        );
     }
     /// Search the selected root range. Frames and root records must be initialized.
     pub fn searchRoot(self: *Worker, pos: *p.Position, alpha: i32, beta: i32, depth: i32) i32 {
         std.debug.assert(self.pv_idx < self.pv_last and self.pv_last <= self.root_moves.len);
         return self.searchNode(.root, pos, 7, alpha, beta, depth, false);
     }
-    fn searchNode(self: *Worker, comptime node_type: NodeType, pos: *p.Position, frame: usize, initial_alpha: i32, initial_beta: i32, initial_depth: i32, cut_node: bool) i32 {
+    fn searchNode(
+        self: *Worker,
+        comptime node_type: NodeType,
+        pos: *p.Position,
+        frame: usize,
+        initial_alpha: i32,
+        initial_beta: i32,
+        initial_depth: i32,
+        cut_node: bool,
+    ) i32 {
         const pv_node = node_type != .non_pv;
         const root_node = node_type == .root;
         const w = self.base;
@@ -352,10 +463,14 @@ pub const Worker = struct {
         ss.move_count = 0;
         var best_value: i32 = -t.value_infinite;
         var max_value: i32 = t.value_infinite;
-        ss.follow_pv = root_node or (prev.follow_pv and ss.ply > 0 and @as(usize, @intCast(ss.ply - 1)) < self.last_iteration_pv.len and prev.current_move.data == self.last_iteration_pv.moves[@intCast(ss.ply - 1)].data);
+        ss.follow_pv = root_node or (prev.follow_pv and ss.ply > 0 and
+            @as(usize, @intCast(ss.ply - 1)) < self.last_iteration_pv.len and
+            prev.current_move.data == self.last_iteration_pv.moves[@intCast(ss.ply - 1)].data);
         if (pv_node and w.sel_depth < ss.ply + 1) w.sel_depth = ss.ply + 1;
         if (!root_node) {
-            if (pos.isDraw(ss.ply) or ss.ply >= t.max_ply) return if (ss.ply >= t.max_ply and !ss.in_check) w.evaluate(pos) else s.drawValue(@intCast(w.nodes));
+            if (pos.isDraw(ss.ply) or ss.ply >= t.max_ply) {
+                return if (ss.ply >= t.max_ply and !ss.in_check) w.evaluate(pos) else s.drawValue(@intCast(w.nodes));
+            }
             alpha = @max(-t.value_mate + ss.ply, alpha);
             beta = @min(t.value_mate - ss.ply - 1, beta);
             if (alpha >= beta) return alpha;
@@ -374,7 +489,12 @@ pub const Worker = struct {
         const probe = w.table.probe(key);
         var data = probe.data;
         ss.tt_hit = probe.found;
-        data.move = if (root_node) self.root_moves[self.pv_idx].pv.moves[0] else if (probe.found) data.move else .none;
+        data.move = if (root_node)
+            self.root_moves[self.pv_idx].pv.moves[0]
+        else if (probe.found)
+            data.move
+        else
+            .none;
         data.value = if (probe.found) s.valueFromTT(data.value, ss.ply, pos.st.rule50) else t.value_none;
         ss.tt_pv = if (excluded.data != 0) ss.tt_pv else pv_node or (probe.found and data.is_pv);
         const tt_capture = data.move.data != 0 and pos.captureStage(data.move);
@@ -399,25 +519,34 @@ pub const Worker = struct {
         const opponent_worsening = ss.static_eval > -prev.static_eval;
         if (prior_reduction >= 3 and !opponent_worsening) depth += 1;
         if (prior_reduction >= 2 and depth >= 2 and ss.static_eval + prev.static_eval > 166) depth -= 1;
-        if (!pv_node and excluded.data == 0 and data.value != t.value_none and data.depth > depth - b(data.value <= beta)) {
+        if (!pv_node and excluded.data == 0 and data.value != t.value_none and
+            data.depth > depth - b(data.value <= beta))
+        {
             if (bound(data.bound, data.value >= beta) and (cut_node == (data.value >= beta) or depth > 4)) {
                 if (data.move.data != 0 and data.value >= beta) {
                     if (!tt_capture) histories.updateQuiet(pos, frame, data.move, 131 * depth);
-                    if (prev_sq != .none and prev.move_count < 5 and !prior_capture) s.updateContinuationHistories(&w.frames, frame - 1, pos.pieceOn(prev_sq), prev_sq, -2210);
+                    if (prev_sq != .none and prev.move_count < 5 and !prior_capture) {
+                        s.updateContinuationHistories(&w.frames, frame - 1, pos.pieceOn(prev_sq), prev_sq, -2210);
+                    }
                 }
                 if (pos.st.rule50 < 96) {
                     if (depth >= 7 and data.move.data != 0 and pos.legal(data.move) and !decisive(data.value)) {
                         pos.doMove(data.move, &state);
                         const next = w.table.probe(pos.key());
                         pos.undoMove(data.move);
-                        if (next.data.value == t.value_none or (data.value >= beta) == (-next.data.value >= beta)) return data.value;
+                        if (next.data.value == t.value_none or (data.value >= beta) == (-next.data.value >= beta)) {
+                            return data.value;
+                        }
                     } else return data.value;
                 }
             } else if (depth > 5) probe.writer.penalize(1);
         }
         if (!root_node and excluded.data == 0 and self.tb_config.cardinality != 0) {
             const pieces = @popCount(pos.pieces());
-            if (pieces <= self.tb_config.cardinality and (pieces < self.tb_config.cardinality or depth >= self.tb_config.depth) and pos.st.rule50 == 0 and pos.st.castling_rights == 0) {
+            if (pieces <= self.tb_config.cardinality and
+                (pieces < self.tb_config.cardinality or depth >= self.tb_config.depth) and
+                pos.st.rule50 == 0 and pos.st.castling_rights == 0)
+            {
                 const outcome = self.tablebases.?.wdl(pos) catch null;
                 if (self.thread_index == 0) {
                     if (w.control) |control| control.calls = 0;
@@ -426,10 +555,29 @@ pub const Worker = struct {
                     _ = self.tb_hits.fetchAdd(1, .monotonic);
                     const draw_score: i32 = @intFromBool(self.tb_config.rule50);
                     const tb_value = s.value_tb - ss.ply;
-                    const value = if (result.value < -draw_score) -tb_value else if (result.value > draw_score) tb_value else 2 * result.value * draw_score;
-                    const result_bound: tt.Bound = if (result.value < -draw_score) .upper else if (result.value > draw_score) .lower else .exact;
+                    const value = if (result.value < -draw_score)
+                        -tb_value
+                    else if (result.value > draw_score)
+                        tb_value
+                    else
+                        2 * result.value * draw_score;
+                    const result_bound: tt.Bound = if (result.value < -draw_score)
+                        .upper
+                    else if (result.value > draw_score)
+                        .lower
+                    else
+                        .exact;
                     if (result_bound == .exact or (if (result_bound == .lower) value >= beta else value <= alpha)) {
-                        w.save(probe.writer, key, s.valueToTT(value, ss.ply), ss.tt_pv, result_bound, @min(t.max_ply - 1, depth + 6), .none, t.value_none);
+                        w.save(
+                            probe.writer,
+                            key,
+                            s.valueToTT(value, ss.ply),
+                            ss.tt_pv,
+                            result_bound,
+                            @min(t.max_ply - 1, depth + 6),
+                            .none,
+                            t.value_none,
+                        );
                         return value;
                     }
                     if (pv_node) {
@@ -445,17 +593,29 @@ pub const Worker = struct {
             if (prev.current_move.valid() and !prev.in_check and !prior_capture) {
                 const diff = std.math.clamp(-(prev.static_eval + ss.static_eval), -189, 194) + 60;
                 w.main_history[us ^ 1][prev.current_move.data].update(diff * 11);
-                if (!probe.found and pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)].update(diff * 13);
+                if (!probe.found and pos.pieceOn(prev_sq).pieceType() != .pawn and
+                    prev.current_move.kind() != .promotion)
+                {
+                    w.shared.pawnEntry(pos)[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)].update(diff * 13);
+                }
             }
             if (all_node and eval < alpha - 342 * depth and !seek_mate) return w.search(false, pos, frame, alpha, beta);
-            if (!ss.tt_pv and depth < @as(i32, if (seek_mate) 6 else 19) and eval >= beta and (data.move.data == 0 or tt_capture) and !loss(beta) and !win(eval)) {
+            if (!ss.tt_pv and depth < @as(i32, if (seek_mate) 6 else 19) and eval >= beta and
+                (data.move.data == 0 or tt_capture) and !loss(beta) and !win(eval))
+            {
                 const mult = @min(45 + depth * 4, 85) - 20 * b(!ss.tt_hit);
-                const margin = mult * depth - div((2789 * b(improving) + 335 * b(opponent_worsening)) * mult, 1024) + @as(i32, @intCast(@abs(correction) / 198435));
+                const margin = mult * depth - div((2789 * b(improving) + 335 * b(opponent_worsening)) * mult, 1024) +
+                    @as(i32, @intCast(@abs(correction) / 198435));
                 if (eval - margin >= beta) return div(661 * beta + 363 * eval, 1024);
             }
-            if (cut_node and ss.static_eval + 50 * ss.prior_nmp_fail_high >= beta - 13 * depth - 47 * b(improving) + 365 and excluded.data == 0 and pos.st.non_pawn_material[us] != 0 and ss.ply >= self.nmp_min_ply and beta >= -2000) {
+            if (cut_node and
+                ss.static_eval + 50 * ss.prior_nmp_fail_high >= beta - 13 * depth - 47 * b(improving) + 365 and
+                excluded.data == 0 and pos.st.non_pawn_material[us] != 0 and ss.ply >= self.nmp_min_ply and
+                beta >= -2000)
+            {
                 std.debug.assert(prev.current_move.data != t.Move.null_move.data);
-                var reduction = 7 + div(depth, 3) + @max(div(ss.static_eval - beta, 256), 0) - @as(i32, @intCast(self.thread_index & 1));
+                var reduction = 7 + div(depth, 3) + @max(div(ss.static_eval - beta, 256), 0) -
+                    @as(i32, @intCast(self.thread_index & 1));
                 reduction -= div(b(seek_mate) * reduction, 2);
                 w.doNullMove(pos, &state, frame);
                 const value = -self.search(false, pos, frame + 1, -beta, -beta + 1, depth - reduction, false);
@@ -490,20 +650,48 @@ pub const Worker = struct {
                     std.debug.assert(capture);
                     w.doMoveCapture(pos, move, &state, capture, frame);
                     var value = -w.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1);
-                    if (value >= prob_beta and prob_depth > 0) value = -self.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1, prob_depth, !cut_node);
+                    if (value >= prob_beta and prob_depth > 0) {
+                        value = -self.search(false, pos, frame + 1, -prob_beta, -prob_beta + 1, prob_depth, !cut_node);
+                    }
                     w.undoMove(pos, move);
                     if (w.stopped()) return 0;
                     if (value >= prob_beta) {
-                        w.save(probe.writer, key, s.valueToTT(value, ss.ply), ss.tt_pv, .lower, prob_depth + 1, move, unadjusted);
+                        w.save(
+                            probe.writer,
+                            key,
+                            s.valueToTT(value, ss.ply),
+                            ss.tt_pv,
+                            .lower,
+                            prob_depth + 1,
+                            move,
+                            unadjusted,
+                        );
                         if (!decisive(value)) return value - (prob_beta - beta);
                     }
                 }
             }
         }
         const small_prob_beta = beta + 428;
-        if (bound(data.bound, true) and data.depth >= depth - 4 and data.value >= small_prob_beta and !decisive(beta) and data.value != t.value_none and !decisive(data.value) and !seek_mate) return small_prob_beta;
-        const cont = [_]*const h.PieceToHistory{ prev.continuation_history.?, w.frames[frame - 2].continuation_history.?, w.frames[frame - 3].continuation_history.?, w.frames[frame - 4].continuation_history.?, w.frames[frame - 5].continuation_history.?, w.frames[frame - 6].continuation_history.? };
-        var picker = mp.MovePicker.init(pos, data.move, depth, .{ .main = w.main_history, .low_ply = w.low_ply_history, .capture = w.capture_history, .continuation = &cont, .shared = w.shared }, @intCast(ss.ply));
+        if (bound(data.bound, true) and data.depth >= depth - 4 and data.value >= small_prob_beta and
+            !decisive(beta) and data.value != t.value_none and !decisive(data.value) and !seek_mate)
+        {
+            return small_prob_beta;
+        }
+        const cont = [_]*const h.PieceToHistory{
+            prev.continuation_history.?,
+            w.frames[frame - 2].continuation_history.?,
+            w.frames[frame - 3].continuation_history.?,
+            w.frames[frame - 4].continuation_history.?,
+            w.frames[frame - 5].continuation_history.?,
+            w.frames[frame - 6].continuation_history.?,
+        };
+        var picker = mp.MovePicker.init(pos, data.move, depth, .{
+            .main = w.main_history,
+            .low_ply = w.low_ply_history,
+            .capture = w.capture_history,
+            .continuation = &cont,
+            .shared = w.shared,
+        }, @intCast(ss.ply));
         var value = best_value;
         var move_count: i32 = 0;
         while (true) {
@@ -539,11 +727,19 @@ pub const Worker = struct {
                 if (capture or check) {
                     const captured = pos.pieceOn(move.to());
                     const capt_hist: i32 = w.capture_history[pci][to][@backingInt(captured.pieceType())].get();
-                    if (!check and lmr_depth < 8 and ss.static_eval + 234 + 247 * lmr_depth + pieceValue(captured) + div(134 * capt_hist, 1024) <= alpha) continue;
+                    if (!check and lmr_depth < 8 and
+                        ss.static_eval + 234 + 247 * lmr_depth + pieceValue(captured) +
+                            div(134 * capt_hist, 1024) <= alpha)
+                    {
+                        continue;
+                    }
                     const margin = 177 * depth + div(capt_hist * 34, 1024);
-                    if ((alpha >= 0 or pos.st.non_pawn_material[us] != pieceValue(pc)) and !pos.seeGe(move, -margin)) continue;
+                    if ((alpha >= 0 or pos.st.non_pawn_material[us] != pieceValue(pc)) and !pos.seeGe(move, -margin)) {
+                        continue;
+                    }
                 } else if (!ss.follow_pv or !pv_node) {
-                    var history = @as(i32, cont[0][pci][to].get()) + cont[1][pci][to].get() + w.shared.pawnEntry(pos)[pci][to].get();
+                    var history = @as(i32, cont[0][pci][to].get()) + cont[1][pci][to].get() +
+                        w.shared.pawnEntry(pos)[pci][to].get();
                     if (history < -4136 * depth) continue;
                     history += div(69 * @as(i32, w.main_history[us][move.data].get()), 32);
                     lmr_depth += div(history, s.lmrDivisor(depth));
@@ -556,7 +752,10 @@ pub const Worker = struct {
                     if (!pos.seeGe(move, -23 * lmr_depth * lmr_depth)) continue;
                 }
             }
-            if (!root_node and move.data == data.move.data and excluded.data == 0 and depth >= 6 + b(ss.tt_pv) and data.value != t.value_none and !decisive(data.value) and bound(data.bound, true) and data.depth >= depth - 3 and !self.shuffling(move, frame, pos) and !seek_mate) {
+            if (!root_node and move.data == data.move.data and excluded.data == 0 and depth >= 6 + b(ss.tt_pv) and
+                data.value != t.value_none and !decisive(data.value) and bound(data.bound, true) and
+                data.depth >= depth - 3 and !self.shuffling(move, frame, pos) and !seek_mate)
+            {
                 const singular_beta = data.value - div((59 + 66 * b(ss.tt_pv and !pv_node)) * depth, 63);
                 const singular_depth = div(new_depth, 2);
                 ss.excluded_move = move;
@@ -565,49 +764,87 @@ pub const Worker = struct {
                 if (w.stopped()) return 0;
                 if (value < singular_beta) {
                     const adj: @TypeOf(correction) = @intCast(@abs(correction) / 198368);
-                    const double_margin = -2 + 204 * b(pv_node) - 152 * b(!tt_capture) - adj - div(1175 * @as(i32, self.tt_move_history.get()), 114178) - 38 * b(ss.ply > self.root_depth);
-                    const triple_margin = 70 + 279 * b(pv_node) - 188 * b(!tt_capture) + 81 * b(ss.tt_pv) - adj - 43 * b(ss.ply > self.root_depth);
+                    const double_margin = -2 + 204 * b(pv_node) - 152 * b(!tt_capture) - adj -
+                        div(1175 * @as(i32, self.tt_move_history.get()), 114178) - 38 * b(ss.ply > self.root_depth);
+                    const triple_margin = 70 + 279 * b(pv_node) - 188 * b(!tt_capture) + 81 * b(ss.tt_pv) - adj -
+                        43 * b(ss.ply > self.root_depth);
                     extension = 1 + b(value < singular_beta - double_margin) + b(value < singular_beta - triple_margin);
                     depth += 1;
                 } else if (value >= beta and !decisive(value)) {
                     self.tt_move_history.update(-421 - 110 * depth);
-                    if (!ss.in_check and value > ss.static_eval) histories.updateCorrection(pos, frame, std.math.clamp(div((value - ss.static_eval) * 664, 1024), -256, 256));
+                    if (!ss.in_check and value > ss.static_eval) {
+                        histories.updateCorrection(
+                            pos,
+                            frame,
+                            std.math.clamp(div((value - ss.static_eval) * 664, 1024), -256, 256),
+                        );
+                    }
                     return value;
                 } else if (data.value >= beta or cut_node) extension = -3;
             }
             const node_count = if (root_node) w.nodes else 0;
             w.doMoveCapture(pos, move, &state, capture, frame);
             new_depth += extension;
-            if (ss.tt_pv) r -= 3023 + 1004 * b(pv_node) + 885 * b(data.value > alpha) + b(data.depth >= depth) * (816 + 940 * b(cut_node));
+            if (ss.tt_pv) {
+                r -= 3023 + 1004 * b(pv_node) + 885 * b(data.value > alpha) +
+                    b(data.depth >= depth) * (816 + 940 * b(cut_node));
+            }
             r += 697;
             r -= move_count * 65;
             r -= @intCast(@abs(correction) / 26310);
             if (cut_node) r += 4026 + 933 * b(data.move.data == 0);
             if (tt_capture) r += 1079;
-            if (w.frames[frame + 1].cutoff_count > 1) r += 264 + 1095 * b(w.frames[frame + 1].cutoff_count > 2) + 1138 * b(all_node) else if (move.data == data.move.data) r -= 2179;
-            if (capture) ss.stat_score = div(873 * pieceValue(pos.st.captured_piece), 128) + w.capture_history[pci][to][@backingInt(pos.st.captured_piece.pieceType())].get() else ss.stat_score = div(2252 * @as(i32, w.main_history[us][move.data].get()) + 1126 * @as(i32, cont[0][pci][to].get()) + 1093 * @as(i32, cont[1][pci][to].get()), 1024);
+            if (w.frames[frame + 1].cutoff_count > 1) {
+                r += 264 + 1095 * b(w.frames[frame + 1].cutoff_count > 2) + 1138 * b(all_node);
+            } else if (move.data == data.move.data) {
+                r -= 2179;
+            }
+            if (capture) {
+                ss.stat_score = div(873 * pieceValue(pos.st.captured_piece), 128) +
+                    w.capture_history[pci][to][@backingInt(pos.st.captured_piece.pieceType())].get();
+            } else {
+                ss.stat_score = div(2252 * @as(i32, w.main_history[us][move.data].get()) +
+                    1126 * @as(i32, cont[0][pci][to].get()) + 1093 * @as(i32, cont[1][pci][to].get()), 1024);
+            }
             r -= div(ss.stat_score * 439, 4096);
             if (!capture and !decisive(alpha)) r += 3 * std.math.clamp(alpha - eval, -64, 96);
             if (all_node) r += div(r * 276, 256 * depth + 268);
             if (seek_mate and r > 0) r += div(if (check) -r else r, 4);
             if (depth >= 2 and move_count > 1) {
-                const d = @max(1, new_depth + @min(div(-r, 1024), @as(i32, if (ss.ply < 2 * self.root_depth) 2 else 0))) + b(pv_node);
+                const d = @max(
+                    1,
+                    new_depth + @min(div(-r, 1024), @as(i32, if (ss.ply < 2 * self.root_depth) 2 else 0)),
+                ) + b(pv_node);
                 ss.reduction = new_depth - d;
                 value = -self.search(false, pos, frame + 1, -(alpha + 1), -alpha, d, true);
                 ss.reduction = 0;
                 if (value > alpha) {
                     new_depth += b(d < new_depth and value > best_value + 53) - b(value < best_value + 8);
-                    if (new_depth > d) value = -self.search(false, pos, frame + 1, -(alpha + 1), -alpha, new_depth, !cut_node);
+                    if (new_depth > d) {
+                        value = -self.search(false, pos, frame + 1, -(alpha + 1), -alpha, new_depth, !cut_node);
+                    }
                     s.updateContinuationHistories(&w.frames, frame, pc, move.to(), 1334);
                 }
             } else if (!pv_node or move_count > 1) {
                 if (data.move.data == 0) r += 1127;
-                value = -self.search(false, pos, frame + 1, -(alpha + 1), -alpha, new_depth - b(r > 5234) - b(r > 5487 and new_depth > 2), !cut_node);
+                value = -self.search(
+                    false,
+                    pos,
+                    frame + 1,
+                    -(alpha + 1),
+                    -alpha,
+                    new_depth - b(r > 5234) - b(r > 5487 and new_depth > 2),
+                    !cut_node,
+                );
             }
             if (pv_node and (move_count == 1 or value > alpha)) {
                 w.frames[frame + 1].pv = &pv;
                 pv.clear();
-                if (move.data == data.move.data and ((data.value != t.value_none and decisive(data.value) and data.depth > 0) or data.depth > 1)) new_depth = @max(new_depth, 1);
+                if (move.data == data.move.data and
+                    ((data.value != t.value_none and decisive(data.value) and data.depth > 0) or data.depth > 1))
+                {
+                    new_depth = @max(new_depth, 1);
+                }
                 value = -self.search(true, pos, frame + 1, -beta, -alpha, new_depth, false);
             }
             w.undoMove(pos, move);
@@ -616,7 +853,15 @@ pub const Worker = struct {
             if (root_node) {
                 for (self.root_moves) |*rm| {
                     if (rm.pv.moves[0].data != move.data) continue;
-                    rm.record(value, alpha, beta, move_count, w.sel_depth, w.nodes - node_count, w.frames[frame + 1].pv);
+                    rm.record(
+                        value,
+                        alpha,
+                        beta,
+                        move_count,
+                        w.sel_depth,
+                        w.nodes - node_count,
+                        w.frames[frame + 1].pv,
+                    );
                     if ((move_count == 1 or value > alpha) and move_count > 1 and self.pv_idx == 0) {
                         self.best_move_changes += 1;
                         if (self.base.publish_nodes) _ = self.published_changes.fetchAdd(1, .monotonic);
@@ -624,7 +869,8 @@ pub const Worker = struct {
                     break;
                 }
             }
-            const inc = b(value == best_value and ss.ply + 2 >= self.root_depth and w.nodes & 14 == 0 and !win(@as(i32, @intCast(@abs(value))) + 1));
+            const inc = b(value == best_value and ss.ply + 2 >= self.root_depth and w.nodes & 14 == 0 and
+                !win(@as(i32, @intCast(@abs(value))) + 1));
             if (value + inc > best_value) {
                 best_value = value;
                 if (value + inc > alpha) {
@@ -642,22 +888,53 @@ pub const Worker = struct {
                 if (capture) captures.append(move) else quiets.append(move);
             }
         }
-        if (best_value >= beta and !decisive(best_value) and !decisive(alpha)) best_value = div(best_value * depth + beta, depth + 1);
-        if (move_count == 0) best_value = if (excluded.data != 0) alpha else if (ss.in_check) -t.value_mate + ss.ply else 0 else if (best_move.data != 0) {
+        if (best_value >= beta and !decisive(best_value) and !decisive(alpha)) {
+            best_value = div(best_value * depth + beta, depth + 1);
+        }
+        if (move_count == 0) {
+            best_value = if (excluded.data != 0) alpha else if (ss.in_check) -t.value_mate + ss.ply else 0;
+        } else if (best_move.data != 0) {
             histories.updateAll(pos, frame, best_move, prev_sq, quiets.slice(), captures.slice(), depth, data.move);
             if (!pv_node) self.tt_move_history.update(if (best_move.data == data.move.data) 918 else -747);
         } else if (!prior_capture and prev_sq != .none) {
-            var scale: i32 = -241 - div(prev.stat_score, 98) + @min(59 * depth, 420) + 186 * b(prev.move_count > 9) + 142 * b(!ss.in_check and best_value <= ss.static_eval - 106) + 159 * b(!prev.in_check and best_value <= -prev.static_eval - 68);
+            var scale: i32 = -241 - div(prev.stat_score, 98) + @min(59 * depth, 420) + 186 * b(prev.move_count > 9) +
+                142 * b(!ss.in_check and best_value <= ss.static_eval - 106) +
+                159 * b(!prev.in_check and best_value <= -prev.static_eval - 68);
             scale = @max(scale, 0);
             const bonus = @min(150 * depth - 85, 1337) * scale;
             s.updateContinuationHistories(&w.frames, frame - 1, pos.pieceOn(prev_sq), prev_sq, div(bonus * 263, 16384));
             w.main_history[us ^ 1][prev.current_move.data].update(div(bonus * 215, 32768));
-            if (pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) w.shared.pawnEntry(pos)[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)].update(div(bonus * 324, 8192));
-        } else if (prior_capture and prev_sq != .none) w.capture_history[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)][@backingInt(pos.st.captured_piece.pieceType())].update(892);
+            if (pos.pieceOn(prev_sq).pieceType() != .pawn and prev.current_move.kind() != .promotion) {
+                w.shared.pawnEntry(pos)[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)]
+                    .update(div(bonus * 324, 8192));
+            }
+        } else if (prior_capture and prev_sq != .none) {
+            const entries = &w.capture_history[@backingInt(pos.pieceOn(prev_sq))][@backingInt(prev_sq)];
+            entries[@backingInt(pos.st.captured_piece.pieceType())].update(892);
+        }
         if (pv_node) best_value = @min(best_value, max_value);
         if (best_value <= alpha) ss.tt_pv = ss.tt_pv or prev.tt_pv;
-        if (excluded.data == 0 and !(root_node and self.pv_idx != 0)) w.save(probe.writer, key, s.valueToTT(best_value, ss.ply), ss.tt_pv, if (best_value >= beta) .lower else if (pv_node and best_move.data != 0) .exact else .upper, if (move_count != 0) depth else @min(t.max_ply - 1, depth + 6), best_move, unadjusted);
-        if (!ss.in_check and !(best_move.data != 0 and pos.capture(best_move)) and (best_value > ss.static_eval) == (best_move.data != 0)) histories.updateCorrection(pos, frame, div(1061 * std.math.clamp(div((best_value - ss.static_eval) * depth * @as(i32, if (best_move.data != 0) 12 else 18), 128), -256, 256), 1024));
+        if (excluded.data == 0 and !(root_node and self.pv_idx != 0)) {
+            w.save(
+                probe.writer,
+                key,
+                s.valueToTT(best_value, ss.ply),
+                ss.tt_pv,
+                if (best_value >= beta) .lower else if (pv_node and best_move.data != 0) .exact else .upper,
+                if (move_count != 0) depth else @min(t.max_ply - 1, depth + 6),
+                best_move,
+                unadjusted,
+            );
+        }
+        if (!ss.in_check and !(best_move.data != 0 and pos.capture(best_move)) and
+            (best_value > ss.static_eval) == (best_move.data != 0))
+        {
+            histories.updateCorrection(pos, frame, div(1061 * std.math.clamp(
+                div((best_value - ss.static_eval) * depth * @as(i32, if (best_move.data != 0) 12 else 18), 128),
+                -256,
+                256,
+            ), 1024));
+        }
         std.debug.assert(best_value > -t.value_infinite and best_value < t.value_infinite);
         return best_value;
     }

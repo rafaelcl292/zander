@@ -44,13 +44,28 @@ pub const RootMove = struct {
         const sum = @as(u64, @bitCast(value)) *% weight +% @as(u64, @bitCast(previous)) *% (32 - weight);
         return @bitCast(@as(u32, @truncate(sum / 32)));
     }
-    pub fn record(self: *RootMove, value: i32, alpha: i32, beta: i32, move_count: i32, sel_depth: i32, nodes: u64, child: ?*const s.PV) void {
+    pub fn record(
+        self: *RootMove,
+        value: i32,
+        alpha: i32,
+        beta: i32,
+        move_count: i32,
+        sel_depth: i32,
+        nodes: u64,
+        child: ?*const s.PV,
+    ) void {
         const prior_effort = @max(1, self.effort);
         self.effort += nodes;
         const weight = std.math.clamp(64 * nodes / (2 * nodes + 3 * prior_effort), 12, 24);
-        self.average_score = if (self.average_score == -t.value_infinite) value else weighted(value, self.average_score, weight);
+        self.average_score = if (self.average_score == -t.value_infinite)
+            value
+        else
+            weighted(value, self.average_score, weight);
         const squared = @as(i64, value) * @as(i64, @intCast(@abs(value)));
-        self.mean_squared_score = if (self.mean_squared_score == -t.value_infinite * t.value_infinite) @intCast(squared) else weighted(squared, self.mean_squared_score, @min(weight, 16));
+        self.mean_squared_score = if (self.mean_squared_score == -t.value_infinite * t.value_infinite)
+            @intCast(squared)
+        else
+            weighted(squared, self.mean_squared_score, @min(weight, 16));
         if (move_count == 1 or value > alpha) {
             self.score = value;
             self.uci_score = value;

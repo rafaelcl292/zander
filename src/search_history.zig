@@ -22,7 +22,9 @@ pub const State = struct {
         if (move.valid()) {
             const to = @backingInt(move.to());
             const pc = @backingInt(pos.pieceOn(move.to()));
-            continuation = 7885 * (@as(i32, self.frames[frame - 2].continuation_correction_history.?[pc][to].get()) + self.frames[frame - 4].continuation_correction_history.?[pc][to].get()) + 6307 * @as(i32, self.frames[frame - 6].continuation_correction_history.?[pc][to].get());
+            continuation = 7885 * (@as(i32, self.frames[frame - 2].continuation_correction_history.?[pc][to].get()) +
+                self.frames[frame - 4].continuation_correction_history.?[pc][to].get()) +
+                6307 * @as(i32, self.frames[frame - 6].continuation_correction_history.?[pc][to].get());
         }
         return 13806 * pawn + 9512 * minor + 11615 * (white + black) + continuation;
     }
@@ -35,7 +37,10 @@ pub const State = struct {
         if (move.valid()) {
             const to = @backingInt(move.to());
             const pc = @backingInt(pos.pieceOn(move.to()));
-            for ([_]usize{ 2, 4, 6 }, [_]i32{ 130, 70, 35 }) |back, weight| self.frames[frame - back].continuation_correction_history.?[pc][to].update(@divTrunc(bonus * weight, 128));
+            for ([_]usize{ 2, 4, 6 }, [_]i32{ 130, 70, 35 }) |back, weight| {
+                self.frames[frame - back].continuation_correction_history.?[pc][to]
+                    .update(@divTrunc(bonus * weight, 128));
+            }
         }
     }
     pub fn updateQuiet(self: State, pos: *const Position, frame: usize, move: t.Move, bonus: i32) void {
@@ -45,11 +50,24 @@ pub const State = struct {
         if (ply < h.low_ply_history_size) self.low_ply[@intCast(ply)][move.data].update(@divTrunc(bonus * 712, 1024));
         const pc = pos.pieceOn(move.from());
         s.updateContinuationHistories(self.frames, frame, pc, move.to(), @divTrunc(bonus * 750, 1024));
-        self.shared.pawnEntry(pos)[@backingInt(pc)][@backingInt(move.to())].update(@divTrunc(bonus * @as(i32, if (bonus > -4) 1104 else 459), 1024));
+        self.shared.pawnEntry(pos)[@backingInt(pc)][@backingInt(move.to())].update(
+            @divTrunc(bonus * @as(i32, if (bonus > -4) 1104 else 459), 1024),
+        );
     }
-    pub fn updateAll(self: State, pos: *const Position, frame: usize, best: t.Move, prev_sq: t.Square, quiets: []const t.Move, captures: []const t.Move, depth: i32, tt_move: t.Move) void {
+    pub fn updateAll(
+        self: State,
+        pos: *const Position,
+        frame: usize,
+        best: t.Move,
+        prev_sq: t.Square,
+        quiets: []const t.Move,
+        captures: []const t.Move,
+        depth: i32,
+        tt_move: t.Move,
+    ) void {
         const previous = &self.frames[frame - 1];
-        var bonus = @min(133 * depth - 81, 1487) + @as(i32, if (best.data == tt_move.data) 364 else 0) + @divTrunc(previous.stat_score, 28);
+        var bonus = @min(133 * depth - 81, 1487) + @as(i32, if (best.data == tt_move.data) 364 else 0) +
+            @divTrunc(previous.stat_score, 28);
         const malus = @min(968 * depth - 235, 2244);
         // Preserve the upstream unsigned 64-bit multiply and narrowing.
         const unsigned: u64 = @bitCast(@as(i64, bonus));
@@ -62,8 +80,24 @@ pub const State = struct {
                 actual_malus = @divTrunc(actual_malus * 921, 1024);
                 self.updateQuiet(pos, frame, move, -actual_malus);
             }
-        } else self.capture[@backingInt(pos.pieceOn(best.from()))][@backingInt(best.to())][@backingInt(pos.pieceOn(best.to()).pieceType())].update(@divTrunc(bonus * 1427, 1024));
-        if (prev_sq != .none and previous.move_count == 1 + @as(i32, @intFromBool(previous.tt_hit)) and pos.st.captured_piece == .none) s.updateContinuationHistories(self.frames, frame - 1, pos.pieceOn(prev_sq), prev_sq, @divTrunc(-malus * 713, 1024));
-        for (captures) |move| self.capture[@backingInt(pos.pieceOn(move.from()))][@backingInt(move.to())][@backingInt(pos.pieceOn(move.to()).pieceType())].update(@divTrunc(-malus * 1489, 1024));
+        } else {
+            const entries = &self.capture[@backingInt(pos.pieceOn(best.from()))][@backingInt(best.to())];
+            entries[@backingInt(pos.pieceOn(best.to()).pieceType())].update(@divTrunc(bonus * 1427, 1024));
+        }
+        if (prev_sq != .none and previous.move_count == 1 + @as(i32, @intFromBool(previous.tt_hit)) and
+            pos.st.captured_piece == .none)
+        {
+            s.updateContinuationHistories(
+                self.frames,
+                frame - 1,
+                pos.pieceOn(prev_sq),
+                prev_sq,
+                @divTrunc(-malus * 713, 1024),
+            );
+        }
+        for (captures) |move| {
+            const entries = &self.capture[@backingInt(pos.pieceOn(move.from()))][@backingInt(move.to())];
+            entries[@backingInt(pos.pieceOn(move.to()).pieceType())].update(@divTrunc(-malus * 1489, 1024));
+        }
     }
 };

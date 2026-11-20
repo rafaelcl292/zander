@@ -22,7 +22,9 @@ pub const Budget = struct {
         const scaled = @max(1, @divTrunc(limits.time[us], if (limits.npmsec != 0) limits.npmsec else 1));
         var mtg: i64 = if (limits.moves_to_go != 0) @min(limits.moves_to_go, 50) else 50;
         if (scaled < 1000 and limits.moves_to_go == 0) mtg = @trunc(@as(f64, @floatFromInt(scaled)) * 0.05);
-        const left = @as(f64, @floatFromInt(@max(1, limits.time[us] + limits.increment[us] * (mtg - 1) - overhead * (2 + mtg))));
+        const left = @as(f64, @floatFromInt(
+            @max(1, limits.time[us] + limits.increment[us] * (mtg - 1) - overhead * (2 + mtg)),
+        ));
         const time: f64 = @floatFromInt(limits.time[us]);
         const game_ply: f64 = @floatFromInt(ply);
         var opt_scale: f64 = undefined;
@@ -32,18 +34,28 @@ pub const Budget = struct {
             const log_time = @log10(@as(f64, @floatFromInt(scaled)) / 1000.0);
             const opt_constant = @min(0.0029869 + 0.00033554 * log_time, 0.004905);
             const max_constant = @max(3.3744 + 3.0608 * log_time, 3.1441);
-            opt_scale = @min(0.012112 + std.math.pow(f64, game_ply + 3.22713, 0.46866) * opt_constant, 0.19404 * time / left) * original_adjust.*;
+            opt_scale = @min(
+                0.012112 + std.math.pow(f64, game_ply + 3.22713, 0.46866) * opt_constant,
+                0.19404 * time / left,
+            ) * original_adjust.*;
             max_scale = @min(6.873, max_constant + game_ply / 12.352);
         } else {
             opt_scale = @min((0.88 + game_ply / 116.4) / @as(f64, @floatFromInt(mtg)), 0.88 * time / left);
             max_scale = 1.3 + 0.11 * @as(f64, @floatFromInt(mtg));
         }
         if (limits.npmsec == 0 and limits.moves_to_go != 1) {
-            const advantage = @as(f64, @floatFromInt(limits.time[us] - limits.time[us ^ 1])) / @as(f64, @floatFromInt(1 + limits.time[us] + limits.time[us ^ 1]));
+            const advantage = @as(f64, @floatFromInt(limits.time[us] - limits.time[us ^ 1])) /
+                @as(f64, @floatFromInt(1 + limits.time[us] + limits.time[us ^ 1]));
             opt_scale *= 1 + 0.9 * @min(advantage, 0);
         }
         var result: Budget = .{ .optimum = @trunc(@max(1, opt_scale * left)) };
-        result.maximum = @trunc(@max(@as(f64, @floatFromInt(result.optimum)), @min(0.8097 * time - @as(f64, @floatFromInt(overhead)), max_scale * @as(f64, @floatFromInt(result.optimum)))));
+        result.maximum = @trunc(@max(
+            @as(f64, @floatFromInt(result.optimum)),
+            @min(
+                0.8097 * time - @as(f64, @floatFromInt(overhead)),
+                max_scale * @as(f64, @floatFromInt(result.optimum)),
+            ),
+        ));
         if (ponder_option) result.optimum += @divTrunc(result.optimum, 4);
         return result;
     }
@@ -63,7 +75,11 @@ pub const NodeTime = struct {
         if (self.available == -1) {
             self.available = rate * limits.time[us];
             self.cyclic_budget = rate * (limits.time[us] - limits.increment[us]);
-        } else if (limits.moves_to_go > 0 and limits.moves_to_go > self.previous_moves_to_go and self.cyclic_budget > 0) self.available += self.cyclic_budget;
+        } else if (limits.moves_to_go > 0 and limits.moves_to_go > self.previous_moves_to_go and
+            self.cyclic_budget > 0)
+        {
+            self.available += self.cyclic_budget;
+        }
         self.previous_moves_to_go = limits.moves_to_go;
         limits.time[us] = self.available;
         limits.increment[us] *= rate;
@@ -78,7 +94,12 @@ pub const NodeTime = struct {
 test "node time retains game budget and replenishes cyclic controls" {
     var state: NodeTime = .{};
     var overhead: i64 = 10;
-    const first = state.prepare(.{ .time = .{ 1000, 1000 }, .increment = .{ 20, 20 }, .moves_to_go = 2 }, 0, 10, &overhead);
+    const first = state.prepare(
+        .{ .time = .{ 1000, 1000 }, .increment = .{ 20, 20 }, .moves_to_go = 2 },
+        0,
+        10,
+        &overhead,
+    );
     try std.testing.expectEqual(@as(i64, 10000), first.time[0]);
     try std.testing.expectEqual(@as(i64, 200), first.increment[0]);
     try std.testing.expectEqual(@as(i64, 100), overhead);

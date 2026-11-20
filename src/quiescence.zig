@@ -32,7 +32,10 @@ pub const Worker = struct {
     sel_depth: i32 = 0,
     optimism: [2]i32 = @splat(0),
     pub fn stopped(self: *const Worker) bool {
-        return if (self.control) |control| (control.stopped() or (self.helper and control.helpers_stop.load(.acquire))) else false;
+        return if (self.control) |control|
+            (control.stopped() or (self.helper and control.helpers_stop.load(.acquire)))
+        else
+            false;
     }
     /// Start a fresh diagnostic root. TT and history contents are retained;
     /// the owner decides when to clear them or advance the TT generation.
@@ -59,12 +62,21 @@ pub const Worker = struct {
     pub fn doMove(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, frame: ?usize) void {
         self.doMoveCapture(pos, move, state, pos.captureStage(move), frame);
     }
-    pub fn doMoveCapture(self: *Worker, pos: *p.Position, move: t.Move, state: *p.StateInfo, capture: bool, frame: ?usize) void {
+    pub fn doMoveCapture(
+        self: *Worker,
+        pos: *p.Position,
+        move: t.Move,
+        state: *p.StateInfo,
+        capture: bool,
+        frame: ?usize,
+    ) void {
         self.table.prefetch(pos.prefetchKey(move));
         if (frame) |index| {
             const piece = @backingInt(pos.pieceOn(move.from()));
             for ([_]usize{ 1, 3, 5 }) |offset| {
-                if (self.frames[index - offset].continuation_correction_history) |history| @import("prefetch.zig").read(&history[piece][@backingInt(move.to())]);
+                if (self.frames[index - offset].continuation_correction_history) |history| {
+                    @import("prefetch.zig").read(&history[piece][@backingInt(move.to())]);
+                }
             }
         }
         self.nodes += 1;
@@ -76,8 +88,10 @@ pub const Worker = struct {
         if (frame) |index| {
             const ss = &self.frames[index];
             ss.current_move = move;
-            ss.continuation_history = &self.shared.continuation[@intFromBool(ss.in_check)][@intFromBool(capture)][@backingInt(dirties.piece.pc)][@backingInt(move.to())];
-            ss.continuation_correction_history = &self.continuation_correction[@backingInt(dirties.piece.pc)][@backingInt(move.to())];
+            const by_kind = &self.shared.continuation[@intFromBool(ss.in_check)][@intFromBool(capture)];
+            ss.continuation_history = &by_kind[@backingInt(dirties.piece.pc)][@backingInt(move.to())];
+            ss.continuation_correction_history =
+                &self.continuation_correction[@backingInt(dirties.piece.pc)][@backingInt(move.to())];
         }
     }
     pub fn undoMove(self: *Worker, pos: *p.Position, move: t.Move) void {
@@ -98,7 +112,13 @@ pub const Worker = struct {
         return self.network.evaluateAdjusted(pos, self.accumulators, self.caches, self.optimism[@backingInt(pos.side)]);
     }
     pub fn histories(self: *Worker) @import("search_history.zig").State {
-        return .{ .main = self.main_history, .low_ply = self.low_ply_history, .capture = self.capture_history, .shared = self.shared, .frames = &self.frames };
+        return .{
+            .main = self.main_history,
+            .low_ply = self.low_ply_history,
+            .capture = self.capture_history,
+            .shared = self.shared,
+            .frames = &self.frames,
+        };
     }
     fn decisive(value: i32) bool {
         return value >= s.tb_win_in_max_ply or value <= -s.tb_win_in_max_ply;
@@ -106,10 +126,31 @@ pub const Worker = struct {
     fn hasBound(bound: tt.Bound, lower: bool) bool {
         return @backingInt(bound) & @backingInt(if (lower) tt.Bound.lower else tt.Bound.upper) != 0;
     }
-    pub fn save(self: *Worker, writer: tt.Writer, key: u64, value: i32, is_pv: bool, bound: tt.Bound, depth: i32, move: t.Move, eval: i32) void {
-        writer.save(key, .{ .move = move, .value = value, .eval = eval, .depth = depth, .bound = bound, .is_pv = is_pv }, self.table.generation);
+    pub fn save(
+        self: *Worker,
+        writer: tt.Writer,
+        key: u64,
+        value: i32,
+        is_pv: bool,
+        bound: tt.Bound,
+        depth: i32,
+        move: t.Move,
+        eval: i32,
+    ) void {
+        writer.save(
+            key,
+            .{ .move = move, .value = value, .eval = eval, .depth = depth, .bound = bound, .is_pv = is_pv },
+            self.table.generation,
+        );
     }
-    pub fn search(self: *Worker, comptime pv_node: bool, pos: *p.Position, frame: usize, initial_alpha: i32, beta: i32) i32 {
+    pub fn search(
+        self: *Worker,
+        comptime pv_node: bool,
+        pos: *p.Position,
+        frame: usize,
+        initial_alpha: i32,
+        beta: i32,
+    ) i32 {
         std.debug.assert(initial_alpha >= -t.value_infinite and initial_alpha < beta and beta <= t.value_infinite);
         std.debug.assert(pv_node or initial_alpha == beta - 1);
         if (self.stopped()) return 0;
@@ -128,14 +169,20 @@ pub const Worker = struct {
         ss.in_check = pos.st.checkers != 0;
         var move_count: i32 = 0;
         if (pv_node and self.sel_depth < ss.ply + 1) self.sel_depth = ss.ply + 1;
-        if (pos.isDraw(ss.ply) or ss.ply >= t.max_ply) return if (ss.ply >= t.max_ply and !ss.in_check) self.evaluate(pos) else 0;
+        if (pos.isDraw(ss.ply) or ss.ply >= t.max_ply) {
+            return if (ss.ply >= t.max_ply and !ss.in_check) self.evaluate(pos) else 0;
+        }
         const key = pos.key();
         const probe = self.table.probe(key);
         ss.tt_hit = probe.found;
         const tt_move: t.Move = if (probe.found) probe.data.move else .none;
         const tt_value = if (probe.found) s.valueFromTT(probe.data.value, ss.ply, pos.st.rule50) else t.value_none;
         const pv_hit = probe.found and probe.data.is_pv;
-        if (!pv_node and probe.data.depth >= 0 and tt_value != t.value_none and hasBound(probe.data.bound, tt_value >= beta)) return tt_value;
+        if (!pv_node and probe.data.depth >= 0 and tt_value != t.value_none and
+            hasBound(probe.data.bound, tt_value >= beta))
+        {
+            return tt_value;
+        }
         var unadjusted_eval: i32 = t.value_none;
         var best_value: i32 = -t.value_infinite;
         var futility_base: i32 = -t.value_infinite;
@@ -145,11 +192,17 @@ pub const Worker = struct {
             if (unadjusted_eval == t.value_none) unadjusted_eval = self.evaluate(pos);
             best_value = s.correctedStaticEval(unadjusted_eval, correction);
             ss.static_eval = best_value;
-            if (probe.found and tt_value != t.value_none and !decisive(tt_value) and hasBound(probe.data.bound, tt_value > best_value)) best_value = tt_value;
+            if (probe.found and tt_value != t.value_none and !decisive(tt_value) and
+                hasBound(probe.data.bound, tt_value > best_value))
+            {
+                best_value = tt_value;
+            }
             if (best_value >= beta) {
                 std.debug.assert(!decisive(best_value));
                 best_value = @divTrunc(441 * best_value + 583 * beta, 1024);
-                if (!probe.found) self.save(probe.writer, key, t.value_none, false, .lower, -2, .none, unadjusted_eval);
+                if (!probe.found) {
+                    self.save(probe.writer, key, t.value_none, false, .lower, -2, .none, unadjusted_eval);
+                }
                 return best_value;
             }
             if (best_value > alpha) alpha = best_value;
@@ -158,7 +211,13 @@ pub const Worker = struct {
         const continuation = [_]*const h.PieceToHistory{self.frames[frame - 1].continuation_history.?};
         const prev_move = self.frames[frame - 1].current_move;
         const prev_sq: t.Square = if (prev_move.valid()) prev_move.to() else .none;
-        var picker = mp.MovePicker.init(pos, tt_move, 0, .{ .main = self.main_history, .low_ply = self.low_ply_history, .capture = self.capture_history, .continuation = &continuation, .shared = self.shared }, @intCast(ss.ply));
+        var picker = mp.MovePicker.init(pos, tt_move, 0, .{
+            .main = self.main_history,
+            .low_ply = self.low_ply_history,
+            .capture = self.capture_history,
+            .continuation = &continuation,
+            .shared = self.shared,
+        }, @intCast(ss.ply));
         while (true) {
             const move = picker.next();
             if (move.data == 0) break;
@@ -166,9 +225,12 @@ pub const Worker = struct {
             const capture = pos.captureStage(move);
             move_count += 1;
             if (best_value > -s.tb_win_in_max_ply) {
-                if (!gives_check and move.to() != prev_sq and futility_base > -s.tb_win_in_max_ply and move.kind() != .promotion) {
+                if (!gives_check and move.to() != prev_sq and futility_base > -s.tb_win_in_max_ply and
+                    move.kind() != .promotion)
+                {
                     if (move_count > 2) continue;
-                    const futility_value = futility_base + p.piece_value[@backingInt(pos.pieceOn(move.to()).pieceType())];
+                    const futility_value = futility_base +
+                        p.piece_value[@backingInt(pos.pieceOn(move.to()).pieceType())];
                     if (futility_value <= alpha) {
                         best_value = @max(best_value, futility_value);
                         continue;
@@ -198,14 +260,25 @@ pub const Worker = struct {
         if (move_count == 0) {
             if (ss.in_check) return -t.value_mate + ss.ply;
             const pushes = bb.shift(pos.piecesOf(pos.side, .pawn), if (pos.side == .white) 8 else -8) & ~pos.pieces();
-            if (pushes == 0 and pos.st.non_pawn_material[@backingInt(pos.side)] == 0 and @backingInt(pos.st.captured_piece.pieceType()) >= @backingInt(t.PieceType.knight)) {
+            if (pushes == 0 and pos.st.non_pawn_material[@backingInt(pos.side)] == 0 and
+                @backingInt(pos.st.captured_piece.pieceType()) >= @backingInt(t.PieceType.knight))
+            {
                 var legal: mg.MoveList = undefined;
                 mg.generate(.legal, pos, &legal);
                 if (legal.len == 0) best_value = 0;
             }
         }
         if (!decisive(best_value) and best_value > beta) best_value = @divTrunc(462 * best_value + 562 * beta, 1024);
-        self.save(probe.writer, key, s.valueToTT(best_value, ss.ply), pv_hit, if (best_value >= beta) .lower else .upper, 0, best_move, unadjusted_eval);
+        self.save(
+            probe.writer,
+            key,
+            s.valueToTT(best_value, ss.ply),
+            pv_hit,
+            if (best_value >= beta) .lower else .upper,
+            0,
+            best_move,
+            unadjusted_eval,
+        );
         std.debug.assert(best_value > -t.value_infinite and best_value < t.value_infinite);
         return best_value;
     }

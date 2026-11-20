@@ -31,7 +31,9 @@ pub const Skill = struct {
         for (roots) |root| {
             const random: u32 = @truncate(rng.next());
             const noise: i32 = @intCast(random % @as(u32, @trunc(weakness)));
-            const push = @divTrunc(@as(i32, @trunc(weakness * @as(f64, @floatFromInt(top - root.score)) + @as(f64, @floatFromInt(delta * noise)))), 128);
+            const push = @divTrunc(@as(i32, @trunc(
+                weakness * @as(f64, @floatFromInt(top - root.score)) + @as(f64, @floatFromInt(delta * noise)),
+            )), 128);
             if (root.score + push >= maximum) {
                 maximum = root.score + push;
                 self.best = root.pv.moves[0];
