@@ -36,7 +36,7 @@ python3 scripts/bench.py \
   --baseline artifacts/baseline/bin/zander \
   --candidate artifacts/candidate/bin/zander \
   --reference artifacts/stockfish-optimized \
-  --network networks/nn-68752b755c93.nnue \
+  --network networks/nn-bddd9d57eb87.nnue \
   --cpu 2 --harness-cpu 0 \
   --output artifacts/experiment-001
 ```
@@ -107,7 +107,7 @@ Outputs:
 ```sh
 python3 scripts/profile_engine.py \
   --engine artifacts/candidate/bin/zander \
-  --network networks/nn-68752b755c93.nnue \
+  --network networks/nn-bddd9d57eb87.nnue \
   --position kiwipete --nodes 5000000 \
   --cpu 2 --harness-cpu 0 \
   --output artifacts/profile-001
@@ -142,7 +142,7 @@ the node budget until enough samples exist to interpret the symbol report.
 python3 scripts/experiment.py \
   --baseline main --candidate my-optimization \
   --reference artifacts/stockfish-optimized \
-  --network networks/nn-68752b755c93.nnue \
+  --network networks/nn-bddd9d57eb87.nnue \
   --cpu 2 --harness-cpu 0 \
   --output artifacts/revision-experiment-001
 ```
@@ -181,7 +181,7 @@ python3 scripts/microbench.py \
   --engine artifacts/candidate/bin/zander \
   --baseline artifacts/baseline/bin/zander-microbench \
   --candidate artifacts/candidate/bin/zander-microbench \
-  --network networks/nn-68752b755c93.nnue \
+  --network networks/nn-bddd9d57eb87.nnue \
   --cpu 2 --output artifacts/kernels-001
 ```
 

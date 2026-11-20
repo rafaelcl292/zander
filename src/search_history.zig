@@ -13,11 +13,10 @@ pub const State = struct {
     shared: *h.SharedHistories,
     frames: []s.Stack,
     pub fn correctionValue(self: State, pos: *const Position, frame: usize) i32 {
-        const side = @backingInt(pos.side);
-        const pawn: i32 = self.shared.pawnCorrectionEntry(pos)[side].pawn.get();
-        const minor: i32 = self.shared.minorCorrectionEntry(pos)[side].minor.get();
-        const white: i32 = self.shared.nonPawnCorrectionEntry(pos, .white)[side].non_pawn_white.get();
-        const black: i32 = self.shared.nonPawnCorrectionEntry(pos, .black)[side].non_pawn_black.get();
+        const pawn: i32 = self.shared.pawnCorrectionEntry(pos).pawn.get();
+        const minor: i32 = self.shared.minorCorrectionEntry(pos).minor.get();
+        const white: i32 = self.shared.nonPawnCorrectionEntry(pos, .white).non_pawn_white.get();
+        const black: i32 = self.shared.nonPawnCorrectionEntry(pos, .black).non_pawn_black.get();
         const move = self.frames[frame - 1].current_move;
         var continuation: i32 = 80695;
         if (move.valid()) {
@@ -28,11 +27,10 @@ pub const State = struct {
         return 13806 * pawn + 9512 * minor + 11615 * (white + black) + continuation;
     }
     pub fn updateCorrection(self: State, pos: *const Position, frame: usize, bonus: i32) void {
-        const side = @backingInt(pos.side);
-        self.shared.pawnCorrectionEntry(pos)[side].pawn.update(bonus);
-        self.shared.minorCorrectionEntry(pos)[side].minor.update(@divTrunc(bonus * 150, 128));
-        self.shared.nonPawnCorrectionEntry(pos, .white)[side].non_pawn_white.update(@divTrunc(bonus * 186, 128));
-        self.shared.nonPawnCorrectionEntry(pos, .black)[side].non_pawn_black.update(@divTrunc(bonus * 186, 128));
+        self.shared.pawnCorrectionEntry(pos).pawn.update(bonus);
+        self.shared.minorCorrectionEntry(pos).minor.update(@divTrunc(bonus * 150, 128));
+        self.shared.nonPawnCorrectionEntry(pos, .white).non_pawn_white.update(@divTrunc(bonus * 186, 128));
+        self.shared.nonPawnCorrectionEntry(pos, .black).non_pawn_black.update(@divTrunc(bonus * 186, 128));
         const move = self.frames[frame - 1].current_move;
         if (move.valid()) {
             const to = @backingInt(move.to());
@@ -49,16 +47,14 @@ pub const State = struct {
         s.updateContinuationHistories(self.frames, frame, pc, move.to(), @divTrunc(bonus * 750, 1024));
         self.shared.pawnEntry(pos)[@backingInt(pc)][@backingInt(move.to())].update(@divTrunc(bonus * @as(i32, if (bonus > -4) 1104 else 459), 1024));
     }
-    pub fn updateAll(self: State, pos: *const Position, frame: usize, best: t.Move, prev_sq: t.Square, quiets: []const t.Move, captures: []const t.Move, depth: i32, tt_move: t.Move, pv_node: bool) void {
+    pub fn updateAll(self: State, pos: *const Position, frame: usize, best: t.Move, prev_sq: t.Square, quiets: []const t.Move, captures: []const t.Move, depth: i32, tt_move: t.Move) void {
         const previous = &self.frames[frame - 1];
         var bonus = @min(133 * depth - 81, 1487) + @as(i32, if (best.data == tt_move.data) 364 else 0) + @divTrunc(previous.stat_score, 28);
         const malus = @min(968 * depth - 235, 2244);
-        if (!pv_node) {
-            // Preserve the upstream unsigned 64-bit multiply and narrowing.
-            const unsigned: u64 = @bitCast(@as(i64, bonus));
-            const extra: i32 = @bitCast(@as(u32, @truncate((unsigned *% (quiets.len + captures.len)) / 256)));
-            bonus +%= extra;
-        }
+        // Preserve the upstream unsigned 64-bit multiply and narrowing.
+        const unsigned: u64 = @bitCast(@as(i64, bonus));
+        const extra: i32 = @bitCast(@as(u32, @truncate((unsigned *% (quiets.len + captures.len)) / 256)));
+        bonus +%= extra;
         if (!pos.captureStage(best)) {
             self.updateQuiet(pos, frame, best, @divTrunc(bonus * 899, 1024));
             var actual_malus = @divTrunc(malus * 1159, 1024);

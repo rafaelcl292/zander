@@ -13,7 +13,7 @@ int sample(uint64_t seed, uint64_t index, int limit) {
 }
 int main(int argc, char** argv) {
     if (argc != 2) return 1;
-    Attacks::init(); Position::init();
+    Attacks::init();
     auto main = std::make_unique<ButterflyHistory>();
     auto low = std::make_unique<LowPlyHistory>();
     auto capture = std::make_unique<CapturePieceToHistory>();

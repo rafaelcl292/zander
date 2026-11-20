@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     std::ifstream weights(argv[1],std::ios::binary); std::string description;
     if (!source->read_parameters(weights,description)) return 2;
     source->initialized=true;
-    Attacks::init(); Position::init();
+    Attacks::init();
     NumaReplicationContext numa{NumaConfig{}};
     LazyNumaReplicatedSystemWide<Network> network(numa,std::move(source));
     OptionsMap options; ThreadPool threads; TranspositionTable tt;
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
             const int bonus=std::array{-1000,-4,-3,1000}[variant];
             update_correction_history(pos,ss,*worker,bonus);
             if(quiet) update_quiet_histories(pos,ss,*worker,quiet,bonus);
-            update_all_stats(pos,ss,*worker,best,variant%2?SQ_NONE:pos.square<KING>(pos.side_to_move()),quiets,captures,std::array{1,4,12,1}[variant],variant==2?best:Move::none(),variant%2==0);
+            update_all_stats(pos,ss,*worker,best,variant%2?SQ_NONE:pos.square<KING>(pos.side_to_move()),quiets,captures,std::array{1,4,12,1}[variant],variant==2?best:Move::none());
             std::printf(".{ .root=%zu,.variant=%d,.best=%u,.quiet=%u,.before=%d,.after=%d,.quiets=&.{",index,variant,unsigned(best.raw()),unsigned(quiet.raw()),before,correction_value(*worker,pos,ss));
             for(Move m:quiets) std::printf("%u,",unsigned(m.raw()));
             std::printf("},.captures=&.{");

@@ -82,7 +82,7 @@ test "attack tables match upstream for every relevant occupancy and square pair"
     }
 }
 
-test "Zobrist keys and every cuckoo slot match upstream Position init" {
+test "Zobrist keys and every repetition slot match upstream constants" {
     const reference = @import("position_reference");
     const keys = try std.testing.allocator.create(z.position_keys.PositionKeys);
     defer std.testing.allocator.destroy(keys);
@@ -96,15 +96,17 @@ test "Zobrist keys and every cuckoo slot match upstream Position init" {
     index += 8;
     try std.testing.expectEqualSlices(u64, reference.keys[index..][0..16], &keys.castling);
     index += 16;
-    try std.testing.expectEqual(reference.keys[index], keys.side);
-    try std.testing.expectEqual(reference.keys[index + 1], keys.no_pawns);
-    try std.testing.expectEqualSlices(u64, &reference.cuckoo_keys, &keys.cuckoo);
+    try std.testing.expectEqual(reference.keys[index], z.position_keys.PositionKeys.side);
+    try std.testing.expectEqual(index + 1, reference.keys.len);
+    try std.testing.expectEqualSlices(u64, &reference.repetition_keys, &keys.repetition_keys);
+    try std.testing.expectEqualSlices(u8, &reference.repetition_distances, &keys.repetition_distances);
     var occupied: usize = 0;
-    for (keys.cuckoo_move, reference.cuckoo_moves, 0..) |move, expected, i| {
+    for (keys.repetition_moves, reference.repetition_moves, keys.repetition_distances, 0..) |move, expected, distance, i| {
         try std.testing.expectEqual(expected, move.data);
-        if (move.data != 0) {
+        if (distance != 0) {
             occupied += 1;
-            try std.testing.expect(i == z.position_keys.PositionKeys.h1(keys.cuckoo[i]) or i == z.position_keys.PositionKeys.h2(keys.cuckoo[i]));
+            const home = z.position_keys.PositionKeys.repetitionHash(keys.repetition_keys[i]);
+            try std.testing.expectEqual(@as(usize, distance - 1), (i -% home) & z.position_keys.repetition_table_mask);
         }
     }
     try std.testing.expectEqual(@as(usize, 3668), occupied);
@@ -528,13 +530,13 @@ test "shared history storage partitions and key masks preserve capacities" {
     for (pawn) |*entry| h.fill(entry, 456);
     // A non-divisor worker count exercises integer partition boundaries.
     shared.clearRange(1, 3);
-    for (correction, 0..) |*entry, i| for (entry) |*bundle| {
+    for (correction, 0..) |*bundle, i| {
         const expected: i16 = if (i >= correction.len / 3 and i < correction.len * 2 / 3) -5 else 123;
         try std.testing.expectEqual(expected, bundle.pawn.get());
         try std.testing.expectEqual(expected, bundle.minor.get());
         try std.testing.expectEqual(expected, bundle.non_pawn_white.get());
         try std.testing.expectEqual(expected, bundle.non_pawn_black.get());
-    };
+    }
     for (pawn, 0..) |*entry, i| for (entry) |*piece| for (piece) |*value| {
         try std.testing.expectEqual(@as(i16, if (i >= pawn.len / 3 and i < pawn.len * 2 / 3) -1338 else 456), value.get());
     };
@@ -544,16 +546,19 @@ test "shared history storage partitions and key masks preserve capacities" {
     var state: z.position.StateInfo = undefined;
     var pos: z.position.Position = undefined;
     pos.st = &state;
-    for ([_]u64{ 0, 8191, 8192, 16383, 65535, 65536, 131071, std.math.maxInt(u64) }) |key| {
+    // The side to move occupies the least significant bit of the indexing keys.
+    for ([_]z.types.Color{ .white, .black }) |side| for ([_]u64{ 0, 8190, 8192, 16382, 65534, 65536, 262142, std.math.maxInt(u64) - 1 }) |key| {
+        pos.side = side;
+        const stm: u64 = @backingInt(side);
         state.pawn_key = key;
         state.minor_piece_key = key ^ 42;
-        state.non_pawn_key = .{ key ^ 65536, key ^ 12345 };
-        try std.testing.expect(shared.pawnEntry(&pos) == &pawn[key & 16383]);
-        try std.testing.expect(shared.pawnCorrectionEntry(&pos) == &correction[key & 131071]);
-        try std.testing.expect(shared.minorCorrectionEntry(&pos) == &correction[(key ^ 42) & 131071]);
-        try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .white) == &correction[(key ^ 65536) & 131071]);
-        try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .black) == &correction[(key ^ 12345) & 131071]);
-    }
+        state.non_pawn_key = .{ key ^ 65536, key ^ 12344 };
+        try std.testing.expect(shared.pawnEntry(&pos) == &pawn[((key ^ stm) >> 1) & 16383]);
+        try std.testing.expect(shared.pawnCorrectionEntry(&pos) == &correction[(key ^ stm) & 262143]);
+        try std.testing.expect(shared.minorCorrectionEntry(&pos) == &correction[(key ^ 42 ^ stm) & 262143]);
+        try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .white) == &correction[(key ^ 65536 ^ stm) & 262143]);
+        try std.testing.expect(shared.nonPawnCorrectionEntry(&pos, .black) == &correction[(key ^ 12344 ^ stm) & 262143]);
+    };
 }
 
 fn historySample(seed: u64, index: usize, limit: i32) i16 {

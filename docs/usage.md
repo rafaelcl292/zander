@@ -51,13 +51,13 @@ git submodule update --init
 python3 scripts/fetch_network.py
 ```
 
-The default path is `networks/nn-68752b755c93.nnue`, relative to the engine's
+The default path is `networks/nn-bddd9d57eb87.nnue`, relative to the engine's
 working directory. In a GUI, set the `EvalFile` option to an absolute path if
 necessary. This build uses the SFNNv20 format; older networks are incompatible.
 You can also supply a network when starting UCI mode:
 
 ```sh
-./zig-out/bin/zander uci /absolute/path/to/nn-68752b755c93.nnue
+./zig-out/bin/zander uci /absolute/path/to/nn-bddd9d57eb87.nnue
 ```
 
 If reference tests report missing Stockfish sources, run
@@ -119,8 +119,8 @@ The strength settings do not establish a measured Elo rating for this port.
 ./zig-out/bin/zander perft 4
 
 # Evaluate the initial position or search it with one worker.
-./zig-out/bin/zander eval networks/nn-68752b755c93.nnue
-./zig-out/bin/zander search networks/nn-68752b755c93.nnue 8 --multipv=3
+./zig-out/bin/zander eval networks/nn-bddd9d57eb87.nnue
+./zig-out/bin/zander search networks/nn-bddd9d57eb87.nnue 8 --multipv=3
 
 # Inspect data layout and memory requirements for four workers.
 ./zig-out/bin/zander layout

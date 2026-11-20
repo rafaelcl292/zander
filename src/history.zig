@@ -3,7 +3,7 @@ const std = @import("std");
 const t = @import("types.zig");
 const Position = @import("position.zig").Position;
 pub const pawn_history_base_size = 8192;
-pub const correction_history_base_size = 65536;
+pub const correction_history_base_size = 2 * 65536;
 pub const low_ply_history_size = 5;
 pub const correction_history_limit = 1024;
 
@@ -50,7 +50,8 @@ pub const CorrectionBundle = extern struct {
         self.non_pawn_black.set(value);
     }
 };
-pub const CorrectionEntry = [2]CorrectionBundle;
+/// The side to move is folded into the least significant key bit.
+pub const CorrectionEntry = CorrectionBundle;
 
 pub fn fill(table: anytype, value: i16) void {
     const Child = std.meta.Child(@TypeOf(table));
@@ -94,15 +95,15 @@ pub const SharedHistories = struct {
         hints.read(self.nonPawnCorrectionEntry(pos, .black));
     }
     pub fn pawnEntry(self: *const SharedHistories, pos: *const Position) *PawnEntry {
-        return &self.pawn[pos.st.pawn_key & (self.pawn.len - 1)];
+        return &self.pawn[(pos.pawnKey() >> 1) & (self.pawn.len - 1)];
     }
     pub fn pawnCorrectionEntry(self: *const SharedHistories, pos: *const Position) *CorrectionEntry {
-        return &self.correction[pos.st.pawn_key & (self.correction.len - 1)];
+        return &self.correction[pos.pawnKey() & (self.correction.len - 1)];
     }
     pub fn minorCorrectionEntry(self: *const SharedHistories, pos: *const Position) *CorrectionEntry {
-        return &self.correction[pos.st.minor_piece_key & (self.correction.len - 1)];
+        return &self.correction[pos.minorPieceKey() & (self.correction.len - 1)];
     }
     pub fn nonPawnCorrectionEntry(self: *const SharedHistories, pos: *const Position, color: t.Color) *CorrectionEntry {
-        return &self.correction[pos.st.non_pawn_key[@backingInt(color)] & (self.correction.len - 1)];
+        return &self.correction[pos.nonPawnKey(color) & (self.correction.len - 1)];
     }
 };

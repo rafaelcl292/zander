@@ -1,4 +1,4 @@
-// Generate fixtures directly from the pinned Position::init implementation.
+// Generate fixtures directly from the pinned Position implementation.
 // GPL-3.0-or-later. Test-only; never linked into the Zig engine.
 #include "../vendor/stockfish/src/attacks.cpp"
 #include "../vendor/stockfish/src/position.cpp"
@@ -168,7 +168,6 @@ void emit_snapshot(Position& pos, bool children, uint16_t incoming = 0, const Di
 int main(int argc, char** argv) {
     using namespace Stockfish;
     Attacks::init();
-    Position::init();
     using namespace Eval::NNUE::Features;
     uint64_t hashes[3] = {14695981039346656037ULL, 14695981039346656037ULL, 14695981039346656037ULL};
     const auto mix = [&](int i, uint32_t value) { hashes[i] = (hashes[i] ^ value) * 1099511628211ULL; };
@@ -193,11 +192,13 @@ int main(int argc, char** argv) {
         for (auto key : row) std::printf("%llu,\n", (unsigned long long)key);
     for (auto key : Zobrist::enpassant) std::printf("%llu,\n", (unsigned long long)key);
     for (auto key : Zobrist::castling) std::printf("%llu,\n", (unsigned long long)key);
-    std::printf("%llu,\n%llu,\n};\n", (unsigned long long)Zobrist::side, (unsigned long long)Zobrist::noPawns);
-    std::puts("pub const cuckoo_keys = [_]u64{");
-    for (auto key : cuckoo) std::printf("%llu,\n", (unsigned long long)key);
-    std::puts("};\npub const cuckoo_moves = [_]u16{");
-    for (auto move : cuckooMove) std::printf("%u,\n", unsigned(move.raw()));
+    std::printf("%llu,\n};\n", (unsigned long long)Zobrist::side);
+    std::puts("pub const repetition_keys = [_]u64{");
+    for (auto key : repetitionTable.keys) std::printf("%llu,\n", (unsigned long long)key);
+    std::puts("};\npub const repetition_moves = [_]u16{");
+    for (auto move : repetitionTable.moves) std::printf("%u,\n", unsigned(move.raw()));
+    std::puts("};\npub const repetition_distances = [_]u8{");
+    for (auto distance : repetitionTable.distances) std::printf("%u,\n", unsigned(distance));
     std::puts("};");
     std::puts("pub const FeatureSet = struct { half: []const u32, threats: []const u16, pawns: []const u16, half_removed: []const u32, half_added: []const u32, threats_removed: []const u16, threats_added: []const u16, pawns_removed: []const u16, pawns_added: []const u16, block_before: u8, refresh: bool }; ");
     std::puts("pub const Snapshot = struct { valid: bool, fen: []const u8, data: []const u64, threat_boards: []const u64 = &.{}, legal: []const u16 = &.{}, generated: []const u16 = &.{}, captures: []const u16 = &.{}, quiets: []const u16 = &.{}, queries: []const u32 = &.{}, prefetch_keys: []const u64 = &.{}, draw_flags: []const u8 = &.{}, normal_legal: []const u16 = &.{}, children: []const Snapshot = &.{}, walk: []const Snapshot = &.{}, null_state: []const Snapshot = &.{}, features: []const FeatureSet = &.{}, dirty_piece: []const u8 = &.{}, dirty_threats: []const u32 = &.{}, dirty_pawns: []const u64 = &.{}, move: u16 = 0, nodes: u64 = 0 };\npub const positions = [_]Snapshot{");

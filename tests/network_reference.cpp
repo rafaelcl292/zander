@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
     net->initialized = true;
     auto stack = std::make_unique<AccumulatorStack>();
     auto cache = std::make_unique<AccumulatorCaches>(*net);
-    Attacks::init(); Position::init();
+    Attacks::init();
     std::puts("pub const Event = struct { root: usize, move: u16 = 0, pop: bool = false, evaluate: bool = false, checksum: u64 = 0, positional: i32 = 0, trace: [192]i32 = @splat(0), adjusted: [3]i32 = .{0,0,0} };\npub const events = [_]Event{");
     std::ifstream inputs(argv[2]); std::string line; size_t root = 0;
     while (std::getline(inputs, line)) {

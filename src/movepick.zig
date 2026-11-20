@@ -72,6 +72,10 @@ pub const MovePicker = struct {
             lesser[5] = self.pos.threatsBy(.rook) | lesser[4];
         }
         std.debug.assert(self.cur + list.len <= self.moves.len);
+        // Hoist history rows out of the scoring loop, as upstream does.
+        const main_hist = if (kind != .captures) &self.histories.?.main[@backingInt(us)] else undefined;
+        const pawn_hist = if (kind == .quiets) self.histories.?.shared.pawnEntry(self.pos) else undefined;
+        const low_ply_hist = if (kind == .quiets and self.ply < h.low_ply_history_size) &self.histories.?.low_ply[self.ply] else null;
         for (list.slice(), self.cur..) |move, i| {
             const from = move.from();
             const to = move.to();
@@ -84,16 +88,16 @@ pub const MovePicker = struct {
                 value = self.capture[pc][dest][captured].get() + 7 * position.piece_value[captured];
             } else if (kind == .quiets) {
                 const histories = self.histories.?;
-                value = 2 * @as(i32, histories.main[@backingInt(us)][move.data].get());
-                value += 2 * @as(i32, histories.shared.pawnEntry(self.pos)[pc][dest].get());
-                for ([_]usize{ 0, 1, 2, 3, 5 }) |j| value += histories.continuation[j][pc][dest].get();
-                if (self.pos.st.check_squares[pt] & bb.square(to) != 0 and self.pos.seeGe(move, -75)) value += 16384;
+                value = 2 * @as(i32, main_hist[move.data].get());
+                value += 2 * @as(i32, pawn_hist[pc][dest].get());
+                inline for ([_]usize{ 0, 1, 2, 3, 5 }) |j| value += histories.continuation[j][pc][dest].get();
                 const threat_delta = @as(i32, @intFromBool(lesser[pt] & bb.square(from) != 0)) - @as(i32, @intFromBool(lesser[pt] & bb.square(to) != 0));
                 value += position.piece_value[pt] * 20 * threat_delta;
-                if (self.ply < h.low_ply_history_size) value += @divTrunc(8 * @as(i32, histories.low_ply[self.ply][move.data].get()), @as(i32, @intCast(1 + self.ply)));
+                if (low_ply_hist) |row| value += @divTrunc(8 * @as(i32, row[move.data].get()), @as(i32, @intCast(1 + self.ply)));
+                if (self.pos.st.check_squares[pt] & bb.square(to) != 0 and self.pos.seeGe(move, -75)) value += 16384;
             } else {
                 const histories = self.histories.?;
-                value = if (self.pos.captureStage(move)) position.piece_value[captured] + (1 << 28) else @as(i32, histories.main[@backingInt(us)][move.data].get()) + histories.continuation[0][pc][dest].get();
+                value = if (self.pos.captureStage(move)) position.piece_value[captured] + (1 << 28) else @as(i32, main_hist[move.data].get()) + histories.continuation[0][pc][dest].get();
             }
             self.moves[i] = .{ .move = move, .value = value };
         }

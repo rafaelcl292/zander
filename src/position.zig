@@ -31,7 +31,35 @@ pub const StateInfo = struct {
     check_squares: [8]u64 = @splat(0),
     captured_piece: Piece = .none,
     repetition: i32 = 0,
+    /// Board nibbles: squares 0..31 in low halves, squares 32..63 in high halves.
+    piece_placement: [32]u8 = @splat(0),
 };
+
+/// Packs the board like upstream pack_pieces for exact repetition verification.
+pub fn packPieces(board: *const [64]Piece) [32]u8 {
+    const V = @Vector(32, u8);
+    const bytes: *const [64]u8 = @ptrCast(board);
+    const low: V = bytes[0..32].*;
+    const high: V = bytes[32..64].*;
+    return low | (high << @splat(4));
+}
+
+fn placementEql(x: *const [32]u8, y: *const [32]u8) bool {
+    const V = @Vector(32, u8);
+    const lhs: V = x.*;
+    const rhs: V = y.*;
+    return @reduce(.And, lhs == rhs);
+}
+
+fn swapNibble(p: *[32]u8, s1: Square, s2: Square) void {
+    const idx1 = @backingInt(s1) & 31;
+    const sh1: u3 = @intCast((@backingInt(s1) & 0x20) >> 3);
+    const idx2 = @backingInt(s2) & 31;
+    const sh2: u3 = @intCast((@backingInt(s2) & 0x20) >> 3);
+    const swap = ((p[idx1] >> sh1) ^ (p[idx2] >> sh2)) & 0xF;
+    p[idx1] ^= swap << sh1;
+    p[idx2] ^= swap << sh2;
+}
 pub const FenError = error{ InvalidFen, UnsupportedPosition };
 
 /// Position and StateInfo storage is supplied by the caller. The tables and
@@ -64,7 +92,16 @@ pub const Position = struct {
         return bb.lsb(self.piecesOf(c, .king));
     }
     pub fn key(self: *const Position) u64 {
-        return if (self.st.rule50 < 14) self.st.key else self.st.key ^ t.makeKey(@intCast(@divTrunc(self.st.rule50 - 14, 8)));
+        return if (self.st.rule50 < 14) self.st.key else self.st.key ^ (t.makeKey(@intCast(@divTrunc(self.st.rule50 - 14, 8))) << 1);
+    }
+    pub fn pawnKey(self: *const Position) u64 {
+        return self.st.pawn_key ^ @backingInt(self.side);
+    }
+    pub fn minorPieceKey(self: *const Position) u64 {
+        return self.st.minor_piece_key ^ @backingInt(self.side);
+    }
+    pub fn nonPawnKey(self: *const Position, c: Color) u64 {
+        return self.st.non_pawn_key[@backingInt(c)] ^ @backingInt(self.side);
     }
     /// Speculative post-move key from Position::prefetch_key. Special moves
     /// intentionally approximate the destination; never use this for probing.
@@ -73,9 +110,9 @@ pub const Position = struct {
         const to = @backingInt(move.to());
         const piece = self.board[from];
         const captured = self.board[to];
-        const value = self.st.key ^ self.keys.side ^ self.keys.psq[@backingInt(captured)][to] ^ self.keys.psq[@backingInt(piece)][to] ^ self.keys.psq[@backingInt(piece)][from];
+        const value = self.st.key ^ pk.PositionKeys.side ^ self.keys.psq[@backingInt(captured)][to] ^ self.keys.psq[@backingInt(piece)][to] ^ self.keys.psq[@backingInt(piece)][from];
         if (captured != .none or piece.pieceType() == .pawn or self.st.rule50 < 13) return value;
-        return value ^ t.makeKey(@intCast(@divTrunc(self.st.rule50 - 13, 8)));
+        return value ^ (t.makeKey(@intCast(@divTrunc(self.st.rule50 - 13, 8))) << 1);
     }
     fn put(self: *Position, pc: Piece, s: Square) void {
         self.putWithThreats(pc, s, null);
@@ -170,11 +207,11 @@ pub const Position = struct {
         }
     }
     fn setState(self: *Position) void {
-        self.st.key = 0;
+        self.st.key = @backingInt(self.side);
         self.st.material_key = 0;
         self.st.minor_piece_key = 0;
         self.st.non_pawn_key = @splat(0);
-        self.st.pawn_key = self.keys.no_pawns;
+        self.st.pawn_key = 0;
         self.st.non_pawn_material = @splat(0);
         self.st.checkers = self.attackersTo(self.king(self.side), self.pieces()) & self.by_color[@backingInt(self.side.opposite())];
         self.setExtraBitboards();
@@ -193,12 +230,12 @@ pub const Position = struct {
             }
         }
         if (self.st.ep_square != .none) self.st.key ^= self.keys.enpassant[self.st.ep_square.file()];
-        if (self.side == .black) self.st.key ^= self.keys.side;
         self.st.key ^= self.keys.castling[self.st.castling_rights];
         for (pk.pieces) |pc| {
             const p = @backingInt(pc);
             for (0..@intCast(self.piece_count[p])) |n| self.st.material_key ^= self.keys.psq[p][8 + n];
         }
+        self.st.piece_placement = packPieces(&self.board);
     }
     /// On failure, discard the partially initialized position and state.
     pub fn set(self: *Position, fen: []const u8, chess960: bool, state: *StateInfo, tables: *const a.Tables, keys: *const pk.PositionKeys) FenError!void {
@@ -408,20 +445,33 @@ pub const Position = struct {
         if (end < 3) return false;
         const original = self.st.key;
         var state = self.st.previous.?;
-        var other = original ^ state.key ^ self.keys.side;
+        var other = original ^ state.key ^ pk.PositionKeys.side;
         var distance: i32 = 3;
         while (distance <= end) : (distance += 2) {
             state = state.previous.?;
-            other ^= state.key ^ state.previous.?.key ^ self.keys.side;
+            other ^= state.key ^ state.previous.?.key ^ pk.PositionKeys.side;
             state = state.previous.?;
             if (other != 0) continue;
             const move_key = original ^ state.key;
-            var index = pk.PositionKeys.h1(move_key);
-            if (self.keys.cuckoo[index] != move_key) index = pk.PositionKeys.h2(move_key);
-            if (self.keys.cuckoo[index] != move_key) continue;
-            const move = self.keys.cuckoo_move[index];
-            if ((self.tables.between[@backingInt(move.from())][@backingInt(move.to())] ^ bb.square(move.to())) & self.pieces() == 0) {
-                if (ply > distance or state.repetition != 0) return true;
+            var index = pk.PositionKeys.repetitionHash(move_key);
+            var probe: u32 = 1;
+            while (self.keys.repetition_distances[index] >= probe) {
+                if (self.keys.repetition_keys[index] == move_key) {
+                    const move = self.keys.repetition_moves[index];
+                    const s1 = move.from();
+                    const s2 = move.to();
+                    // The path must be clear of pieces for the move to be legal.
+                    if ((self.tables.between[@backingInt(s1)][@backingInt(s2)] ^ bb.square(s2)) & self.pieces() == 0) {
+                        var placement = self.st.piece_placement;
+                        swapNibble(&placement, s1, s2);
+                        if (placementEql(&placement, &state.piece_placement)) {
+                            if (ply > distance or state.repetition != 0) return true;
+                        }
+                    }
+                    break;
+                }
+                probe += 1;
+                index = (index + 1) & pk.repetition_table_mask;
             }
         }
         return false;
@@ -557,10 +607,11 @@ pub const Position = struct {
             .pinners = undefined,
             .check_squares = .{ 0, undefined, undefined, undefined, undefined, undefined, undefined, 0 },
             .captured_piece = undefined,
+            .piece_placement = undefined,
         };
         self.st = next;
         self.game_ply += 1;
-        var k = old.key ^ self.keys.side;
+        var k = old.key ^ pk.PositionKeys.side;
         const us = self.side;
         const them = us.opposite();
         const ui = @backingInt(us);
@@ -671,13 +722,15 @@ pub const Position = struct {
         next.checkers = if (gives_check) self.attackersTo(self.king(them), self.pieces()) & self.by_color[ui] else 0;
         self.side = them;
         self.setExtraBitboards();
+        next.piece_placement = packPieces(&self.board);
         const end = @min(next.rule50, next.plies_from_null);
         if (end >= 4) {
             var prev = old.previous.?;
             var distance: i32 = 4;
             while (distance <= end) : (distance += 2) {
                 prev = prev.previous.?.previous.?;
-                if (prev.key == next.key) {
+                // The placement, in addition to the key, verifies the repetition exactly.
+                if (prev.key == next.key and placementEql(&prev.piece_placement, &next.piece_placement)) {
                     next.repetition = if (prev.repetition != 0) -distance else distance;
                     break;
                 }
@@ -721,7 +774,7 @@ pub const Position = struct {
             next.key ^= self.keys.enpassant[next.ep_square.file()];
             next.ep_square = .none;
         }
-        next.key ^= self.keys.side;
+        next.key ^= pk.PositionKeys.side;
         next.plies_from_null = 0;
         next.captured_piece = .none;
         self.side = self.side.opposite();

@@ -102,7 +102,7 @@ test "single-worker search, histories and node state match pinned Stockfish" {
         var captures: [8]z.types.Move = undefined;
         for (case.quiets, 0..) |move, j| quiets[j] = .{ .data = move };
         for (case.captures, 0..) |move, j| captures[j] = .{ .data = move };
-        history.updateAll(&pos, 7, .{ .data = case.best }, if (variant % 2 != 0) .none else pos.king(pos.side), quiets[0..case.quiets.len], captures[0..case.captures.len], ([_]i32{ 1, 4, 12, 1 })[variant], .{ .data = if (variant == 2) case.best else 0 }, variant % 2 == 0);
+        history.updateAll(&pos, 7, .{ .data = case.best }, if (variant % 2 != 0) .none else pos.king(pos.side), quiets[0..case.quiets.len], captures[0..case.captures.len], ([_]i32{ 1, 4, 12, 1 })[variant], .{ .data = if (variant == 2) case.best else 0 });
         try std.testing.expectEqual(case.after, history.correctionValue(&pos, 7));
         const chunks = [_][]const u8{ std.mem.asBytes(main), std.mem.asBytes(low), std.mem.asBytes(capture), std.mem.asBytes(continuation), std.mem.asBytes(continuation_correction), std.mem.sliceAsBytes(correction), std.mem.asBytes(shared.pawnEntry(&pos)) };
         for (chunks, case.hashes, 0..) |chunk, expected, part| {

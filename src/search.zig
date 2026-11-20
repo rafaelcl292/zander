@@ -140,7 +140,7 @@ pub const Worker = struct {
         var total_changes: f64 = 0;
         var iter_values: [4]i32 = @splat(if (self.previous_score == t.value_infinite) 0 else self.previous_score);
         var iter_index: usize = 0;
-        var iteration_value: i32 = -t.value_infinite;
+        var total_effort: u64 = 0;
         const us = @backingInt(pos.side);
         while (self.root_depth < limits.depth and !self.base.stopped()) {
             self.root_depth += 1;
@@ -176,7 +176,6 @@ pub const Worker = struct {
                 while (true) {
                     const adjusted_depth = @max(1, self.root_depth - failed_high_count - fail_high_recovery - div(3 * (search_again + 1), 4));
                     const best = self.searchRoot(pos, alpha, beta, adjusted_depth);
-                    iteration_value = best;
                     std.mem.sort(RootMove, self.root_moves[self.pv_idx..self.pv_last], {}, RootMove.lessThan);
                     if (self.base.stopped()) break;
                     if (best <= alpha) {
@@ -196,6 +195,7 @@ pub const Worker = struct {
                 if (failed_high_count > 0 and self.pv_idx == 0) fail_high_recovery = div(failed_high_count + 1, 2) + 2;
                 if (self.base.stopped() and self.pv_idx != 0) self.repairAbortedMultiPV(multi_pv);
                 std.mem.sort(RootMove, self.root_moves[pv_first .. self.pv_idx + 1], {}, RootMove.lessThan);
+                if (self.thread_index == 0 and self.pv_idx == 0) total_effort = self.base.nodes;
                 if (self.base.stopped()) break;
             }
             const best = &self.root_moves[0];
@@ -231,8 +231,8 @@ pub const Worker = struct {
                 const best_score = self.root_moves[0].score;
                 if (control.limits.mate != 0 and !control.stopped() and @abs(best_score) >= s.mate_in_max_ply and t.value_mate - @as(i32, @intCast(@abs(best_score))) <= 2 * control.limits.mate) control.requestStop();
                 if (control.limits.managed() and !control.stopped() and !control.stop_on_ponderhit) {
-                    const effort = self.root_moves[0].effort * 100000 / @max(1, self.base.nodes);
-                    const falling = std.math.clamp((11.48 + 2.30 * @as(f64, @floatFromInt(self.previous_average - iteration_value)) + 1.1 * @as(f64, @floatFromInt(iter_values[iter_index] - iteration_value))) / 100.0, 0.576, 1.728);
+                    const effort = self.root_moves[0].effort * 100000 / @max(1, total_effort);
+                    const falling = std.math.clamp((11.48 + 2.30 * @as(f64, @floatFromInt(self.previous_average - self.root_moves[0].score)) + 1.1 * @as(f64, @floatFromInt(iter_values[iter_index] - self.root_moves[0].score))) / 100.0, 0.576, 1.728);
                     time_reduction = std.math.clamp(interpolate(@floatFromInt(self.root_depth - last_best_depth), 4.96, 18.79, 0.639, 1.712), 0.629, 1.544);
                     const reduction = (1.468 + self.previous_time_reduction) / (2.284 * time_reduction);
                     total_changes /= 2;
@@ -249,15 +249,19 @@ pub const Worker = struct {
                     } else control.increase_depth.store(control.ponder.load(.acquire) or elapsed <= total_time * 0.50, .monotonic);
                 }
             }
-            iter_values[iter_index] = iteration_value;
+            iter_values[iter_index] = self.root_moves[0].score;
             iter_index = (iter_index + 1) & 3;
         }
         if (self.thread_index == 0 and skill.enabled()) {
             const chosen = if (skill.best.data != 0) skill.best else skill.pick(self.root_moves[0..multi_pv], &self.skill_rng);
-            for (self.root_moves) |*root| if (root.pv.moves[0].data == chosen.data) {
-                std.mem.swap(RootMove, &self.root_moves[0], root);
-                break;
-            };
+            if (chosen.data != self.root_moves[0].pv.moves[0].data) {
+                const best_score = self.root_moves[0].score;
+                for (self.root_moves) |*root| if (root.pv.moves[0].data == chosen.data) {
+                    std.mem.swap(RootMove, &self.root_moves[0], root);
+                    break;
+                };
+                if (loss(self.root_moves[0].score) and self.root_moves[0].score < best_score) self.root_moves[0].inexact_lower = true;
+            }
         }
         self.previous_time_reduction = time_reduction;
         self.previous_score = self.root_moves[0].score;
@@ -545,7 +549,7 @@ pub const Worker = struct {
                     lmr_depth += div(history, s.lmrDivisor(depth));
                     const futility = ss.static_eval + 119 * lmr_depth + 90 * b(ss.static_eval > alpha) + 164;
                     if (!ss.in_check and lmr_depth < 12 and futility <= alpha) {
-                        if (best_value <= futility and !decisive(best_value) and !win(futility)) best_value = futility;
+                        if (best_value <= futility and !win(futility)) best_value = futility;
                         continue;
                     }
                     lmr_depth = @max(lmr_depth, 0);
@@ -640,7 +644,7 @@ pub const Worker = struct {
         }
         if (best_value >= beta and !decisive(best_value) and !decisive(alpha)) best_value = div(best_value * depth + beta, depth + 1);
         if (move_count == 0) best_value = if (excluded.data != 0) alpha else if (ss.in_check) -t.value_mate + ss.ply else 0 else if (best_move.data != 0) {
-            histories.updateAll(pos, frame, best_move, prev_sq, quiets.slice(), captures.slice(), depth, data.move, pv_node);
+            histories.updateAll(pos, frame, best_move, prev_sq, quiets.slice(), captures.slice(), depth, data.move);
             if (!pv_node) self.tt_move_history.update(if (best_move.data == data.move.data) 918 else -747);
         } else if (!prior_capture and prev_sq != .none) {
             var scale: i32 = -241 - div(prev.stat_score, 98) + @min(59 * depth, 420) + 186 * b(prev.move_count > 9) + 142 * b(!ss.in_check and best_value <= ss.static_eval - 106) + 159 * b(!prev.in_check and best_value <= -prev.static_eval - 68);

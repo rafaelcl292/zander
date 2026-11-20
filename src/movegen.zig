@@ -179,7 +179,9 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
             }
         }
     }
-    splat(list, k, a.pseudo[6][@backingInt(k)] & ~pos.threatsBy(.none) & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target));
+    // Defer the lazy threat computation until the king has candidate squares.
+    const king_targets = a.pseudo[6][@backingInt(k)] & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target);
+    if (king_targets != 0) splat(list, k, king_targets & ~pos.threatsBy(.none));
     if (kind == .quiets) {
         const shift: u3 = @intCast(@backingInt(us) * 2);
         for ([_]u8{ @as(u8, 1) << shift, @as(u8, 2) << shift }) |cr| {

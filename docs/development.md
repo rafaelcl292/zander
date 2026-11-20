@@ -47,7 +47,7 @@ paths, engine resource handling, and UCI through actual process pipes:
 ```sh
 python3 scripts/fetch_network.py
 zig build network-test search-test engine-test uci-test \
-  -Dnetwork=networks/nn-68752b755c93.nnue -Doptimize=ReleaseFast
+  -Dnetwork=networks/nn-bddd9d57eb87.nnue -Doptimize=ReleaseFast
 ```
 
 `network-test` and `search-test` require the C++ reference.
@@ -122,7 +122,7 @@ python3 scripts/build_reference.py
 zig build -Doptimize=ReleaseFast -Dnnue-backend=scalar
 python3 scripts/compare_engines.py \
   zig-out/bin/zander artifacts/stockfish-reference \
-  --network networks/nn-68752b755c93.nnue \
+  --network networks/nn-bddd9d57eb87.nnue \
   --depth 6 --repeats 3 --threads 1 --require-identical \
   --output artifacts/comparison.json
 ```

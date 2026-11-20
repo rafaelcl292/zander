@@ -13,7 +13,7 @@
 using namespace Stockfish;
 int main(int argc, char** argv) {
     if(argc != 3) return 1;
-    Attacks::init(); Position::init();
+    Attacks::init();
     std::ostringstream discarded;
     auto previous = std::cout.rdbuf(discarded.rdbuf());
     Tablebases::init(argv[1]);

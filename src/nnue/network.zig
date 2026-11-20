@@ -6,8 +6,8 @@ const Architecture = @import("layers.zig").Architecture;
 const accumulator = @import("accumulator.zig");
 const Position = @import("../position.zig").Position;
 const t = @import("../types.zig");
-pub const default_name = "nn-68752b755c93.nnue";
-pub const default_sha256 = "68752b755c93e419e714829c4aac1bbd66e9509a96cf175be28a00164b6d7f21";
+pub const default_name = "nn-bddd9d57eb87.nnue";
+pub const default_sha256 = "bddd9d57eb87bf09a6c4e1a3b3f1cc18855c83ee45fdbe18018ac3763b56b38e";
 pub const Network = struct {
     transformer: FeatureTransformer,
     layers: [192]Architecture,

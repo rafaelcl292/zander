@@ -1,4 +1,4 @@
-// Derived from Stockfish Position::init in position.cpp; GPL-3.0-or-later.
+// Derived from Stockfish Zobrist keys and repetition table in position.cpp; GPL-3.0-or-later.
 const std = @import("std");
 const t = @import("types.zig");
 const attacks = @import("attacks.zig");
@@ -10,37 +10,40 @@ pub const pieces = [_]t.Piece{
     .black_pawn, .black_knight, .black_bishop, .black_rook, .black_queen, .black_king,
 };
 
+pub const repetition_table_size = 8192;
+pub const repetition_table_mask = repetition_table_size - 1;
+
 /// Startup-only initialization; publish as immutable data to search workers.
 pub const PositionKeys = struct {
     psq: [16][64]u64,
     enpassant: [8]u64,
     castling: [16]u64,
-    side: u64,
-    no_pawns: u64,
-    cuckoo: [8192]u64,
-    cuckoo_move: [8192]t.Move,
+    /// Robin Hood table of reversible-move keys for upcoming-repetition detection.
+    repetition_keys: [repetition_table_size]u64,
+    repetition_moves: [repetition_table_size]t.Move,
+    /// Zero marks an empty slot; occupied probe distances are one-based.
+    repetition_distances: [repetition_table_size]u8,
 
-    pub fn h1(key: u64) usize {
-        return @intCast(key & 0x1fff);
-    }
-    pub fn h2(key: u64) usize {
-        return @intCast((key >> 16) & 0x1fff);
+    /// The least significant bit of every key stores the side to move.
+    pub const side: u64 = 1;
+
+    pub fn repetitionHash(key: u64) usize {
+        return @intCast(key & repetition_table_mask);
     }
 
     pub fn init(self: *PositionKeys) void {
         var rng = Prng.init(1070372);
         self.psq = @splat(@splat(0));
         for (pieces) |pc| {
-            for (&self.psq[@backingInt(pc)]) |*key| key.* = rng.next();
+            for (&self.psq[@backingInt(pc)]) |*key| key.* = rng.next() << 1;
         }
         @memset(self.psq[@backingInt(t.Piece.white_pawn)][56..64], 0);
         @memset(self.psq[@backingInt(t.Piece.black_pawn)][0..8], 0);
-        for (&self.enpassant) |*key| key.* = rng.next();
-        for (&self.castling) |*key| key.* = rng.next();
-        self.side = rng.next();
-        self.no_pawns = rng.next();
-        self.cuckoo = @splat(0);
-        self.cuckoo_move = @splat(t.Move.none);
+        for (&self.enpassant) |*key| key.* = rng.next() << 1;
+        for (&self.castling) |*key| key.* = rng.next() << 1;
+        self.repetition_keys = @splat(0);
+        self.repetition_moves = @splat(t.Move.none);
+        self.repetition_distances = @splat(0);
         var count: usize = 0;
         for (pieces) |pc| {
             const pt = pc.pieceType();
@@ -49,13 +52,27 @@ pub const PositionKeys = struct {
                 for (a + 1..64) |b| {
                     if (attacks.pseudo[@backingInt(pt)][a] & bb.square(@fromBackingInt(@intCast(b))) == 0) continue;
                     var move = t.Move.make(.normal, @fromBackingInt(@intCast(a)), @fromBackingInt(@intCast(b)), .knight);
-                    var key = self.psq[@backingInt(pc)][a] ^ self.psq[@backingInt(pc)][b] ^ self.side;
-                    var index = h1(key);
+                    var key = self.psq[@backingInt(pc)][a] ^ self.psq[@backingInt(pc)][b] ^ side;
+                    var index = repetitionHash(key);
+                    var distance: u32 = 1;
                     while (true) {
-                        std.mem.swap(u64, &self.cuckoo[index], &key);
-                        std.mem.swap(t.Move, &self.cuckoo_move[index], &move);
-                        if (move.data == t.Move.none.data) break;
-                        index = if (index == h1(key)) h2(key) else h1(key);
+                        // Upstream rejects tables whose displacement exceeds one byte at compile time.
+                        std.debug.assert(distance <= 255);
+                        if (self.repetition_distances[index] == 0) {
+                            self.repetition_keys[index] = key;
+                            self.repetition_moves[index] = move;
+                            self.repetition_distances[index] = @intCast(distance);
+                            break;
+                        }
+                        if (self.repetition_distances[index] < distance) {
+                            std.mem.swap(u64, &self.repetition_keys[index], &key);
+                            std.mem.swap(t.Move, &self.repetition_moves[index], &move);
+                            const displaced = self.repetition_distances[index];
+                            self.repetition_distances[index] = @intCast(distance);
+                            distance = displaced;
+                        }
+                        distance += 1;
+                        index = (index + 1) & repetition_table_mask;
                     }
                     count += 1;
                 }
