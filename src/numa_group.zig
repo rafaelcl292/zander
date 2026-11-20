@@ -6,7 +6,7 @@ const Network = @import("nnue/network.zig").Network;
 
 /// Per-node histories and an immutable network replica, created before search.
 pub const Group = struct {
-    arena: std.heap.ArenaAllocator,
+    storage: h.SharedStorage,
     mask: ?numa.Mask,
     shared: h.SharedHistories,
     replica: ?memory.Region = null,
@@ -16,16 +16,12 @@ pub const Group = struct {
         defer guard.restore();
         const self = try allocator.create(Group);
         errdefer allocator.destroy(self);
-        // Independent OS allocations preserve first-touch placement rather than
+        // An independent OS mapping preserves first-touch placement rather than
         // recycling pages from a general allocator's previous NUMA node.
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        errdefer arena.deinit();
-        const a = arena.allocator();
         const capacity = try std.math.ceilPowerOfTwo(usize, count);
-        self.* = .{ .arena = arena, .mask = mask, .network = network, .shared = undefined };
-        self.shared = try h.SharedHistories.init(capacity, try a.alloc(h.CorrectionEntry, capacity * h.correction_history_base_size), try a.create(h.ContinuationHistoryBlock), try a.alloc(h.PawnEntry, capacity * h.pawn_history_base_size));
-        // ArenaAllocator is a value type; retain the updated allocation state.
-        self.arena = arena;
+        var storage = try h.SharedStorage.create(allocator, capacity);
+        errdefer storage.deinit();
+        self.* = .{ .storage = storage, .mask = mask, .network = network, .shared = storage.histories };
         self.shared.clearRange(0, 1);
         if (network) |net| self.replica = try self.copyNetwork(allocator, net);
         if (self.replica) |region| self.network = @ptrCast(region.bytes.ptr);
@@ -46,7 +42,7 @@ pub const Group = struct {
     }
     pub fn destroy(self: *Group, allocator: std.mem.Allocator) void {
         if (self.replica) |*region| region.deinit();
-        self.arena.deinit();
+        self.storage.deinit();
         allocator.destroy(self);
     }
 };

@@ -22,7 +22,8 @@ pub fn maxThreads() usize {
 pub const Engine = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
-    shared_arena: std.heap.ArenaAllocator,
+    /// Histories used before the first thread resize; groups own them afterwards.
+    shared_storage: ?h.SharedStorage,
     helpers: []*Helper,
     main_storage: *Helper,
     topology: numa.Topology,
@@ -67,8 +68,8 @@ pub const Engine = struct {
         self.io = io;
         self.arena = std.heap.ArenaAllocator.init(allocator);
         errdefer self.arena.deinit();
-        self.shared_arena = std.heap.ArenaAllocator.init(allocator);
-        errdefer self.shared_arena.deinit();
+        self.shared_storage = try h.SharedStorage.create(allocator, 1);
+        errdefer self.shared_storage.?.deinit();
         self.topology = numa.Topology.discover(io);
         self.startup_topology = self.topology;
         self.numa_policy = .auto;
@@ -80,15 +81,11 @@ pub const Engine = struct {
         self.helpers = try allocator.alloc(*Helper, 0);
         errdefer allocator.free(self.helpers);
         const a = self.arena.allocator();
-        const shared_allocator = self.shared_arena.allocator();
         self.tables = try a.create(@import("attacks.zig").Tables);
         self.tables.init();
         self.keys = try a.create(@import("position_keys.zig").PositionKeys);
         self.keys.init();
-        const correction = try shared_allocator.alloc(h.CorrectionEntry, h.correction_history_base_size);
-        const pawn = try shared_allocator.alloc(h.PawnEntry, h.pawn_history_base_size);
-        const continuation = try shared_allocator.create(h.ContinuationHistoryBlock);
-        self.shared = try h.SharedHistories.init(1, correction, continuation, pawn);
+        self.shared = self.shared_storage.?.histories;
         self.page_policy = .auto;
         self.hash_region = try memory.Region.allocate(allocator, hash_mb * 1024 * 1024, self.page_policy);
         errdefer self.hash_region.deinit();
@@ -127,7 +124,7 @@ pub const Engine = struct {
         self.main_storage.destroy(allocator);
         for (self.groups) |group| group.destroy(allocator);
         allocator.free(self.groups);
-        self.shared_arena.deinit();
+        if (self.shared_storage) |*storage| storage.deinit();
         if (self.tablebases) |database| database.destroy();
         if (self.network_region) |*region| region.deinit();
         if (self.network_path) |path| allocator.free(path);
@@ -214,8 +211,8 @@ pub const Engine = struct {
         self.allocator.free(self.helpers);
         for (self.groups) |group| group.destroy(self.allocator);
         self.allocator.free(self.groups);
-        self.shared_arena.deinit();
-        self.shared_arena = .init(self.allocator);
+        if (self.shared_storage) |*storage| storage.deinit();
+        self.shared_storage = null;
         self.groups = groups;
         self.allocator.free(self.worker_nodes);
         self.worker_nodes = assignment;

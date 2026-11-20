@@ -53,6 +53,33 @@ pub const CorrectionBundle = extern struct {
 /// The side to move is folded into the least significant key bit.
 pub const CorrectionEntry = CorrectionBundle;
 
+/// Owns one transparent-huge-page region holding a SharedHistories set, as
+/// upstream allocates its shared histories with make_unique_large_page.
+pub const SharedStorage = struct {
+    region: @import("memory.zig").Region,
+    histories: SharedHistories,
+    pub fn create(allocator: std.mem.Allocator, capacity: usize) !SharedStorage {
+        if (capacity == 0 or !std.math.isPowerOfTwo(capacity)) return error.InvalidThreadCount;
+        const correction_count = try std.math.mul(usize, correction_history_base_size, capacity);
+        const pawn_count = try std.math.mul(usize, pawn_history_base_size, capacity);
+        const correction_bytes = try std.math.mul(usize, correction_count, @sizeOf(CorrectionEntry));
+        const continuation_offset = std.mem.alignForward(usize, correction_bytes, 64);
+        const pawn_offset = std.mem.alignForward(usize, continuation_offset + @sizeOf(ContinuationHistoryBlock), 64);
+        const total = try std.math.add(usize, pawn_offset, try std.math.mul(usize, pawn_count, @sizeOf(PawnEntry)));
+        var region = try @import("memory.zig").Region.allocate(allocator, total, .transparent);
+        errdefer region.deinit();
+        const bytes = region.bytes;
+        const correction: []CorrectionEntry = @alignCast(std.mem.bytesAsSlice(CorrectionEntry, bytes[0..correction_bytes]));
+        const continuation: *ContinuationHistoryBlock = @ptrCast(@alignCast(bytes[continuation_offset..].ptr));
+        const pawn: []PawnEntry = @alignCast(std.mem.bytesAsSlice(PawnEntry, bytes[pawn_offset..total]));
+        return .{ .region = region, .histories = try SharedHistories.init(capacity, correction, continuation, pawn) };
+    }
+    pub fn deinit(self: *SharedStorage) void {
+        self.region.deinit();
+        self.* = undefined;
+    }
+};
+
 pub fn fill(table: anytype, value: i16) void {
     const Child = std.meta.Child(@TypeOf(table));
     switch (@typeInfo(Child)) {

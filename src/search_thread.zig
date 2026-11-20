@@ -10,6 +10,7 @@ const QWorker = @import("quiescence.zig").Worker;
 /// publishes jobs under the mutex and joins a job before inspecting its result.
 pub const Helper = struct {
     storage: *Storage,
+    storage_region: @import("memory.zig").Region,
     io: std.Io,
     affinity: ?@import("numa.zig").Mask,
     thread: ?std.Thread = null,
@@ -30,9 +31,10 @@ pub const Helper = struct {
         errdefer allocator.destroy(self);
         // Keep independent OS-backed storage for NUMA first-touch placement.
         // Its exact capacity is determined by worker_memory.Plan, not arena growth.
-        const storage = try Storage.create(std.heap.page_allocator);
-        errdefer storage.destroy(std.heap.page_allocator);
-        self.* = .{ .storage = storage, .io = io, .affinity = affinity, .base = &storage.base, .worker = undefined, .roots = &storage.roots };
+        var storage_region = try Storage.createRegion(allocator);
+        errdefer storage_region.deinit();
+        const storage = Storage.fromRegion(&storage_region);
+        self.* = .{ .storage = storage, .storage_region = storage_region, .io = io, .affinity = affinity, .base = &storage.base, .worker = undefined, .roots = &storage.roots };
         const base = &storage.base;
         base.* = .{
             .network = undefined,
@@ -101,7 +103,7 @@ pub const Helper = struct {
         self.condition.broadcast(self.io);
         self.mutex.unlock(self.io);
         if (self.thread) |thread| thread.join();
-        self.storage.destroy(std.heap.page_allocator);
+        self.storage_region.deinit();
         allocator.destroy(self);
     }
     fn runJob(self: *Helper) !void {

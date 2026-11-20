@@ -4,6 +4,7 @@ const std = @import("std");
 const t = @import("types.zig");
 const h = @import("history.zig");
 const acc = @import("nnue/accumulator.zig");
+const memory = @import("memory.zig");
 
 pub const Storage = struct {
     base: @import("quiescence.zig").Worker,
@@ -25,6 +26,18 @@ pub const Storage = struct {
     /// Only the owner may release storage, after all borrowing workers stop.
     pub fn destroy(self: *Storage, allocator: std.mem.Allocator) void {
         allocator.destroy(self);
+    }
+
+    /// Places storage in its own transparent-huge-page mapping, as upstream
+    /// allocates each Worker with make_unique_large_page. Random history
+    /// accesses otherwise miss the TLB on small pages.
+    pub fn createRegion(allocator: std.mem.Allocator) !memory.Region {
+        const region = try memory.Region.allocate(allocator, @sizeOf(Storage), .transparent);
+        comptime std.debug.assert(@alignOf(Storage) <= 64);
+        return region;
+    }
+    pub fn fromRegion(region: *const memory.Region) *Storage {
+        return @ptrCast(@alignCast(region.bytes.ptr));
     }
 };
 
