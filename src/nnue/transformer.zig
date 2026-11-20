@@ -181,7 +181,20 @@ pub const FeatureTransformer = struct {
             if (add) tile[i] +%= weight else tile[i] -%= weight;
         }
     }
+    /// Tile loops walk many weight rows together, which the hardware prefetcher
+    /// does not follow. Like upstream, prefetch each row's next tile while the
+    /// current one is added; a row's last tile harmlessly touches the next row.
+    /// Upstream enables this only for BMI2 builds, excluding AMD Zen 1/2.
+    const prefetch_next_tile = std.Target.x86.featureSetHas(@import("builtin").target.cpu.features, .bmi2) and
+        dimensions / (tile_registers * 16) > 2;
+    inline fn prefetchNextTile(row: *const [dimensions]i8, offset: usize) void {
+        if (!prefetch_next_tile) return;
+        const tile_bytes = tile_registers * 16;
+        const next = @as([*]const i8, row) + offset + tile_bytes;
+        inline for (0..tile_bytes / 64) |line| @import("../prefetch.zig").read(next + line * 64);
+    }
     inline fn applySingle(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, row: *const [dimensions]i8) void {
+        prefetchNextTile(row, offset);
         inline for (0..tile_registers / 2) |i| {
             const values = paired.single(row[offset + i * 32 ..][0..32]);
             inline for (0..2) |half| {
@@ -190,6 +203,8 @@ pub const FeatureTransformer = struct {
         }
     }
     inline fn applyPair(comptime add: bool, tile: *[tile_registers]paired.Words, offset: usize, a: *const [dimensions]i8, b: *const [dimensions]i8) void {
+        prefetchNextTile(a, offset);
+        prefetchNextTile(b, offset);
         inline for (0..tile_registers / 2) |i| {
             const start = offset + i * 32;
             const values = paired.sum(a[start..][0..32], b[start..][0..32]);
