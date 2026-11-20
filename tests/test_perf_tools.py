@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts import bench, experiment, perf_common, profile_engine
+from scripts import bench, experiment, perf_common, profile_engine, screen
 
 
 class BenchmarkStatisticsTests(unittest.TestCase):
@@ -192,6 +192,31 @@ while os.read(ctl, 64):
                 profiler.close()
             assert profiler.process is not None
             self.assertIsNotNone(profiler.process.poll())
+
+
+class ScreenTests(unittest.TestCase):
+    def test_engines_require_labels(self):
+        required = ['--network', 'network', '--output', 'report']
+        args = screen.parser().parse_args(required + ['--engine', 'a=x', '--engine', 'b=y'])
+        self.assertEqual([label for label, _ in args.engine], ['a', 'b'])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            screen.parser().parse_args(required + ['--engine', 'unlabelled'])
+
+    def test_summary_uses_medians_and_weights_longer_searches(self):
+        def sample(label, position, cycles, instructions):
+            return {'label': label, 'position': position,
+                    'counters': {'cycles:u': cycles, 'instructions:u': instructions}}
+        samples = [sample('base', 'long', 1000, 2000), sample('base', 'long', 1100, 2000),
+                   sample('base', 'long', 9000, 2000), sample('base', 'short', 100, 200),
+                   sample('new', 'long', 990, 1800), sample('new', 'long', 1210, 1800),
+                   sample('new', 'long', 1, 1800), sample('new', 'short', 200, 200)]
+        summary = screen.summarize(samples, ['base', 'new'], ['long', 'short'])
+        self.assertAlmostEqual(summary['positions']['long']['new']['cycles:u'], 0.9)
+        self.assertAlmostEqual(summary['positions']['short']['new']['cycles:u'], 2.0)
+        self.assertAlmostEqual(summary['total']['new']['cycles:u'], 1190 / 1200)
+        self.assertAlmostEqual(summary['total']['new']['instructions:u'], 2000 / 2200)
+        with self.assertRaises(ValueError):
+            screen.summarize(samples, ['base', 'missing'], ['long'])
 
 
 class ExperimentTests(unittest.TestCase):

@@ -62,6 +62,12 @@ corpus. It is a starting workload set, not a representative playing-strength
 suite. Change corpus or depth **before** an experiment, and retain the protocol.
 Each entry has a unique `id`, `category`, six-field `fen`, and optional `chess960`.
 
+`tests/heldout_positions.json` is a fifteen-position confirmation corpus: every
+third nonterminal position of `src/benchmark_positions.txt` that is not in the
+original suite and has no move list. Pass it with `--positions` to check that a
+result is not specific to the seven tuning workloads. Keep it unchanged so
+results remain comparable across experiments.
+
 ### What the verdict means
 
 All warmup and measured search signatures must match across copies, sessions and
@@ -101,6 +107,30 @@ Outputs:
 - `results.json`: every warmup/sample, execution rank, session RSS and run status.
 - `summary.json`: paired intervals, controls, session totals and per-position times.
 - `report.txt`: concise verdict and its supporting estimates.
+
+## Fast screening
+
+```sh
+python3 scripts/screen.py \
+  --engine baseline=artifacts/baseline/bin/zander \
+  --engine candidate=artifacts/candidate/bin/zander \
+  --engine stockfish=artifacts/stockfish-optimized \
+  --network networks/nn-bddd9d57eb87.nnue \
+  --cpu 2 --harness-cpu 0 \
+  --output artifacts/screen-001
+```
+
+The screen counts user-space cycles and instructions for each warmed depth-20
+search, with every engine required to produce identical search signatures. It
+takes about a minute for the default corpus, against 15–90 minutes for a
+controlled benchmark. Ratios use the first engine as the base and sum per-position
+medians over `--repeats` (default 3), rotating engine order between repeats.
+
+Use it to discard candidates that do not reduce equal-work cycles, then confirm
+retained ones with `bench.py`. Counts exclude kernel time, frequency changes and
+UCI round trips, so a screen is not timing evidence. Run it on an otherwise idle
+host: concurrent builds distort cycle counts while leaving instruction counts
+unchanged.
 
 ## Profiling, separately from timing
 

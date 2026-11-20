@@ -1,0 +1,92 @@
+[
+  {
+    "id": "heldout-01",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "r3r1k1/2p2ppp/p1p1bn2/8/1q2P3/2NPQN2/PPP3PP/R4RK1 b - - 2 15"
+  },
+  {
+    "id": "heldout-02",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "4r1k1/r1q2ppp/ppp2n2/4P3/5Rb1/1N1BQ3/PPP3PP/R5K1 w - - 1 17"
+  },
+  {
+    "id": "heldout-03",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "3r1rk1/p5pp/bpp1pp2/8/q1PP1P2/b3P3/P2NQRPP/1R2B1K1 b - - 6 22"
+  },
+  {
+    "id": "heldout-04",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "3q2k1/pb3p1p/4pbp1/2r5/PpN2N2/1P2P2P/5PP1/Q2R2K1 b - - 4 26"
+  },
+  {
+    "id": "heldout-05",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "8/6pk/1p6/8/PP3p1p/5P2/4KP1q/3Q4 w - - 0 1"
+  },
+  {
+    "id": "heldout-06",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "8/1p3pp1/7p/5P1P/2k3P1/8/2K2P2/8 w - - 0 1"
+  },
+  {
+    "id": "heldout-07",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "5k2/7R/4P2p/5K2/p1r2P1p/8/8/8 b - - 0 1"
+  },
+  {
+    "id": "heldout-08",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "6k1/4pp1p/3p2p1/P1pPb3/R7/1r2P1PP/3B1P2/6K1 w - - 0 1"
+  },
+  {
+    "id": "heldout-09",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "4rrk1/1p1nq3/p7/2p1P1pp/3P2bp/3Q1Bn1/PPPB4/1K2R1NR w - - 40 21"
+  },
+  {
+    "id": "heldout-10",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "4k3/3q1r2/1N2r1b1/3ppN2/2nPP3/1B1R2n1/2R1Q3/3K4 w - - 5 1"
+  },
+  {
+    "id": "heldout-11",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "K7/8/8/BNQNQNB1/N5N1/R1Q1q2r/n5n1/bnqnqnbk w - - 0 1"
+  },
+  {
+    "id": "heldout-12",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "8/3k4/8/8/8/4B3/4KB2/2B5 w - - 0 1"
+  },
+  {
+    "id": "heldout-13",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "8/8/3P3k/8/1p6/8/1P6/1K3n2 b - - 0 1"
+  },
+  {
+    "id": "heldout-14",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "r2r1n2/pp2bk2/2p1p2p/3q4/3PN1QP/2P3R1/P4PP1/5RK1 w - - 0 1"
+  },
+  {
+    "id": "heldout-15",
+    "category": "heldout",
+    "chess960": false,
+    "fen": "nqbnrkrb/pppppppp/8/8/8/8/PPPPPPPP/NQBNRKRB w KQkq - 0 1"
+  }
+]
