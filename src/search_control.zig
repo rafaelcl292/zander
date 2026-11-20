@@ -6,7 +6,10 @@ pub const Control = struct {
     helpers_stop: std.atomic.Value(bool) = .init(false),
     stop: std.atomic.Value(bool) = .init(false),
     ponder: std.atomic.Value(bool) = .init(false),
-    context: ?*anyopaque = null,
+    // Every worker reads the flags above at each node, while the main worker
+    // updates `calls` at each node. Keep them on separate cache lines so those
+    // writes do not invalidate the flags in every helper's cache.
+    context: ?*anyopaque align(std.atomic.cache_line) = null,
     clock: *const fn (?*anyopaque) i64,
     start: i64 = 0,
     limits: tm.Limits = .{},
