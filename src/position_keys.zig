@@ -51,7 +51,12 @@ pub const PositionKeys = struct {
             for (0..64) |a| {
                 for (a + 1..64) |b| {
                     if (attacks.pseudo[@backingInt(pt)][a] & bb.square(@fromBackingInt(@intCast(b))) == 0) continue;
-                    var move = t.Move.make(.normal, @fromBackingInt(@intCast(a)), @fromBackingInt(@intCast(b)), .knight);
+                    var move = t.Move.make(
+                        .normal,
+                        @fromBackingInt(@intCast(a)),
+                        @fromBackingInt(@intCast(b)),
+                        .knight,
+                    );
                     var key = self.psq[@backingInt(pc)][a] ^ self.psq[@backingInt(pc)][b] ^ side;
                     var index = repetitionHash(key);
                     var distance: u32 = 1;

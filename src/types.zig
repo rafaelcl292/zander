@@ -74,7 +74,10 @@ pub const Move = extern struct {
     pub fn make(move_type: MoveType, origin: Square, destination: Square, promotion: PieceType) Move {
         std.debug.assert(origin.valid() and destination.valid());
         std.debug.assert(@backingInt(promotion) >= 2 and @backingInt(promotion) <= 5);
-        return .{ .data = @backingInt(move_type) + ((@as(u16, @backingInt(promotion)) - 2) << 12) + (@as(u16, @backingInt(origin)) << 6) + @backingInt(destination) };
+        return .{
+            .data = @backingInt(move_type) + ((@as(u16, @backingInt(promotion)) - 2) << 12) +
+                (@as(u16, @backingInt(origin)) << 6) + @backingInt(destination),
+        };
     }
     pub fn valid(self: Move) bool {
         return self.data != 0 and self.data != 65;

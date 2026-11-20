@@ -117,7 +117,16 @@ fn run(init: std.process.Init) !void {
     try writer.flush();
 }
 
-fn searchPosition(allocator: std.mem.Allocator, network: *const z.nnue_network.Network, stack: *z.nnue_accumulator.Stack, caches: *z.nnue_accumulator.Caches, pos: *z.position.Position, depth: i32, multi_pv: usize, writer: *std.Io.Writer) !void {
+fn searchPosition(
+    allocator: std.mem.Allocator,
+    network: *const z.nnue_network.Network,
+    stack: *z.nnue_accumulator.Stack,
+    caches: *z.nnue_accumulator.Caches,
+    pos: *z.position.Position,
+    depth: i32,
+    multi_pv: usize,
+    writer: *std.Io.Writer,
+) !void {
     const main_history = try allocator.create(z.history.ButterflyHistory);
     z.history.fill(main_history, -5);
     const low = try allocator.create(z.history.LowPlyHistory);
@@ -134,7 +143,17 @@ fn searchPosition(allocator: std.mem.Allocator, network: *const z.nnue_network.N
     const clusters = try allocator.alignedAlloc(z.tt.Cluster, .@"64", 32768);
     var table = z.tt.Table.init(clusters);
     const base = try allocator.create(z.quiescence.Worker);
-    base.* = .{ .network = network, .accumulators = stack, .caches = caches, .table = &table, .main_history = main_history, .low_ply_history = low, .capture_history = capture, .shared = &shared, .continuation_correction = continuation_correction };
+    base.* = .{
+        .network = network,
+        .accumulators = stack,
+        .caches = caches,
+        .table = &table,
+        .main_history = main_history,
+        .low_ply_history = low,
+        .capture_history = capture,
+        .shared = &shared,
+        .continuation_correction = continuation_correction,
+    };
     var worker = z.search.Worker.init(base);
     const roots = try allocator.alloc(z.search.RootMove, z.types.max_moves);
     const result = try worker.iterativeDeepening(pos, roots, .{ .depth = depth, .multi_pv = multi_pv });
@@ -158,8 +177,16 @@ fn writeMove(writer: *std.Io.Writer, move: z.types.Move, chess960: bool) !void {
     if (move.data == z.types.Move.null_move.data) return writer.writeAll("0000");
     const from = move.from();
     var to = move.to();
-    if (move.kind() == .castling and !chess960) to = @fromBackingInt(@intCast(@as(u8, from.rank()) * 8 + @as(u8, if (@backingInt(to) > @backingInt(from)) 6 else 2)));
-    const squares = [4]u8{ 'a' + @as(u8, from.file()), '1' + @as(u8, from.rank()), 'a' + @as(u8, to.file()), '1' + @as(u8, to.rank()) };
+    if (move.kind() == .castling and !chess960) {
+        to = @fromBackingInt(@intCast(@as(u8, from.rank()) * 8 +
+            @as(u8, if (@backingInt(to) > @backingInt(from)) 6 else 2)));
+    }
+    const squares = [4]u8{
+        'a' + @as(u8, from.file()),
+        '1' + @as(u8, from.rank()),
+        'a' + @as(u8, to.file()),
+        '1' + @as(u8, to.rank()),
+    };
     try writer.writeAll(&squares);
     if (move.kind() == .promotion) try writer.writeByte(" pnbrqk"[@backingInt(move.promotionType())]);
 }

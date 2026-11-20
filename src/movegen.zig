@@ -45,7 +45,9 @@ fn vectorSplat(comptime hardware: bool, list: *MoveList, targets: u64, from: t.S
     if (delta) |offset_delta| {
         std.debug.assert(count <= 8);
         const to: @Vector(8, u16) = @intCast(@shuffle(u8, squares, undefined, std.simd.iota(i32, 8)));
-        const origins: @Vector(8, u16) = @bitCast(@as(@Vector(8, i16), @intCast(to)) - @as(@Vector(8, i16), @splat(offset_delta)));
+        const origins: @Vector(8, u16) = @bitCast(
+            @as(@Vector(8, i16), @intCast(to)) - @as(@Vector(8, i16), @splat(offset_delta)),
+        );
         const moves: [8]u16 = (origins << @splat(6)) | to;
         // Copy only the valid prefix; the reference's overstore assumes spare
         // capacity beyond the logical end of the move list.
@@ -75,7 +77,9 @@ fn promotions(comptime kind: GenType, list: *MoveList, to: t.Square, delta: i16,
     const all = kind == .evasions;
     if (kind == .captures or all) list.append(t.Move.make(.promotion, offset(to, -delta), to, .queen));
     if ((kind == .captures and enemy) or (kind == .quiets and !enemy) or all) {
-        for ([_]t.PieceType{ .rook, .bishop, .knight }) |pt| list.append(t.Move.make(.promotion, offset(to, -delta), to, pt));
+        for ([_]t.PieceType{ .rook, .bishop, .knight }) |pt| {
+            list.append(t.Move.make(.promotion, offset(to, -delta), to, pt));
+        }
     }
 }
 const diagonals = blk: {
@@ -133,8 +137,11 @@ fn pawns(comptime kind: GenType, pos: *const Position, list: *MoveList, target: 
             var b = not7 & a.pseudo[@backingInt(them)][@backingInt(pos.st.ep_square)];
             while (b != 0) {
                 const from = bb.popLsb(&b);
-                if (pinned & bb.square(from) == 0 or pos.tables.line[@backingInt(k)][@backingInt(from)] & bb.square(pos.st.ep_square) != 0)
+                if (pinned & bb.square(from) == 0 or
+                    pos.tables.line[@backingInt(k)][@backingInt(from)] & bb.square(pos.st.ep_square) != 0)
+                {
                     list.append(t.Move.make(.en_passant, from, pos.st.ep_square, .knight));
+                }
             }
         }
     }
@@ -174,21 +181,29 @@ pub fn generate(comptime kind: GenType, pos: *const Position, list: *MoveList) v
                 pieces = pos.piecesOf(us, pt) & pinned;
                 while (pieces != 0) {
                     const from = bb.popLsb(&pieces);
-                    splat(list, from, pos.tables.attacks(pt, from, pos.pieces()) & target & pos.tables.line[@backingInt(k)][@backingInt(from)]);
+                    splat(list, from, pos.tables.attacks(pt, from, pos.pieces()) & target &
+                        pos.tables.line[@backingInt(k)][@backingInt(from)]);
                 }
             }
         }
     }
     // Defer the lazy threat computation until the king has candidate squares.
-    const king_targets = a.pseudo[6][@backingInt(k)] & (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target);
+    const king_targets = a.pseudo[6][@backingInt(k)] &
+        (if (kind == .evasions) ~pos.by_color[@backingInt(us)] else target);
     if (king_targets != 0) splat(list, k, king_targets & ~pos.threatsBy(.none));
     if (kind == .quiets) {
         const shift: u3 = @intCast(@backingInt(us) * 2);
         for ([_]u8{ @as(u8, 1) << shift, @as(u8, 2) << shift }) |cr| {
             const rook = pos.castling_rook[cr];
-            const to = t.Square.make(if (rook != .none and @backingInt(rook) > @backingInt(k)) 6 else 2, 0).relative(us);
-            if (pos.st.castling_rights & cr != 0 and pos.pieces() & pos.castling_path[cr] == 0 and pos.tables.between[@backingInt(k)][@backingInt(to)] & pos.threatsBy(.none) == 0 and pos.st.blockers_for_king[@backingInt(us)] & bb.square(rook) == 0)
+            const to = t.Square.make(if (rook != .none and @backingInt(rook) > @backingInt(k)) 6 else 2, 0)
+                .relative(us);
+            if (pos.st.castling_rights & cr != 0 and
+                pos.pieces() & pos.castling_path[cr] == 0 and
+                pos.tables.between[@backingInt(k)][@backingInt(to)] & pos.threatsBy(.none) == 0 and
+                pos.st.blockers_for_king[@backingInt(us)] & bb.square(rook) == 0)
+            {
                 list.append(t.Move.make(.castling, k, rook, .knight));
+            }
         }
     }
 }
@@ -207,10 +222,16 @@ test "move splats preserve ascending square order and list boundaries" {
         var b = targets;
         var index = begin;
         while (b != 0) : (index += 1) {
-            try std.testing.expectEqual(t.Move.make(.normal, from, bb.popLsb(&b), .knight).data, list.moves[index].data);
+            try std.testing.expectEqual(
+                t.Move.make(.normal, from, bb.popLsb(&b), .knight).data,
+                list.moves[index].data,
+            );
         }
         try std.testing.expectEqual(@as(usize, t.max_moves), list.len);
-        inline for (.{ @as(i16, 8), @as(i16, -8), @as(i16, 16), @as(i16, -16), @as(i16, 7), @as(i16, -7), @as(i16, 9), @as(i16, -9) }) |delta| {
+        inline for (.{
+            @as(i16, 8), @as(i16, -8), @as(i16, 16), @as(i16, -16),
+            @as(i16, 7), @as(i16, -7), @as(i16, 9),  @as(i16, -9),
+        }) |delta| {
             var pawn_targets = targets & 0x0000ffffffff0000;
             while (@popCount(pawn_targets) > 8) pawn_targets &= pawn_targets - 1;
             list.len = @as(usize, t.max_moves) - @popCount(pawn_targets);
@@ -218,7 +239,10 @@ test "move splats preserve ascending square order and list boundaries" {
             vectorSplat(vector_splat, &list, pawn_targets, .none, delta);
             while (pawn_targets != 0) : (index += 1) {
                 const to = bb.popLsb(&pawn_targets);
-                try std.testing.expectEqual(t.Move.make(.normal, offset(to, -delta), to, .knight).data, list.moves[index].data);
+                try std.testing.expectEqual(
+                    t.Move.make(.normal, offset(to, -delta), to, .knight).data,
+                    list.moves[index].data,
+                );
             }
             try std.testing.expectEqual(@as(usize, t.max_moves), list.len);
         }

@@ -38,7 +38,12 @@ pub const Entry = extern struct {
     }
     pub fn penalize(self: *Entry, penalty: i32) void {
         std.debug.assert(penalty >= 0);
-        @atomicStore(u8, &self.depth8, @intCast(@max(@as(i32, @atomicLoad(u8, &self.depth8, .monotonic)) - penalty, 0)), .monotonic);
+        @atomicStore(
+            u8,
+            &self.depth8,
+            @intCast(@max(@as(i32, @atomicLoad(u8, &self.depth8, .monotonic)) - penalty, 0)),
+            .monotonic,
+        );
     }
 };
 const key_mask: u64 = (1 << 21) - 1;
@@ -60,14 +65,25 @@ pub const Writer = struct {
         const keys = @atomicLoad(u64, &self.cluster.keys, .monotonic);
         const key_diff = ((keys >> shift) ^ key) & key_mask;
         if (data.move.data != 0 or key_diff != 0) @atomicStore(u16, &entry.move16, data.move.data, .monotonic);
-        if (data.bound == .exact or key_diff != 0 or data.depth - depth_none + 2 * @as(i32, @intFromBool(data.is_pv)) > @as(i32, @atomicLoad(u8, &entry.depth8, .monotonic)) - 4 or entry.relativeAge(generation) != 0) {
+        if (data.bound == .exact or key_diff != 0 or
+            data.depth - depth_none + 2 * @as(i32, @intFromBool(data.is_pv)) >
+                @as(i32, @atomicLoad(u8, &entry.depth8, .monotonic)) - 4 or
+            entry.relativeAge(generation) != 0)
+        {
             std.debug.assert(data.depth > depth_none and data.depth - depth_none < 256 and generation <= 31);
             @atomicStore(u64, &self.cluster.keys, keys ^ (key_diff << shift), .monotonic);
             @atomicStore(u8, &entry.depth8, @intCast(data.depth - depth_none), .monotonic);
-            @atomicStore(u8, &entry.gen_bound8, generation | (@backingInt(data.bound) << 5) | (@as(u8, @intFromBool(data.is_pv)) << 7), .monotonic);
+            @atomicStore(
+                u8,
+                &entry.gen_bound8,
+                generation | (@backingInt(data.bound) << 5) | (@as(u8, @intFromBool(data.is_pv)) << 7),
+                .monotonic,
+            );
             @atomicStore(i16, &entry.value16, @intCast(data.value), .monotonic);
             @atomicStore(i16, &entry.eval16, @intCast(data.eval), .monotonic);
-        } else if (@as(i32, @atomicLoad(u8, &entry.depth8, .monotonic)) + depth_none >= 5 and (@atomicLoad(u8, &entry.gen_bound8, .monotonic) & 0x60) >> 5 != @backingInt(Bound.exact)) {
+        } else if (@as(i32, @atomicLoad(u8, &entry.depth8, .monotonic)) + depth_none >= 5 and
+            (@atomicLoad(u8, &entry.gen_bound8, .monotonic) & 0x60) >> 5 != @backingInt(Bound.exact))
+        {
             const v: i32 = @atomicLoad(i16, &entry.value16, .monotonic);
             const tb_win_in_max_ply = t.value_mate - 2 * t.max_ply - 1;
             if (@abs(v) < t.value_infinite and @abs(v) >= tb_win_in_max_ply) self.penalize(1);
@@ -110,18 +126,35 @@ pub const Table = struct {
         const matches = (key_xors -% key_lsb) & ~key_xors & key_msb;
         if (matches != 0) {
             const index = (@ctz(matches) >> 4) - 1;
-            return .{ .found = entries[index].occupied(), .data = entries[index].read(), .writer = .{ .cluster = cluster, .index = index } };
+            return .{
+                .found = entries[index].occupied(),
+                .data = entries[index].read(),
+                .writer = .{ .cluster = cluster, .index = index },
+            };
         }
         var replace: usize = 0;
-        var replace_value = @as(i32, @atomicLoad(u8, &entries[0].depth8, .monotonic)) - 8 * @as(i32, entries[0].relativeAge(self.generation));
+        var replace_value = @as(i32, @atomicLoad(u8, &entries[0].depth8, .monotonic)) -
+            8 * @as(i32, entries[0].relativeAge(self.generation));
         for (1..3) |i| {
-            const value = @as(i32, @atomicLoad(u8, &entries[i].depth8, .monotonic)) - 8 * @as(i32, entries[i].relativeAge(self.generation));
+            const value = @as(i32, @atomicLoad(u8, &entries[i].depth8, .monotonic)) -
+                8 * @as(i32, entries[i].relativeAge(self.generation));
             if (replace_value > value) {
                 replace = i;
                 replace_value = value;
             }
         }
-        return .{ .found = false, .data = .{ .move = t.Move.none, .value = t.value_none, .eval = t.value_none, .depth = depth_none, .bound = .none, .is_pv = false }, .writer = .{ .cluster = cluster, .index = replace } };
+        return .{
+            .found = false,
+            .data = .{
+                .move = t.Move.none,
+                .value = t.value_none,
+                .eval = t.value_none,
+                .depth = depth_none,
+                .bound = .none,
+                .is_pv = false,
+            },
+            .writer = .{ .cluster = cluster, .index = replace },
+        };
     }
     pub fn hashfull(self: *const Table, max_age: i32) u32 {
         var count: u32 = 0;
@@ -146,7 +179,14 @@ test "21-bit keys distinguish old 16-bit collisions and preserve neighboring ent
     for (keys, 0..) |key, i| {
         const probe = table.probe(key);
         try std.testing.expect(!probe.found);
-        probe.writer.save(key, .{ .move = .{ .data = @intCast(i + 1) }, .value = @intCast(i), .eval = 0, .depth = 1, .bound = .exact, .is_pv = false }, table.generation);
+        probe.writer.save(key, .{
+            .move = .{ .data = @intCast(i + 1) },
+            .value = @intCast(i),
+            .eval = 0,
+            .depth = 1,
+            .bound = .exact,
+            .is_pv = false,
+        }, table.generation);
     }
     for (keys, 0..) |key, i| {
         const probe = table.probe(key);

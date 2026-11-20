@@ -69,7 +69,9 @@ pub const SharedStorage = struct {
         var region = try @import("memory.zig").Region.allocate(allocator, total, .transparent);
         errdefer region.deinit();
         const bytes = region.bytes;
-        const correction: []CorrectionEntry = @alignCast(std.mem.bytesAsSlice(CorrectionEntry, bytes[0..correction_bytes]));
+        const correction: []CorrectionEntry = @alignCast(
+            std.mem.bytesAsSlice(CorrectionEntry, bytes[0..correction_bytes]),
+        );
         const continuation: *ContinuationHistoryBlock = @ptrCast(@alignCast(bytes[continuation_offset..].ptr));
         const pawn: []PawnEntry = @alignCast(std.mem.bytesAsSlice(PawnEntry, bytes[pawn_offset..total]));
         return .{ .region = region, .histories = try SharedHistories.init(capacity, correction, continuation, pawn) };
@@ -94,10 +96,17 @@ pub const SharedHistories = struct {
     correction: []CorrectionEntry,
     continuation: *ContinuationHistoryBlock,
     pawn: []PawnEntry,
-    pub fn init(thread_count: usize, correction: []CorrectionEntry, continuation: *ContinuationHistoryBlock, pawn: []PawnEntry) !SharedHistories {
+    pub fn init(
+        thread_count: usize,
+        correction: []CorrectionEntry,
+        continuation: *ContinuationHistoryBlock,
+        pawn: []PawnEntry,
+    ) !SharedHistories {
         if (thread_count == 0 or !std.math.isPowerOfTwo(thread_count)) return error.InvalidThreadCount;
-        const correction_size = std.math.mul(usize, correction_history_base_size, thread_count) catch return error.InvalidThreadCount;
-        const pawn_size = std.math.mul(usize, pawn_history_base_size, thread_count) catch return error.InvalidThreadCount;
+        const correction_size = std.math.mul(usize, correction_history_base_size, thread_count) catch
+            return error.InvalidThreadCount;
+        const pawn_size = std.math.mul(usize, pawn_history_base_size, thread_count) catch
+            return error.InvalidThreadCount;
         if (correction.len != correction_size or pawn.len != pawn_size) return error.InvalidStorageSize;
         return .{ .correction = correction, .continuation = continuation, .pawn = pawn };
     }

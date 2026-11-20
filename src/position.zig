@@ -92,7 +92,10 @@ pub const Position = struct {
         return bb.lsb(self.piecesOf(c, .king));
     }
     pub fn key(self: *const Position) u64 {
-        return if (self.st.rule50 < 14) self.st.key else self.st.key ^ (t.makeKey(@intCast(@divTrunc(self.st.rule50 - 14, 8))) << 1);
+        return if (self.st.rule50 < 14)
+            self.st.key
+        else
+            self.st.key ^ (t.makeKey(@intCast(@divTrunc(self.st.rule50 - 14, 8))) << 1);
     }
     pub fn pawnKey(self: *const Position) u64 {
         return self.st.pawn_key ^ @backingInt(self.side);
@@ -110,7 +113,8 @@ pub const Position = struct {
         const to = @backingInt(move.to());
         const piece = self.board[from];
         const captured = self.board[to];
-        const value = self.st.key ^ pk.PositionKeys.side ^ self.keys.psq[@backingInt(captured)][to] ^ self.keys.psq[@backingInt(piece)][to] ^ self.keys.psq[@backingInt(piece)][from];
+        const value = self.st.key ^ pk.PositionKeys.side ^ self.keys.psq[@backingInt(captured)][to] ^
+            self.keys.psq[@backingInt(piece)][to] ^ self.keys.psq[@backingInt(piece)][from];
         if (captured != .none or piece.pieceType() == .pawn or self.st.rule50 < 13) return value;
         return value ^ (t.makeKey(@intCast(@divTrunc(self.st.rule50 - 13, 8))) << 1);
     }
@@ -145,7 +149,12 @@ pub const Position = struct {
     }
     pub fn attackersTo(self: *const Position, s: Square, occupied: u64) u64 {
         const i = @backingInt(s);
-        return (self.tables.attacks(.rook, s, occupied) & (self.by_type[4] | self.by_type[5])) | (self.tables.attacks(.bishop, s, occupied) & (self.by_type[3] | self.by_type[5])) | (a.pseudo[1][i] & self.piecesOf(.white, .pawn)) | (a.pseudo[0][i] & self.piecesOf(.black, .pawn)) | (a.pseudo[2][i] & self.by_type[2]) | (a.pseudo[6][i] & self.by_type[6]);
+        return (self.tables.attacks(.rook, s, occupied) & (self.by_type[4] | self.by_type[5])) |
+            (self.tables.attacks(.bishop, s, occupied) & (self.by_type[3] | self.by_type[5])) |
+            (a.pseudo[1][i] & self.piecesOf(.white, .pawn)) |
+            (a.pseudo[0][i] & self.piecesOf(.black, .pawn)) |
+            (a.pseudo[2][i] & self.by_type[2]) |
+            (a.pseudo[6][i] & self.by_type[6]);
     }
     pub fn attackedBy(self: *const Position, s: Square, occupied: u64, c: Color) bool {
         return self.attackersTo(s, occupied) & self.by_color[@backingInt(c)] != 0;
@@ -160,7 +169,8 @@ pub const Position = struct {
         self.castling_rook[cr] = rook;
         const kto = Square.make(if (kingside) 6 else 2, 0).relative(c);
         const rto = Square.make(if (kingside) 5 else 3, 0).relative(c);
-        self.castling_path[cr] = (self.tables.between[@backingInt(rook)][@backingInt(rto)] | self.tables.between[@backingInt(k)][@backingInt(kto)]) & ~(bb.square(k) | bb.square(rook));
+        self.castling_path[cr] = (self.tables.between[@backingInt(rook)][@backingInt(rto)] |
+            self.tables.between[@backingInt(k)][@backingInt(kto)]) & ~(bb.square(k) | bb.square(rook));
     }
     fn setExtraBitboards(self: *Position) void {
         for ([_]Color{ .white, .black }) |c| {
@@ -169,7 +179,8 @@ pub const Position = struct {
             const k = @backingInt(self.king(c));
             self.st.blockers_for_king[ci] = 0;
             self.st.pinners[them] = 0;
-            var snipers = ((a.pseudo[4][k] & (self.by_type[4] | self.by_type[5])) | (a.pseudo[3][k] & (self.by_type[3] | self.by_type[5]))) & self.by_color[them];
+            var snipers = ((a.pseudo[4][k] & (self.by_type[4] | self.by_type[5])) |
+                (a.pseudo[3][k] & (self.by_type[3] | self.by_type[5]))) & self.by_color[them];
             const occupied = self.pieces() ^ snipers;
             while (snipers != 0) {
                 const sniper = bb.popLsb(&snipers);
@@ -213,7 +224,8 @@ pub const Position = struct {
         self.st.non_pawn_key = @splat(0);
         self.st.pawn_key = 0;
         self.st.non_pawn_material = @splat(0);
-        self.st.checkers = self.attackersTo(self.king(self.side), self.pieces()) & self.by_color[@backingInt(self.side.opposite())];
+        self.st.checkers = self.attackersTo(self.king(self.side), self.pieces()) &
+            self.by_color[@backingInt(self.side.opposite())];
         self.setExtraBitboards();
         var occupied = self.pieces();
         while (occupied != 0) {
@@ -238,7 +250,14 @@ pub const Position = struct {
         self.st.piece_placement = packPieces(&self.board);
     }
     /// On failure, discard the partially initialized position and state.
-    pub fn set(self: *Position, fen: []const u8, chess960: bool, state: *StateInfo, tables: *const a.Tables, keys: *const pk.PositionKeys) FenError!void {
+    pub fn set(
+        self: *Position,
+        fen: []const u8,
+        chess960: bool,
+        state: *StateInfo,
+        tables: *const a.Tables,
+        keys: *const pk.PositionKeys,
+    ) FenError!void {
         state.* = .{};
         self.* = .{ .st = state, .tables = tables, .keys = keys, .chess960 = chess960 };
         var fields = std.mem.tokenizeAny(u8, fen, " \t\r\n\x0b\x0c");
@@ -272,12 +291,20 @@ pub const Position = struct {
             if (pawns > 8) return error.UnsupportedPosition;
             var additional: i32 = 0;
             for ([_]PieceType{ .knight, .bishop, .rook, .queen }) |pt| {
-                additional += @max(self.piece_count[@backingInt(Piece.make(c, pt))] - @as(i32, if (pt == .queen) 1 else 2), 0);
+                additional += @max(
+                    self.piece_count[@backingInt(Piece.make(c, pt))] - @as(i32, if (pt == .queen) 1 else 2),
+                    0,
+                );
             }
             if (additional > 8 - @as(i32, pawns)) return error.UnsupportedPosition;
         }
         const side = fields.next() orelse return error.InvalidFen;
-        self.side = if (std.mem.eql(u8, side, "w")) .white else if (std.mem.eql(u8, side, "b")) .black else return error.InvalidFen;
+        self.side = if (std.mem.eql(u8, side, "w"))
+            .white
+        else if (std.mem.eql(u8, side, "b"))
+            .black
+        else
+            return error.InvalidFen;
         const castle = fields.next() orelse return error.InvalidFen;
         if (!std.mem.eql(u8, castle, "-")) {
             if (castle.len > 4) return error.InvalidFen;
@@ -310,7 +337,8 @@ pub const Position = struct {
         }
         const ep = fields.next() orelse return error.InvalidFen;
         if (!std.mem.eql(u8, ep, "-")) {
-            if (ep.len != 2 or ep[0] < 'a' or ep[0] > 'h' or ep[1] != @as(u8, if (self.side == .white) '6' else '3')) return error.InvalidFen;
+            if (ep.len != 2 or ep[0] < 'a' or ep[0] > 'h' or
+                ep[1] != @as(u8, if (self.side == .white) '6' else '3')) return error.InvalidFen;
             const s = Square.make(@intCast(ep[0] - 'a'), @intCast(ep[1] - '1'));
             const push: i16 = if (self.side == .white) 8 else -8;
             const captured: Square = @fromBackingInt(@intCast(@as(i16, @backingInt(s)) - push));
@@ -321,17 +349,22 @@ pub const Position = struct {
                 const occ = self.pieces() ^ target ^ bb.square(s);
                 while (pawns != 0) {
                     const p = bb.popLsb(&pawns);
-                    if (self.attackersTo(self.king(self.side), occ ^ bb.square(p)) & self.by_color[@backingInt(self.side.opposite())] & ~target == 0) self.st.ep_square = s;
+                    if (self.attackersTo(self.king(self.side), occ ^ bb.square(p)) &
+                        self.by_color[@backingInt(self.side.opposite())] & ~target == 0) self.st.ep_square = s;
                 }
             }
         }
         // Upstream accepts omitted counters, but explicit malformed numbers remain errors.
         self.st.rule50 = std.fmt.parseInt(i32, fields.next() orelse "0", 10) catch return error.InvalidFen;
         const fullmove = std.fmt.parseInt(i32, fields.next() orelse "1", 10) catch return error.InvalidFen;
-        if (self.st.rule50 < 0 or self.st.rule50 > 32767 or fullmove < 0 or fullmove > 100000) return error.UnsupportedPosition;
+        if (self.st.rule50 < 0 or self.st.rule50 > 32767 or fullmove < 0 or fullmove > 100000) {
+            return error.UnsupportedPosition;
+        }
         self.game_ply = @max(2 * (fullmove - 1), 0) + @as(i32, @backingInt(self.side));
         self.setState();
-        if (self.attackedBy(self.king(self.side.opposite()), self.pieces(), self.side)) return error.UnsupportedPosition;
+        if (self.attackedBy(self.king(self.side.opposite()), self.pieces(), self.side)) {
+            return error.UnsupportedPosition;
+        }
     }
     pub fn capture(self: *const Position, m: t.Move) bool {
         return switch (m.kind()) {
@@ -364,17 +397,21 @@ pub const Position = struct {
             if (bb.square(to) & 0xff000000000000ff != 0) return false;
             const push: i16 = if (us == .white) 8 else -8;
             const delta = @as(i16, @backingInt(to)) - @as(i16, @backingInt(from));
-            const captures = a.pseudo[@backingInt(us)][@backingInt(from)] & self.by_color[@backingInt(us.opposite())] & bb.square(to) != 0;
+            const captures = a.pseudo[@backingInt(us)][@backingInt(from)] &
+                self.by_color[@backingInt(us.opposite())] & bb.square(to) != 0;
             const single = delta == push and self.pieceOn(to) == .none;
-            const double = delta == 2 * push and from.relative(us).rank() == 1 and self.pieceOn(to) == .none and self.pieceOn(@fromBackingInt(@intCast(@as(i16, @backingInt(to)) - push))) == .none;
+            const double = delta == 2 * push and from.relative(us).rank() == 1 and self.pieceOn(to) == .none and
+                self.pieceOn(@fromBackingInt(@intCast(@as(i16, @backingInt(to)) - push))) == .none;
             if (!captures and !single and !double) return false;
         } else if (self.tables.attacks(pc.pieceType(), from, self.pieces()) & bb.square(to) == 0) return false;
         if (self.st.checkers != 0 and pc.pieceType() != .king) {
             if (bb.moreThanOne(self.st.checkers)) return false;
-            if (self.tables.between[@backingInt(self.king(us))][@backingInt(bb.lsb(self.st.checkers))] & bb.square(to) == 0) return false;
+            if (self.tables.between[@backingInt(self.king(us))][@backingInt(bb.lsb(self.st.checkers))] &
+                bb.square(to) == 0) return false;
         }
         if (pc.pieceType() == .king) return self.threatsBy(.none) & bb.square(to) == 0;
-        return self.st.blockers_for_king[@backingInt(us)] & bb.square(from) == 0 or self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(us, .king) != 0;
+        return self.st.blockers_for_king[@backingInt(us)] & bb.square(from) == 0 or
+            self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(us, .king) != 0;
     }
     /// Static exchange threshold test. Requires a pseudo-legal move.
     pub fn seeGe(self: *const Position, m: t.Move, threshold: i32) bool {
@@ -408,12 +445,18 @@ pub const Position = struct {
                     break;
                 }
             }
-            if (selected == .king) return (if (attackers & ~self.by_color[@backingInt(stm)] != 0) result ^ 1 else result) != 0;
+            if (selected == .king) {
+                return (if (attackers & ~self.by_color[@backingInt(stm)] != 0) result ^ 1 else result) != 0;
+            }
             swap = piece_value[@backingInt(selected)] - swap;
             if (selected != .queen and swap < result) break;
             occupied ^= bb.square(bb.lsb(candidates));
-            if (selected == .pawn or selected == .bishop or selected == .queen) attackers |= self.tables.attacks(.bishop, to, occupied) & (self.by_type[3] | self.by_type[5]);
-            if (selected == .rook or selected == .queen) attackers |= self.tables.attacks(.rook, to, occupied) & (self.by_type[4] | self.by_type[5]);
+            if (selected == .pawn or selected == .bishop or selected == .queen) {
+                attackers |= self.tables.attacks(.bishop, to, occupied) & (self.by_type[3] | self.by_type[5]);
+            }
+            if (selected == .rook or selected == .queen) {
+                attackers |= self.tables.attacks(.rook, to, occupied) & (self.by_type[4] | self.by_type[5]);
+            }
         }
         return result != 0;
     }
@@ -482,17 +525,24 @@ pub const Position = struct {
         const to = m.to();
         const them = self.side.opposite();
         if (self.st.check_squares[@backingInt(self.pieceOn(from).pieceType())] & bb.square(to) != 0) return true;
-        if (self.st.blockers_for_king[@backingInt(them)] & bb.square(from) != 0) return self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(them, .king) == 0 or m.kind() == .castling;
+        if (self.st.blockers_for_king[@backingInt(them)] & bb.square(from) != 0) {
+            return self.tables.line[@backingInt(from)][@backingInt(to)] & self.piecesOf(them, .king) == 0 or
+                m.kind() == .castling;
+        }
         return switch (m.kind()) {
             .normal => false,
-            .promotion => self.tables.attacks(m.promotionType(), to, self.pieces() ^ bb.square(from)) & self.piecesOf(them, .king) != 0,
+            .promotion => self.tables.attacks(m.promotionType(), to, self.pieces() ^ bb.square(from)) &
+                self.piecesOf(them, .king) != 0,
             .en_passant => blk: {
                 const captured = Square.make(to.file(), from.rank());
                 const occupied = (self.pieces() ^ bb.square(from) ^ bb.square(captured)) | bb.square(to);
                 const k = self.king(them);
-                break :blk ((self.tables.attacks(.rook, k, occupied) & (self.by_type[4] | self.by_type[5])) | (self.tables.attacks(.bishop, k, occupied) & (self.by_type[3] | self.by_type[5]))) & self.by_color[@backingInt(self.side)] != 0;
+                break :blk ((self.tables.attacks(.rook, k, occupied) & (self.by_type[4] | self.by_type[5])) |
+                    (self.tables.attacks(.bishop, k, occupied) & (self.by_type[3] | self.by_type[5]))) &
+                    self.by_color[@backingInt(self.side)] != 0;
             },
-            .castling => self.st.check_squares[4] & bb.square(Square.make(if (@backingInt(to) > @backingInt(from)) 5 else 3, 0).relative(self.side)) != 0,
+            .castling => self.st.check_squares[4] &
+                bb.square(Square.make(if (@backingInt(to) > @backingInt(from)) 5 else 3, 0).relative(self.side)) != 0,
         };
     }
     fn movePiece(self: *Position, from: Square, to: Square) void {
@@ -510,10 +560,27 @@ pub const Position = struct {
         self.board[@backingInt(to)] = pc;
         if (dts) |threats| self.updatePieceThreats(true, pc, true, to, threats, bits);
     }
-    fn addThreat(dts: *dirty.DirtyThreats, put_piece: bool, pc: Piece, threatened: Piece, from: Square, to: Square) void {
+    fn addThreat(
+        dts: *dirty.DirtyThreats,
+        put_piece: bool,
+        pc: Piece,
+        threatened: Piece,
+        from: Square,
+        to: Square,
+    ) void {
         dts.append(dirty.DirtyThreat.init(pc, threatened, from, to, put_piece));
     }
-    fn processSliders(self: *const Position, pc: Piece, put_piece: bool, s: Square, dts: *dirty.DirtyThreats, no_rays: u64, sliders: u64, slider_attacks: u64, add_direct: bool) void {
+    fn processSliders(
+        self: *const Position,
+        pc: Piece,
+        put_piece: bool,
+        s: Square,
+        dts: *dirty.DirtyThreats,
+        no_rays: u64,
+        sliders: u64,
+        slider_attacks: u64,
+        add_direct: bool,
+    ) void {
         var b = sliders;
         while (b != 0) {
             const slider_sq = bb.popLsb(&b);
@@ -524,19 +591,32 @@ pub const Position = struct {
             if (discovered != 0 and (ray & no_rays) != no_rays) {
                 const threatened_sq = bb.lsb(discovered);
                 const threatened = self.pieceOn(threatened_sq);
-                if (threatened.pieceType() != .queen or slider.pieceType() == .queen) addThreat(dts, !put_piece, slider, threatened, slider_sq, threatened_sq);
+                if (threatened.pieceType() != .queen or slider.pieceType() == .queen) {
+                    addThreat(dts, !put_piece, slider, threatened, slider_sq, threatened_sq);
+                }
             }
-            if (add_direct and (pc.pieceType() != .queen or slider.pieceType() == .queen)) addThreat(dts, put_piece, slider, pc, slider_sq, s);
+            if (add_direct and (pc.pieceType() != .queen or slider.pieceType() == .queen)) {
+                addThreat(dts, put_piece, slider, pc, slider_sq, s);
+            }
         }
     }
-    fn updatePieceThreats(self: *const Position, comptime compute_ray: bool, pc: Piece, put_piece: bool, s: Square, dts: *dirty.DirtyThreats, no_rays: u64) void {
+    fn updatePieceThreats(
+        self: *const Position,
+        comptime compute_ray: bool,
+        pc: Piece,
+        put_piece: bool,
+        s: Square,
+        dts: *dirty.DirtyThreats,
+        no_rays: u64,
+    ) void {
         const occupied = self.pieces();
         const bishop_attacks = self.tables.attacks(.bishop, s, occupied);
         const rook_attacks = self.tables.attacks(.rook, s, occupied);
         const slider_attacks = bishop_attacks | rook_attacks;
         const occupied_no_king = occupied ^ self.by_type[6];
         const pt = pc.pieceType();
-        const sliders = ((self.by_type[3] | self.by_type[5]) & bishop_attacks) | ((self.by_type[4] | self.by_type[5]) & rook_attacks);
+        const sliders = ((self.by_type[3] | self.by_type[5]) & bishop_attacks) |
+            ((self.by_type[4] | self.by_type[5]) & rook_attacks);
         if (pt == .king) {
             if (compute_ray) self.processSliders(pc, put_piece, s, dts, no_rays, sliders, slider_attacks, false);
             return;
@@ -554,12 +634,19 @@ pub const Position = struct {
             else => a.pseudo[@backingInt(pt)][@backingInt(s)],
         };
         var incoming = a.pseudo[2][@backingInt(s)] & self.by_type[2];
-        if (pt == .knight or pt == .rook) incoming |= (a.pseudo[0][@backingInt(s)] & self.piecesOf(.black, .pawn)) | (a.pseudo[1][@backingInt(s)] & self.piecesOf(.white, .pawn));
+        if (pt == .knight or pt == .rook) {
+            incoming |= (a.pseudo[0][@backingInt(s)] & self.piecesOf(.black, .pawn)) |
+                (a.pseudo[1][@backingInt(s)] & self.piecesOf(.white, .pawn));
+        }
         while (threatened != 0) {
             const to = bb.popLsb(&threatened);
             addThreat(dts, put_piece, pc, self.pieceOn(to), s, to);
         }
-        if (compute_ray) self.processSliders(pc, put_piece, s, dts, no_rays, sliders, slider_attacks, true) else incoming |= if (pt == .queen) sliders & self.by_type[5] else sliders;
+        if (compute_ray) {
+            self.processSliders(pc, put_piece, s, dts, no_rays, sliders, slider_attacks, true);
+        } else {
+            incoming |= if (pt == .queen) sliders & self.by_type[5] else sliders;
+        }
         while (incoming != 0) {
             const from = bb.popLsb(&incoming);
             addThreat(dts, put_piece, self.pieceOn(from), pc, from, s);
@@ -639,7 +726,8 @@ pub const Position = struct {
             self.removeWithThreats(rfrom, dts);
             self.putWithThreats(Piece.make(us, .king), to, dts);
             self.putWithThreats(Piece.make(us, .rook), rto, dts);
-            const delta = self.keys.psq[@backingInt(captured)][@backingInt(rfrom)] ^ self.keys.psq[@backingInt(captured)][@backingInt(rto)];
+            const delta = self.keys.psq[@backingInt(captured)][@backingInt(rfrom)] ^
+                self.keys.psq[@backingInt(captured)][@backingInt(rto)];
             k ^= delta;
             next.non_pawn_key[ui] ^= delta;
             captured = .none;
@@ -655,14 +743,17 @@ pub const Position = struct {
             } else {
                 next.non_pawn_material[ti] -= piece_value[@backingInt(captured.pieceType())];
                 next.non_pawn_key[ti] ^= self.keys.psq[ci][@backingInt(capsq)];
-                if (@backingInt(captured.pieceType()) <= 3) next.minor_piece_key ^= self.keys.psq[ci][@backingInt(capsq)];
+                if (@backingInt(captured.pieceType()) <= 3) {
+                    next.minor_piece_key ^= self.keys.psq[ci][@backingInt(capsq)];
+                }
             }
             if (dirties) |d| {
                 d.piece.remove_pc = captured;
                 d.piece.remove_sq = capsq;
             }
             k ^= self.keys.psq[ci][@backingInt(capsq)];
-            next.material_key ^= self.keys.psq[ci][@intCast(8 + self.piece_count[ci] - @as(i32, @intFromBool(m.kind() != .en_passant)))];
+            next.material_key ^=
+                self.keys.psq[ci][@intCast(8 + self.piece_count[ci] - @as(i32, @intFromBool(m.kind() != .en_passant)))];
             next.rule50 = 0;
         }
         k ^= self.keys.psq[pi][@backingInt(from)] ^ self.keys.psq[pi][@backingInt(to)];
@@ -681,7 +772,9 @@ pub const Position = struct {
                     const king_sq = self.king(them);
                     const not_blockers = ~old.blockers_for_king[ti];
                     const no_discovery = bb.square(from) & not_blockers != 0 or from.file() == king_sq.file();
-                    if (no_discovery and pawns & (not_blockers | self.tables.line[@backingInt(ep)][@backingInt(king_sq)]) != 0) {
+                    if (no_discovery and
+                        pawns & (not_blockers | self.tables.line[@backingInt(ep)][@backingInt(king_sq)]) != 0)
+                    {
                         next.ep_square = ep;
                         k ^= self.keys.enpassant[ep.file()];
                     }
@@ -695,7 +788,8 @@ pub const Position = struct {
                     d.piece.to = .none;
                 }
                 k ^= self.keys.psq[promotion][@backingInt(to)];
-                next.material_key ^= self.keys.psq[promotion][@intCast(8 + self.piece_count[promotion])] ^ self.keys.psq[pi][@intCast(8 + self.piece_count[pi] - 1)];
+                next.material_key ^= self.keys.psq[promotion][@intCast(8 + self.piece_count[promotion])] ^
+                    self.keys.psq[pi][@intCast(8 + self.piece_count[pi] - 1)];
                 next.non_pawn_key[ui] ^= self.keys.psq[promotion][@backingInt(to)];
                 if (@backingInt(pt) <= 3) next.minor_piece_key ^= self.keys.psq[promotion][@backingInt(to)];
                 next.non_pawn_material[ui] += piece_value[@backingInt(pt)];
@@ -808,13 +902,22 @@ pub const Position = struct {
         try writer.writeAll(if (self.side == .white) " w " else " b ");
         for ([_]u8{ 1, 2, 4, 8 }, "KQkq") |cr, ch| {
             if (self.st.castling_rights & cr != 0) {
-                try writer.writeByte(if (self.chess960) @as(u8, if (cr < 4) 'A' else 'a') + self.castling_rook[cr].file() else ch);
+                try writer.writeByte(if (self.chess960)
+                    @as(u8, if (cr < 4) 'A' else 'a') + self.castling_rook[cr].file()
+                else
+                    ch);
             }
         }
         if (self.st.castling_rights == 0) try writer.writeByte('-');
         if (self.st.ep_square == .none) try writer.writeAll(" - ") else {
-            try writer.print(" {c}{c} ", .{ @as(u8, 'a') + self.st.ep_square.file(), @as(u8, '1') + self.st.ep_square.rank() });
+            try writer.print(" {c}{c} ", .{
+                @as(u8, 'a') + self.st.ep_square.file(),
+                @as(u8, '1') + self.st.ep_square.rank(),
+            });
         }
-        try writer.print("{d} {d}", .{ self.st.rule50, 1 + @divTrunc(self.game_ply - @as(i32, @backingInt(self.side)), 2) });
+        try writer.print("{d} {d}", .{
+            self.st.rule50,
+            1 + @divTrunc(self.game_ply - @as(i32, @backingInt(self.side)), 2),
+        });
     }
 };

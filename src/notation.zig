@@ -7,7 +7,9 @@ pub fn moveText(move: t.Move, chess960: bool, buffer: *[6]u8) []const u8 {
     if (move.data == 0 or move.data == t.Move.null_move.data) return "0000";
     const from = move.from();
     var to = move.to();
-    if (move.kind() == .castling and !chess960) to = t.Square.make(if (@backingInt(to) > @backingInt(from)) 6 else 2, from.rank());
+    if (move.kind() == .castling and !chess960) {
+        to = t.Square.make(if (@backingInt(to) > @backingInt(from)) 6 else 2, from.rank());
+    }
     buffer[0] = 'a' + @as(u8, from.file());
     buffer[1] = '1' + @as(u8, from.rank());
     buffer[2] = 'a' + @as(u8, to.file());
@@ -29,11 +31,16 @@ pub fn parseMove(pos: *const p.Position, text: []const u8) ?t.Move {
 }
 fn parameters(pos: *const p.Position) struct { a: f64, b: f64 } {
     var material: i32 = 0;
-    for ([_]t.Color{ .white, .black }) |color| for ([_]t.PieceType{ .pawn, .knight, .bishop, .rook, .queen }, [_]i32{ 1, 3, 3, 5, 9 }) |piece, weight| {
-        material += @as(i32, @intCast(@popCount(pos.piecesOf(color, piece)))) * weight;
-    };
+    for ([_]t.Color{ .white, .black }) |color| {
+        for ([_]t.PieceType{ .pawn, .knight, .bishop, .rook, .queen }, [_]i32{ 1, 3, 3, 5, 9 }) |piece, weight| {
+            material += @as(i32, @intCast(@popCount(pos.piecesOf(color, piece)))) * weight;
+        }
+    }
     const m = @as(f64, @floatFromInt(std.math.clamp(material, 17, 78))) / 58.0;
-    return .{ .a = (((-142.72052667 * m + 372.35176398) * m - 340.71073572) * m) + 415.23490212, .b = (((5.93832785 * m + 15.61267078) * m - 30.57816876) * m) + 69.63866711 };
+    return .{
+        .a = (((-142.72052667 * m + 372.35176398) * m - 340.71073572) * m) + 415.23490212,
+        .b = (((5.93832785 * m + 15.61267078) * m - 30.57816876) * m) + 69.63866711,
+    };
 }
 pub fn centipawns(value: i32, pos: *const p.Position) i32 {
     return @trunc(@as(f64, @round(100.0 * @as(f64, @floatFromInt(value)) / parameters(pos).a)));

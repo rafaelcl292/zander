@@ -47,11 +47,32 @@ pub const MovePicker = struct {
     moves: [t.max_moves]ExtMove = undefined,
     pub fn init(pos: *const Position, tt_move: t.Move, depth: i32, histories: Histories, ply: usize) MovePicker {
         std.debug.assert(histories.continuation.len >= (if (depth > 0) @as(usize, 6) else 1));
-        return .{ .pos = pos, .histories = histories, .capture = histories.capture, .tt_move = tt_move, .first_stage = if (pos.st.checkers != 0) .evasion else if (depth > 0) .good_capture else .qsearch, .stage = if (tt_move.data != 0 and pos.legal(tt_move)) .tt else .init_first, .depth = depth, .ply = ply };
+        return .{
+            .pos = pos,
+            .histories = histories,
+            .capture = histories.capture,
+            .tt_move = tt_move,
+            .first_stage = if (pos.st.checkers != 0) .evasion else if (depth > 0) .good_capture else .qsearch,
+            .stage = if (tt_move.data != 0 and pos.legal(tt_move)) .tt else .init_first,
+            .depth = depth,
+            .ply = ply,
+        };
     }
-    pub fn initProbcut(pos: *const Position, tt_move: t.Move, threshold: i32, capture: *const h.CapturePieceToHistory) MovePicker {
+    pub fn initProbcut(
+        pos: *const Position,
+        tt_move: t.Move,
+        threshold: i32,
+        capture: *const h.CapturePieceToHistory,
+    ) MovePicker {
         std.debug.assert(pos.st.checkers == 0);
-        return .{ .pos = pos, .capture = capture, .tt_move = tt_move, .stage = if (tt_move.valid() and pos.captureStage(tt_move) and pos.legal(tt_move)) .tt else .init_first, .first_stage = .probcut, .threshold = threshold };
+        return .{
+            .pos = pos,
+            .capture = capture,
+            .tt_move = tt_move,
+            .stage = if (tt_move.valid() and pos.captureStage(tt_move) and pos.legal(tt_move)) .tt else .init_first,
+            .first_stage = .probcut,
+            .threshold = threshold,
+        };
     }
     pub fn skipQuietMoves(self: *MovePicker) void {
         self.skip_quiets = true;
@@ -75,7 +96,10 @@ pub const MovePicker = struct {
         // Hoist history rows out of the scoring loop, as upstream does.
         const main_hist = if (kind != .captures) &self.histories.?.main[@backingInt(us)] else undefined;
         const pawn_hist = if (kind == .quiets) self.histories.?.shared.pawnEntry(self.pos) else undefined;
-        const low_ply_hist = if (kind == .quiets and self.ply < h.low_ply_history_size) &self.histories.?.low_ply[self.ply] else null;
+        const low_ply_hist = if (kind == .quiets and self.ply < h.low_ply_history_size)
+            &self.histories.?.low_ply[self.ply]
+        else
+            null;
         for (list.slice(), self.cur..) |move, i| {
             const from = move.from();
             const to = move.to();
@@ -91,13 +115,19 @@ pub const MovePicker = struct {
                 value = 2 * @as(i32, main_hist[move.data].get());
                 value += 2 * @as(i32, pawn_hist[pc][dest].get());
                 inline for ([_]usize{ 0, 1, 2, 3, 5 }) |j| value += histories.continuation[j][pc][dest].get();
-                const threat_delta = @as(i32, @intFromBool(lesser[pt] & bb.square(from) != 0)) - @as(i32, @intFromBool(lesser[pt] & bb.square(to) != 0));
+                const threat_delta = @as(i32, @intFromBool(lesser[pt] & bb.square(from) != 0)) -
+                    @as(i32, @intFromBool(lesser[pt] & bb.square(to) != 0));
                 value += position.piece_value[pt] * 20 * threat_delta;
-                if (low_ply_hist) |row| value += @divTrunc(8 * @as(i32, row[move.data].get()), @as(i32, @intCast(1 + self.ply)));
+                if (low_ply_hist) |row| {
+                    value += @divTrunc(8 * @as(i32, row[move.data].get()), @as(i32, @intCast(1 + self.ply)));
+                }
                 if (self.pos.st.check_squares[pt] & bb.square(to) != 0 and self.pos.seeGe(move, -75)) value += 16384;
             } else {
                 const histories = self.histories.?;
-                value = if (self.pos.captureStage(move)) position.piece_value[captured] + (1 << 28) else @as(i32, main_hist[move.data].get()) + histories.continuation[0][pc][dest].get();
+                value = if (self.pos.captureStage(move))
+                    position.piece_value[captured] + (1 << 28)
+                else
+                    @as(i32, main_hist[move.data].get()) + histories.continuation[0][pc][dest].get();
             }
             self.moves[i] = .{ .move = move, .value = value };
         }

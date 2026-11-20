@@ -68,7 +68,12 @@ const hq_masks = blk: {
     var masks: [64][4]u64 = undefined;
     for (&masks, 0..) |*mask, square| {
         const sq: t.Square = @fromBackingInt(@intCast(square));
-        mask.* = .{ lineMask(sq, .{ 8, -8 }), lineMask(sq, .{ 9, -9 }), lineMask(sq, .{ 1, -1 }), lineMask(sq, .{ 7, -7 }) };
+        mask.* = .{
+            lineMask(sq, .{ 8, -8 }),
+            lineMask(sq, .{ 9, -9 }),
+            lineMask(sq, .{ 1, -1 }),
+            lineMask(sq, .{ 7, -7 }),
+        };
     }
     break :blk masks;
 };
@@ -154,9 +159,11 @@ pub const Tables = struct {
                 for (0..64) |b| {
                     const s2: t.Square = @fromBackingInt(@intCast(b));
                     if (pseudo[@backingInt(pt)][a] & bb.square(s2) != 0) {
-                        self.line[a][b] = (self.attacks(pt, s1, 0) & self.attacks(pt, s2, 0)) | bb.square(s1) | bb.square(s2);
+                        self.line[a][b] = (self.attacks(pt, s1, 0) & self.attacks(pt, s2, 0)) |
+                            bb.square(s1) | bb.square(s2);
                         self.between[a][b] = self.attacks(pt, s1, bb.square(s2)) & self.attacks(pt, s2, bb.square(s1));
-                        self.inverse_ray_pass[b][a] = self.attacks(pt, s1, 0) & (self.attacks(pt, s2, bb.square(s1)) | bb.square(s2));
+                        self.inverse_ray_pass[b][a] = self.attacks(pt, s1, 0) &
+                            (self.attacks(pt, s2, bb.square(s1)) | bb.square(s2));
                     }
                     self.between[a][b] |= bb.square(s2);
                 }
@@ -230,7 +237,10 @@ test "hyperbola attacks match rays for every relevant occupancy" {
             var occupied: u64 = 0;
             while (true) {
                 try std.testing.expectEqual(slidingAttack(pt, sq, occupied), hqAttacks(pt, sq, occupied));
-                try std.testing.expectEqual(slidingAttack(pt, sq, occupied | bb.square(sq)), hqAttacks(pt, sq, occupied | bb.square(sq)));
+                try std.testing.expectEqual(
+                    slidingAttack(pt, sq, occupied | bb.square(sq)),
+                    hqAttacks(pt, sq, occupied | bb.square(sq)),
+                );
                 occupied = (occupied -% mask) & mask;
                 if (occupied == 0) break;
             }
